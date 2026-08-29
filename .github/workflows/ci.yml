@@ -36,3 +36,11 @@ jobs:
 
       - name: Check size budget
         run: npm run size
+
+      - name: E2E tests
+        # playwright.config.ts's webServer rebuilds and serves dist/ itself,
+        # so this doesn't depend on the Build step above — it's kept last
+        # because it's the slowest gate. Chromium is already installed by
+        # the "Install Playwright Chromium" step above (browser vitest
+        # project and Playwright's own test runner share that install).
+        run: npm run test:e2e
