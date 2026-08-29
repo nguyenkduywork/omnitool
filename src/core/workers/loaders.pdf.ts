@@ -6,4 +6,10 @@ import type { Op } from '../../types.js';
  */
 export const PDF_LOADERS: Record<string, () => Promise<{ default: Op }>> = {
   'pdf-merge': () => import('../../tools/pdf/merge.op'),
+  'pdf-split': () => import('../../tools/pdf/split.op'),
+  'pdf-organize': () => import('../../tools/pdf/organize.op'),
+  'pdf-shrink': () => import('../../tools/pdf/shrink.op'),
+  'pdf-to-images': () => import('../../tools/pdf/to-images.op'),
+  'pdf-from-images': () => import('../../tools/pdf/from-images.op'),
+  'pdf-extract-text': () => import('../../tools/pdf/extract-text.op'),
 };
