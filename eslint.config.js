@@ -67,8 +67,7 @@ export default tseslint.config(
     },
   },
 
-  // 1. src/tools/**: only src/types.ts + npm packages. No core/, no ui/, no animejs.
-  //    Plus: DOM-free — no window/document/HTMLElement (ops run in a worker).
+  // 1a. All of src/tools/**: only src/types.ts + npm packages. No core/, no ui/, no animejs.
   {
     files: ['src/tools/**/*.ts'],
     rules: {
@@ -79,11 +78,22 @@ export default tseslint.config(
           paths: [{ name: 'animejs', message: ANIME_MESSAGE }],
         },
       ],
+    },
+  },
+
+  // 1b. Only *.op.ts must be DOM-free — ops execute inside a Web Worker where
+  //     window/document do not exist. Sibling *.editor.ts files are deliberately
+  //     exempt: an editor IS DOM code, and lives next to its op because the two
+  //     change together. Editors still inherit rule 1a's import restrictions, so
+  //     they cannot reach into core/ or ui/ either.
+  {
+    files: ['src/tools/**/*.op.ts'],
+    rules: {
       'no-restricted-globals': [
         'error',
-        { name: 'window', message: 'Ops are DOM-free — no `window` in src/tools/**.' },
-        { name: 'document', message: 'Ops are DOM-free — no `document` in src/tools/**.' },
-        { name: 'HTMLElement', message: 'Ops are DOM-free — no `HTMLElement` in src/tools/**.' },
+        { name: 'window', message: 'Ops are DOM-free — no `window` in an *.op.ts (runs in a worker).' },
+        { name: 'document', message: 'Ops are DOM-free — no `document` in an *.op.ts (runs in a worker).' },
+        { name: 'HTMLElement', message: 'Ops are DOM-free — no `HTMLElement` in an *.op.ts (runs in a worker).' },
       ],
     },
   },
