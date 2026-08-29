@@ -1,15 +1,21 @@
 // src/tools/image/merge-sheet.op.ts — image-merge-sheet: arrange several
 // images into one contact sheet, in tray (input) order.
 //
-// Output is always a flattened JPEG — a contact sheet is for viewing/sharing,
-// and JPEG has no alpha channel to preserve anyway. That is exactly why the
-// 'background' option matters: an unpainted OffscreenCanvas is transparent
-// BLACK (0,0,0,0), and letting that show through convertToBlob's JPEG path
-// drops the alpha and leaves literal black pixels behind. This op fills an
-// explicit opaque colour BEFORE drawing anything, and 'transparent' maps to
-// white for the same reason — there is no alpha channel in a JPEG to actually
-// preserve, so leaving the canvas unpainted would just be the black bug by
-// another name.
+// The output format follows the 'background' option, because the two are not
+// independent:
+//
+//   'white' | 'black'  -> opaque fill, encoded as JPEG ('sheet.jpg'). A
+//                         20-photo contact sheet is several times smaller as
+//                         JPEG and has no alpha to lose.
+//   'transparent'      -> no fill at all, encoded as PNG ('sheet.png'), which
+//                         actually preserves the alpha channel.
+//
+// The opaque paths MUST fill before drawing: an unpainted OffscreenCanvas is
+// transparent BLACK (0,0,0,0), and pushing that through JPEG drops the alpha
+// and leaves literal black pixels behind.
+//
+// Encoding a 'transparent' sheet as JPEG would flatten the very transparency
+// the user asked for, so it selects PNG instead of silently ignoring them.
 
 import { OpError, type Op, type OpInput, type OpOutput } from '../../types';
 
@@ -34,8 +40,10 @@ async function decodeImage(input: OpInput): Promise<ImageBitmap> {
   }
 }
 
-async function encodeCanvas(canvas: OffscreenCanvas, mime: string, quality: number): Promise<ArrayBuffer> {
-  const blob = await canvas.convertToBlob({ type: mime, quality });
+// `quality` is optional because PNG ignores it entirely — passing a quality
+// alongside image/png would imply a lossiness knob that does not exist.
+async function encodeCanvas(canvas: OffscreenCanvas, mime: string, quality?: number): Promise<ArrayBuffer> {
+  const blob = await canvas.convertToBlob(quality === undefined ? { type: mime } : { type: mime, quality });
   if (blob.type !== mime) {
     throw new OpError(
       'EncoderUnavailable',
@@ -51,15 +59,13 @@ const LAYOUTS: Layout[] = ['grid', 'row', 'column'];
 type Background = 'white' | 'black' | 'transparent';
 const BACKGROUNDS: Background[] = ['white', 'black', 'transparent'];
 
-// JPEG output has no alpha channel: 'transparent' cannot mean "leave it
-// transparent" here, only "don't force white/black" — and since the target
-// format has no way to represent that, it falls back to white rather than
-// letting the canvas's transparent-black default leak through as literal
-// black pixels.
-const BACKGROUND_FILL: Record<Background, string> = {
+// Only the opaque backgrounds get painted. 'transparent' is absent on purpose:
+// it selects the PNG output path and leaves the canvas's alpha channel intact,
+// so there is no fill colour to choose. An earlier version mapped it to white,
+// which made 'transparent' and 'white' produce byte-identical output.
+const BACKGROUND_FILL: Record<Exclude<Background, 'transparent'>, string> = {
   white: '#ffffff',
   black: '#000000',
-  transparent: '#ffffff',
 };
 
 function validateLayout(raw: unknown): Layout {
@@ -123,8 +129,12 @@ const mergeSheet: Op = async (inputs, options, ctx): Promise<OpOutput[]> => {
       throw new OpError('EncoderUnavailable', 'Could not acquire a 2D canvas context.');
     }
 
-    context.fillStyle = BACKGROUND_FILL[background];
-    context.fillRect(0, 0, canvasWidth, canvasHeight);
+    // 'transparent' means leave the alpha channel alone; the PNG encoder below
+    // preserves it. Painting anything here would make the option a no-op.
+    if (background !== 'transparent') {
+      context.fillStyle = BACKGROUND_FILL[background];
+      context.fillRect(0, 0, canvasWidth, canvasHeight);
+    }
 
     bitmaps.forEach((bitmap, index) => {
       const col = index % cols;
@@ -135,10 +145,19 @@ const mergeSheet: Op = async (inputs, options, ctx): Promise<OpOutput[]> => {
     });
 
     stop(ctx.signal);
-    const buffer = await encodeCanvas(canvas, 'image/jpeg', 0.92);
+    // A transparent sheet has to be PNG — JPEG has no alpha channel, so
+    // encoding it as JPEG would silently flatten the transparency the user
+    // just asked for. Opaque sheets stay JPEG: a 20-photo contact sheet is
+    // several times smaller that way, and there is no alpha to lose.
+    const transparent = background === 'transparent';
+    const buffer = transparent
+      ? await encodeCanvas(canvas, 'image/png')
+      : await encodeCanvas(canvas, 'image/jpeg', 0.92);
     ctx.onProgress(1);
 
-    return [{ name: 'sheet.jpg', type: 'image/jpeg', buffer }];
+    return transparent
+      ? [{ name: 'sheet.png', type: 'image/png', buffer }]
+      : [{ name: 'sheet.jpg', type: 'image/jpeg', buffer }];
   } finally {
     for (const bitmap of bitmaps) bitmap.close();
   }
