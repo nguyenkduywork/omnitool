@@ -28,9 +28,11 @@
   "devDependencies": {
     "@eslint/js": "^9",
     "@playwright/test": "^1",
+    "@vitest/browser": "^2.1.9",
     "eslint": "^9",
     "globals": "^14",
     "gzip-size": "^7",
+    "playwright": "^1.62.1",
     "sharp": "^0.35.4",
     "typescript": "^5",
     "typescript-eslint": "^8",

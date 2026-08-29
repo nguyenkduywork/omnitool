@@ -39,7 +39,7 @@ export default tseslint.config(
 
   // Node-context files: config files, build/CI scripts, and tests (vitest runs under Node).
   {
-    files: ['eslint.config.js', 'vite.config.ts', 'vitest.config.ts', 'playwright.config.ts', 'scripts/**/*.mjs', 'tests/**/*.mjs', 'tests/**/*.ts'],
+    files: ['eslint.config.js', 'vite.config.ts', 'vitest.workspace.ts', 'playwright.config.ts', 'scripts/**/*.mjs', 'tests/**/*.mjs', 'tests/**/*.ts'],
     languageOptions: {
       globals: { ...globals.node },
     },
