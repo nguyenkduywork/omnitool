@@ -1,0 +1,168 @@
+/* src/styles/tokens.css — the design system, as values.
+ *
+ * Dark first (the palette is authored for dark and adapted for light), following
+ * `prefers-color-scheme`, with a manual override on `html[data-theme]` that wins
+ * in both directions. Every ink/background pairing below clears WCAG AA at its
+ * intended size; the three-step ink ramp exists so that "quiet" text is quiet by
+ * being lower contrast against the same background, never by being smaller.
+ *
+ * One accent. It is used for exactly three things: the primary action, the
+ * current selection, and focus. If it starts appearing anywhere else, that is a
+ * bug in the design, not a missing token.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* -- surfaces ------------------------------------------------------- */
+  --bg: #0a0b0d;
+  --bg-1: #101216;
+  --bg-2: #161a1f;
+  --bg-3: #1e2329;
+  --line: #262c33;
+  --line-2: #333b44;
+
+  /* -- ink ------------------------------------------------------------ */
+  --ink: #eef1f4; /* 17:1 on --bg */
+  --ink-2: #b3bcc5; /* 10:1 */
+  --ink-3: #7c8792; /*  5.3:1 — the quiet floor, still AA for body text */
+
+  /* -- accent (one, and only one) -------------------------------------- */
+  --accent: #5eded0;
+  --accent-2: #8fece1;
+  --accent-quiet: #12312e;
+  --accent-line: #1e5551;
+  --accent-ink: #04211f; /* text ON the accent fill: 10:1 */
+
+  /* -- state ---------------------------------------------------------- */
+  --good: #7ee0a0;
+  --good-quiet: #10301f;
+  --warn: #f5c877;
+  --warn-quiet: #33280f;
+  --bad: #ff9b93;
+  --bad-quiet: #3a1b19;
+
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-2: 0 12px 32px -12px rgb(0 0 0 / 0.7);
+  --ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+
+  /* -- type ----------------------------------------------------------- */
+  --font: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Ubuntu, Cantarell,
+    'Helvetica Neue', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono',
+    monospace;
+
+  --fs-xs: 0.75rem;
+  --fs-sm: 0.8125rem;
+  --fs-base: 0.9375rem;
+  --fs-md: 1.0625rem;
+  --fs-lg: 1.375rem;
+  --fs-xl: clamp(1.5rem, 1.1rem + 1.6vw, 1.875rem);
+  --fs-hero: clamp(1.9rem, 1.1rem + 3.6vw, 3rem);
+
+  --lh-tight: 1.15;
+  --lh-snug: 1.35;
+  --lh-body: 1.6;
+  --tracking-tight: -0.02em;
+  --tracking-wide: 0.06em;
+
+  /* -- space (4px base) ----------------------------------------------- */
+  --s-1: 0.25rem;
+  --s-2: 0.5rem;
+  --s-3: 0.75rem;
+  --s-4: 1rem;
+  --s-5: 1.5rem;
+  --s-6: 2rem;
+  --s-7: 3rem;
+  --s-8: 4rem;
+
+  --r-sm: 0.5rem;
+  --r-md: 0.75rem;
+  --r-lg: 1.125rem;
+  --r-xl: 1.5rem;
+  --r-pill: 999px;
+
+  --page: 76rem;
+
+  /* -- motion (CSS side; anime.js has its own tokens in motion.ts) ---- */
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --ease: cubic-bezier(0.22, 0.8, 0.28, 1);
+}
+
+/* Light theme, twice: once for the system preference (unless the user has
+ * explicitly chosen dark) and once for the explicit override. CSS cannot share
+ * one declaration block between a media query and a selector, so this is
+ * duplicated on purpose — it gzips to almost nothing. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    color-scheme: light;
+    --bg: #fbfbfa;
+    --bg-1: #ffffff;
+    --bg-2: #f3f4f3;
+    --bg-3: #e9ebea;
+    --line: #e0e3e2;
+    --line-2: #c6cccb;
+    --ink: #12161a;
+    --ink-2: #46525b;
+    --ink-3: #636e77; /* 4.98:1 on --bg */
+    --accent: #0f7d72;
+    --accent-2: #0a6a61;
+    --accent-quiet: #e2f2f0;
+    --accent-line: #a9d6d0;
+    --accent-ink: #ffffff;
+    --good: #0f7a45;
+    --good-quiet: #e2f3e9;
+    --warn: #8a5a00;
+    --warn-quiet: #fbf0d8;
+    --bad: #b02a20;
+    --bad-quiet: #fbe6e4;
+    --shadow-1: 0 1px 2px rgb(16 24 32 / 0.08);
+    --shadow-2: 0 14px 34px -14px rgb(16 24 32 / 0.28);
+  }
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #fbfbfa;
+  --bg-1: #ffffff;
+  --bg-2: #f3f4f3;
+  --bg-3: #e9ebea;
+  --line: #e0e3e2;
+  --line-2: #c6cccb;
+  --ink: #12161a;
+  --ink-2: #46525b;
+  --ink-3: #636e77;
+  --accent: #0f7d72;
+  --accent-2: #0a6a61;
+  --accent-quiet: #e2f2f0;
+  --accent-line: #a9d6d0;
+  --accent-ink: #ffffff;
+  --good: #0f7a45;
+  --good-quiet: #e2f3e9;
+  --warn: #8a5a00;
+  --warn-quiet: #fbf0d8;
+  --bad: #b02a20;
+  --bad-quiet: #fbe6e4;
+  --shadow-1: 0 1px 2px rgb(16 24 32 / 0.08);
+  --shadow-2: 0 14px 34px -14px rgb(16 24 32 / 0.28);
+}
+
+/* Reduced motion: kill every CSS transition too, not just the anime.js ones
+ * (motion.ts handles its own side). Nothing in the app depends on a transition
+ * finishing, so removing them changes nothing but the pixels. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 1ms;
+    --dur-base: 1ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}

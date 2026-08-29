@@ -3,10 +3,36 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>omnitool</title>
+    <title>omnitool — file tools that run in your browser</title>
+    <meta
+      name="description"
+      content="Merge PDFs, convert and resize images, zip, hash and reformat data — entirely in your browser. No uploads, no server, no account."
+    />
+    <!-- Dark first, but honour the system setting. -->
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#0a0b0d" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)" />
+    <script>
+      // Apply the stored theme override BEFORE first paint, so a light-theme
+      // visitor never sees a dark flash (and vice versa). Deliberately inline
+      // and tiny: it must run before the stylesheet resolves its tokens.
+      try {
+        var t = localStorage.getItem('omnitool:theme');
+        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+      } catch (e) {
+        /* storage blocked: the system preference stands */
+      }
+    </script>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <noscript>
+        <p style="margin: 4rem auto; max-width: 34rem; font: 1rem/1.6 system-ui; padding: 0 1.5rem">
+          omnitool does all of its work in your browser with JavaScript — there is no server to
+          fall back on. Please enable JavaScript for this page.
+        </p>
+      </noscript>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
