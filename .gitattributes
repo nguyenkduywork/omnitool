@@ -1,0 +1,18 @@
+# Normalize text files to LF regardless of platform/checkout settings.
+* text=auto eol=lf
+
+# Fixture and asset binaries must be committed byte-for-byte, never
+# LF/CRLF-normalized (some, like our hand-built encrypted.pdf, contain no
+# NUL bytes and would otherwise be misdetected as text by git's heuristic —
+# and a PDF's xref byte offsets break if a single \n becomes \r\n).
+*.pdf binary
+*.csv binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.zip binary
+*.ico binary
+*.woff binary
+*.woff2 binary
