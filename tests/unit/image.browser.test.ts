@@ -431,10 +431,10 @@ describe('image-crop', () => {
 // ---------------------------------------------------------------------------
 
 describe('image-merge-sheet', () => {
-  it('composites a transparent background onto WHITE for its JPEG output, never black (happy path + pixel proof)', async () => {
+  it('fills an opaque background as WHITE for its JPEG output, never black (happy path + pixel proof)', async () => {
     const inputs = [await opInput('a.png', 'image/png'), await opInput('b.png', 'image/png')]; // 4x4, 6x4
     const { ctx } = recorder();
-    const outputs = await mergeSheet(inputs, { layout: 'row', columns: 3, gap: 20, background: 'transparent' }, ctx);
+    const outputs = await mergeSheet(inputs, { layout: 'row', columns: 3, gap: 20, background: 'white' }, ctx);
 
     expect(outputs).toHaveLength(1);
     expect(outputs[0]?.type).toBe('image/jpeg');
@@ -456,6 +456,42 @@ describe('image-merge-sheet', () => {
     expect(r).toBeGreaterThan(200);
     expect(g).toBeGreaterThan(200);
     expect(b).toBeGreaterThan(200);
+  });
+
+  it("actually preserves alpha for background:'transparent' by switching to PNG", async () => {
+    const inputs = [await opInput('a.png', 'image/png'), await opInput('b.png', 'image/png')]; // 4x4, 6x4
+    const { ctx } = recorder();
+    const outputs = await mergeSheet(inputs, { layout: 'row', columns: 3, gap: 20, background: 'transparent' }, ctx);
+
+    // JPEG has no alpha channel, so a transparent sheet MUST NOT be JPEG —
+    // encoding it as one would silently flatten the transparency requested.
+    expect(outputs).toHaveLength(1);
+    expect(outputs[0]?.type).toBe('image/png');
+    expect(outputs[0]?.name).toBe('sheet.png');
+    expect(await decodeOutput(outputs[0] as OpOutput)).toEqual({ width: 32, height: 4 });
+
+    // Same gap pixel as the opaque case. Here nothing was ever painted, so it
+    // must still be fully transparent. Before this fix 'transparent' mapped to
+    // '#ffffff' and emitted a JPEG, making it byte-identical to 'white' — the
+    // option existed but did nothing. Asserting alpha === 0 is what pins that
+    // down; the colour channels are irrelevant when alpha is 0.
+    const [, , , alpha] = await samplePixel(outputs[0] as OpOutput, 15, 2);
+    expect(alpha).toBe(0);
+  });
+
+  it("does not produce identical output for 'transparent' and 'white'", async () => {
+    const opts = { layout: 'row', columns: 3, gap: 20 };
+    const mk = async (background: string): Promise<OpOutput> => {
+      const inputs = [await opInput('a.png', 'image/png'), await opInput('b.png', 'image/png')];
+      const { ctx } = recorder();
+      const outputs = await mergeSheet(inputs, { ...opts, background }, ctx);
+      return outputs[0] as OpOutput;
+    };
+    const [transparent, white] = [await mk('transparent'), await mk('white')];
+
+    // The regression guard: these two options must be distinguishable.
+    expect(transparent.type).not.toBe(white.type);
+    expect(new Uint8Array(transparent.buffer)).not.toEqual(new Uint8Array(white.buffer));
   });
 
   it('uses tray order and composites real image content, not just a solid fill', async () => {
