@@ -1,0 +1,238 @@
+# omnitool
+
+Everyday file tools — merge PDFs, convert and resize images, zip, hash, and
+reformat data — that run entirely inside your browser tab.
+
+**No file you open in omnitool ever leaves your device. There is no server.**
+Every operation — merging, converting, hashing, zipping — runs in a Web
+Worker on your own machine. omnitool makes zero network calls at runtime: no
+uploads, no analytics, no telemetry, no CDN fetches. You could disconnect
+from the internet after the page has loaded and every tool would keep
+working exactly the same. Open your browser's network tab if you want to see
+for yourself — it will stay empty.
+
+Open source, MIT licensed.
+
+## How it works
+
+A **tool registry** plus a **Web Worker pipeline**. Drop files in; omnitool
+sniffs their real type from magic bytes (never trusting a file extension);
+the registry is filtered down to the tools that apply; you pick one and run
+it in a worker, off the main thread. Results come back as real bytes you can
+download individually or as a zip. Nothing about this shape depends on a
+network round trip, which is exactly the point.
+
+## The tools
+
+**PDF**
+| Tool | What it does |
+| --- | --- |
+| Merge PDFs | Combine several PDFs into one, in file-tray order |
+| Split PDF | One file per page, or by page range (`1-3,7,9-`) |
+| Organize pages | Reorder, rotate, and delete pages on a visual page board |
+| Shrink PDF | Re-encodes images inside the PDF; reports real before/after bytes |
+| PDF to images | Rasterise every page to PNG or JPEG at a chosen DPI |
+| Images to PDF | One image per page, in file-tray order |
+| Extract text | Pull out the PDF's text layer as a `.txt` file |
+
+**Images**
+| Tool | What it does |
+| --- | --- |
+| Convert image | PNG, JPEG, WebP, or AVIF (see the AVIF note below) |
+| Resize image | By exact dimensions or by percentage, with optional aspect lock |
+| Compress image | Re-encode at a lower quality, same format |
+| Crop image | Draw a crop box on a visual editor, in the image's own pixels |
+| Merge into a sheet | Arrange several images into one contact sheet |
+
+**Data & text**
+| Tool | What it does |
+| --- | --- |
+| Create ZIP | Bundle the dropped files into one archive |
+| Extract ZIP | Unpack every file from a ZIP archive |
+| Hash files | SHA-256, SHA-1, SHA-512, or MD5 |
+| Base64 | Encode files to Base64 text, or decode back to bytes |
+| CSV ⇄ JSON | Convert between CSV and JSON, with quoted-field and CRLF handling |
+| Format JSON | Pretty-print or minify |
+| Generate QR code | Turn text or a URL into a QR code, PNG or SVG |
+
+## Known limitations (honest, on purpose)
+
+- **AVIF encoding does not actually work in any browser today.** Canvas's
+  `convertToBlob({ type: 'image/avif' })` doesn't throw for an unsupported
+  encoder — it silently hands back a PNG instead. omnitool probes the real
+  encoder at runtime (attempts a tiny encode and checks the blob's *actual*
+  type against what was requested) and disables the AVIF option in the UI,
+  with the reason shown, rather than ever labelling a PNG's bytes `.avif`.
+  `'avif'` stays in the option schema because the probe makes offering it
+  safe — it just comes back disabled in every browser we've tested. Genuine
+  AVIF output needs a WASM encoder (e.g. `@jsquash/avif`), which is a
+  deliberate v2 cut, not an oversight.
+- **"Shrink PDF" re-encodes images inside the PDF — it is not general-purpose
+  PDF compression.** It targets DCTDecode (JPEG) image XObjects that are
+  8-bit RGB or grayscale. JPEG 2000, CCITT, JBIG2, CMYK images, and stencil
+  masks are left untouched. If a PDF's size is dominated by fonts, vector
+  content, or one of those untouched formats, don't expect this tool to move
+  the needle — and it will never claim a reduction it didn't actually
+  achieve: if the re-encoded output would be larger than the original, it
+  returns the original unchanged and says so.
+- **A batch with a bad file costs a re-run.** The op contract has no channel
+  for an op to report "this one input failed, keep going" — its only way to
+  signal a failure is to throw, naming the file. So when one input in a
+  batch is bad, the worker drops it and **re-runs the whole op** on what's
+  left, to still report the good outputs honestly instead of failing the
+  whole batch. This is correct (a partial success is reported as partial,
+  and an all-bad batch rejects rather than lying) and terminating (the
+  remaining set shrinks every pass), but it isn't free: cost is roughly
+  `(bad_files + 1) × full work`. Worst case is a few bad inputs positioned
+  late — 50 images with the last 2 corrupt does about 3× the necessary work.
+  Fixing this properly means letting an op return per-input outcomes instead
+  of throwing, which touches every tool and is deliberately deferred to v2
+  rather than made as a mid-flight change to a frozen contract.
+- Audio/video conversion, OCR, and Office formats (`.docx`/`.xlsx`/`.pptx`)
+  are out of scope for v1 — see the design spec's non-goals.
+
+## Running it
+
+Requires Node ≥ 20.
+
+```bash
+npm install
+npm run dev        # local dev server
+npm run build       # production build to dist/
+npm run preview     # serve the production build locally
+```
+
+```bash
+npm run typecheck   # tsc --noEmit
+npm run lint        # eslint
+npm run test         # vitest (unit + headless-Chromium browser tests)
+npm run test:e2e     # playwright, against a production build
+npm run size         # verify the CI-enforced size budget (see CONTRIBUTING.md)
+```
+
+Deployment is automatic: pushing to `main` builds and publishes to GitHub
+Pages via `.github/workflows/deploy.yml`.
+
+## Add a tool in 20 lines
+
+Every tool is one function behind the same signature — no framework hooks,
+no base class to extend. Here is a genuinely new one, start to finish. It
+reverses the characters in a text file.
+
+**1. The op** — `src/tools/data/text-reverse.op.ts`. This is the *entire*
+file; it only imports from `src/types.ts`, per the import rules in
+CONTRIBUTING.md.
+
+```ts
+import { OpError, type Op, type OpOutput } from '../../types';
+
+const textReverse: Op = async (inputs, _options, ctx) => {
+  if (inputs.length === 0) {
+    throw new OpError('InvalidOptions', 'text-reverse needs at least one file');
+  }
+
+  const outputs: OpOutput[] = [];
+  for (let i = 0; i < inputs.length; i++) {
+    const input = inputs[i]!;
+    if (ctx.signal.aborted) throw new OpError('Cancelled', 'Cancelled');
+
+    let text: string;
+    try {
+      text = new TextDecoder('utf-8', { fatal: true }).decode(input.buffer);
+    } catch {
+      throw new OpError('CorruptFile', `${input.name} is not valid UTF-8 text`, input.name);
+    }
+
+    const reversed = [...text].reverse().join('');
+    outputs.push({ name: input.name, type: 'text/plain', buffer: new TextEncoder().encode(reversed).buffer });
+    ctx.onProgress((i + 1) / inputs.length);
+  }
+  return outputs;
+};
+
+export default textReverse;
+```
+
+**2. The registry entry** — one object appended to `PDF_TOOLS`'s sibling
+array for its group, `src/core/registry.data.ts` (see §5 of the
+implementation plan for why each tool group owns its own registry module):
+
+```ts
+{
+  id: 'text-reverse',
+  name: 'Reverse text',
+  blurb: 'Reverse the characters in a text file.',
+  group: 'data',
+  accepts: ['text/plain', 'text/csv', 'application/json'],
+  minInputs: 1,
+  maxInputs: null,
+  load: () => import('../tools/data/text-reverse.op'),
+},
+```
+
+**3. The loader-map line** — one entry in `DATA_LOADERS`, in
+`src/core/workers/loaders.data.ts`, so the worker can resolve the tool id to
+the op:
+
+```ts
+'text-reverse': () => import('../../tools/data/text-reverse.op'),
+```
+
+**4. The test** — `tests/unit/data.test.ts` (or its own file), covering the
+four cases every op needs per CONTRIBUTING.md: happy path, a typed error,
+cancellation, and progress.
+
+```ts
+import { describe, expect, it } from 'vitest';
+import textReverse from '../../src/tools/data/text-reverse.op';
+import type { OpContext } from '../../src/types';
+
+function input(name: string, text: string) {
+  return { name, type: 'text/plain', buffer: new TextEncoder().encode(text).buffer };
+}
+function ctx(signal: AbortSignal = new AbortController().signal) {
+  const seen: number[] = [];
+  return { seen, ctx: { onProgress: (f: number) => seen.push(f), signal } satisfies OpContext };
+}
+
+describe('text-reverse', () => {
+  it('reverses the characters of a text file', async () => {
+    const [out] = await textReverse([input('a.txt', 'abc')], {}, ctx().ctx);
+    expect(new TextDecoder().decode(out!.buffer)).toBe('cba');
+  });
+
+  it('raises CorruptFile on invalid UTF-8', async () => {
+    const bad = { name: 'bad.txt', type: 'text/plain', buffer: new Uint8Array([0xff, 0xfe, 0xfd]).buffer };
+    await expect(textReverse([bad], {}, ctx().ctx)).rejects.toMatchObject({ code: 'CorruptFile' });
+  });
+
+  it('raises Cancelled when the signal is already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      textReverse([input('a.txt', 'abc')], {}, ctx(controller.signal).ctx),
+    ).rejects.toMatchObject({ code: 'Cancelled' });
+  });
+
+  it('reports monotonic progress ending at 1', async () => {
+    const { ctx: c, seen } = ctx();
+    await textReverse([input('a.txt', 'ab'), input('b.txt', 'cd')], {}, c);
+    expect(seen).toEqual([0.5, 1]);
+  });
+});
+```
+
+That's it — no router, no manual chunk config, nothing else to wire up. Vite
+code-splits the op into its own lazily-loaded chunk automatically, and the
+tool appears in the UI for exactly the file types listed in `accepts` the
+moment its registry entry exists.
+
+*(This example is compile-verified against the real, current
+`src/types.ts` contract and actually executes correctly — see
+CONTRIBUTING.md if you want to check it yourself; it isn't shipped as a real
+tool here, to keep this README's example self-contained and out of the way
+of the actual registry.)*
+
+## License
+
+MIT — see [LICENSE](./LICENSE).
