@@ -1,0 +1,364 @@
+/* src/tools/pdf/organize.editor.css — styles for the pdf-organize page board.
+ *
+ * Shipped WITH the editor rather than in src/styles/app.css: the editor is
+ * lazily imported, so Vite emits this as its own CSS chunk that loads only
+ * when someone actually opens Organize pages. Putting it in app.css would
+ * charge every visitor for a screen most of them never open, against a
+ * CI-enforced 12 KB initial-CSS budget.
+ *
+ * Uses the app's existing tokens (--ink, --bg-2, --accent, --s-*, --r-*) so
+ * the board inherits both themes automatically.
+ */
+
+.pdf-organize {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+/* ---------------------------------------------------------------- toolbar */
+
+.pdf-organize__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-3);
+  padding-bottom: var(--s-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.pdf-organize__status {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.pdf-organize__status b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.pdf-organize__status i {
+  font-style: normal;
+  color: var(--bad);
+}
+
+.pdf-organize__spacer {
+  flex: 1 1 auto;
+}
+
+.pdf-organize__reset {
+  appearance: none;
+  border: 1px solid var(--line-2);
+  background: var(--bg-2);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--fs-sm);
+  padding: var(--s-1) var(--s-3);
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+
+.pdf-organize__reset:hover:not(:disabled) {
+  color: var(--ink);
+  border-color: var(--accent-line);
+}
+
+.pdf-organize__reset:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.pdf-organize__hint {
+  flex: 1 0 100%;
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+}
+
+.pdf-organize__hint kbd {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--bg-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  padding: 0 0.35em;
+  color: var(--ink-2);
+}
+
+/* ------------------------------------------------------------------ board */
+
+.pdf-organize__pages {
+  /* list-style: none is the fix for the duplicated numbering — the <ol>'s own
+     marker and the card's position badge were both rendering. */
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: var(--s-3);
+  /* A 138-page board would otherwise push the Run button off-screen. */
+  max-height: min(58vh, 34rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--s-1);
+}
+
+.pdf-organize__page {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-2);
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  cursor: grab;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease),
+    opacity var(--dur-fast) var(--ease);
+}
+
+.pdf-organize__page:hover {
+  border-color: var(--line-2);
+}
+
+.pdf-organize__page:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+  border-color: var(--accent-line);
+}
+
+.pdf-organize__page[data-dragging='true'] {
+  opacity: 0.4;
+  cursor: grabbing;
+}
+
+/* Insertion indicator: a bar on the edge the page would land against, which
+   is far less ambiguous than highlighting the whole target card. */
+.pdf-organize__page[data-drop='before']::before,
+.pdf-organize__page[data-drop='after']::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+.pdf-organize__page[data-drop='before']::before {
+  left: calc(var(--s-2) * -1);
+}
+
+.pdf-organize__page[data-drop='after']::before {
+  right: calc(var(--s-2) * -1);
+}
+
+/* ---------------------------------------------------------------- deleted */
+
+.pdf-organize__page[data-keep='false'] {
+  border-color: var(--bad-quiet);
+  background: color-mix(in srgb, var(--bad-quiet) 35%, var(--bg-1));
+}
+
+.pdf-organize__page[data-keep='false'] .pdf-organize__paper {
+  opacity: 0.28;
+  filter: grayscale(1);
+}
+
+.pdf-organize__page[data-keep='false'] .pdf-organize__num {
+  background: var(--bad);
+  color: var(--bg);
+  text-decoration: line-through;
+}
+
+/* ------------------------------------------------------------------ paper */
+
+/* A SQUARE box is what makes rotation safe: a portrait canvas scaled to fit a
+   square still fits after a 90deg turn, because the square is symmetric. No
+   per-rotation size juggling, no overflow into neighbouring cards. */
+.pdf-organize__thumb {
+  position: relative;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  background: var(--bg-3);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+
+.pdf-organize__paper {
+  max-width: 100%;
+  max-height: 100%;
+  display: block;
+  box-shadow: var(--shadow-1);
+  transition:
+    transform var(--dur-base) var(--ease),
+    opacity var(--dur-fast) var(--ease),
+    filter var(--dur-fast) var(--ease);
+}
+
+/* Placeholder while a thumbnail is off-screen or still rendering. */
+.pdf-organize__thumb:not(:has(canvas))::after {
+  content: '';
+  width: 42%;
+  height: 58%;
+  border-radius: 2px;
+  background: linear-gradient(
+    100deg,
+    var(--bg-2) 30%,
+    color-mix(in srgb, var(--ink-3) 22%, var(--bg-2)) 50%,
+    var(--bg-2) 70%
+  );
+  background-size: 220% 100%;
+  animation: pdf-organize-shimmer 1.3s linear infinite;
+}
+
+@keyframes pdf-organize-shimmer {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -120% 0;
+  }
+}
+
+/* ----------------------------------------------------------------- labels */
+
+.pdf-organize__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: 1.25rem;
+}
+
+/* Quiet by default. The thumbnails are the content; the position number is
+   only the card's identity, and 138 accent-filled chips would drown them. */
+.pdf-organize__num {
+  flex: 0 0 auto;
+  min-width: 1.5rem;
+  padding: 0 0.3rem;
+  height: 1.25rem;
+  display: grid;
+  place-items: center;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+  background: var(--bg-3);
+  border-radius: var(--r-sm);
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+/* Accent is reserved for pages you have moved or rotated, so a glance answers
+   "what did I change?" — the only question worth asking on a long document. */
+.pdf-organize__page[data-moved='true'] .pdf-organize__num {
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+
+/* Source page number. Only meaningful once the order has changed, so it stays
+   hidden until then rather than showing "p.1" against position 1 forever. */
+.pdf-organize__src {
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pdf-organize__src[hidden] {
+  display: none;
+}
+
+/* --------------------------------------------------------------- controls */
+
+/* Overlaid on the thumbnail and revealed on hover/focus. 138 cards x 4 always-
+   visible buttons is 552 competing controls; the board should read as pages. */
+.pdf-organize__controls {
+  position: absolute;
+  inset: auto 0 0 0;
+  display: flex;
+  justify-content: center;
+  gap: 2px;
+  padding: var(--s-1);
+  background: linear-gradient(to top, rgb(0 0 0 / 0.82), rgb(0 0 0 / 0));
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+
+.pdf-organize__page:hover .pdf-organize__controls,
+.pdf-organize__page:focus-visible .pdf-organize__controls,
+.pdf-organize__controls:focus-within {
+  opacity: 1;
+  transform: none;
+}
+
+.pdf-organize__controls button {
+  appearance: none;
+  width: 1.5rem;
+  height: 1.5rem;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: rgb(255 255 255 / 0.12);
+  color: #fff;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.pdf-organize__controls button:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.pdf-organize__controls button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.pdf-organize__controls button[data-action='remove']:hover:not(:disabled) {
+  background: var(--bad);
+  color: var(--bg);
+}
+
+.pdf-organize__controls svg {
+  width: 0.875rem;
+  height: 0.875rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ------------------------------------------------------------ small print */
+
+/* Touch has no hover, so the controls would never appear. Show them at rest. */
+@media (hover: none) {
+  .pdf-organize__controls {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pdf-organize__page,
+  .pdf-organize__paper,
+  .pdf-organize__controls,
+  .pdf-organize__reset {
+    transition: none;
+  }
+
+  .pdf-organize__thumb:not(:has(canvas))::after {
+    animation: none;
+  }
+}
