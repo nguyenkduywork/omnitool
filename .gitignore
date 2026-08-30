@@ -10,3 +10,6 @@ playwright-report/
 tests/unit/__screenshots__/
 
 # OCR engine assets (worker script, WASM cores, per-language traineddata) —
+
+# Brainstorming companion mockups (superpowers skill)
+.superpowers/
