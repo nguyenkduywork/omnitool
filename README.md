@@ -1,5 +1,10 @@
 # omnitool
 
+![CI](https://github.com/nguyenkduywork/omnitool/actions/workflows/ci.yml/badge.svg)
+![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
+![Node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen)
+![TypeScript](https://img.shields.io/badge/typescript-strict-3178c6)
+
 Everyday file tools — merge PDFs, convert and resize images, zip, hash, and
 reformat data — that run entirely inside your browser tab.
 
@@ -12,6 +17,22 @@ the same. Open your browser's network tab if you want to see for yourself — it
 will stay empty.
 
 Open source, MIT licensed.
+
+## Contents
+
+- [How it works](#how-it-works)
+- [Getting around](#getting-around)
+- [The tools](#the-tools)
+- [Requirements](#requirements)
+- [Getting started](#getting-started)
+- [Scripts](#scripts)
+- [Project structure](#project-structure)
+- [Testing](#testing)
+- [Deployment](#deployment)
+- [Known limitations (honest, on purpose)](#known-limitations-honest-on-purpose)
+- [Contributing](#contributing)
+- [Add a tool in 20 lines](#add-a-tool-in-20-lines)
+- [License](#license)
 
 ## How it works
 
@@ -89,6 +110,105 @@ from your browser's address bar if you want it out of a tab.
 | Format JSON | Pretty-print or minify |
 | Generate QR code | Turn text or a URL into a QR code, PNG or SVG |
 
+## Requirements
+
+**To use the app:** a current version of Chrome, Edge, Firefox, or Safari.
+omnitool relies on standard, evergreen browser APIs — Web Workers,
+`OffscreenCanvas`, `createImageBitmap`, and a service worker for the
+installable/offline behaviour — and nothing beyond them; there's no
+browser-specific code path. The CI suite runs the full app (unit, browser,
+and end-to-end tests) against headless Chromium on every change, so that
+combination is the most exhaustively verified.
+
+**To build or develop it:** Node.js ≥ 20 (enforced by `package.json`'s
+`engines` field) and npm.
+
+## Getting started
+
+```bash
+git clone https://github.com/nguyenkduywork/omnitool.git
+cd omnitool
+npm install
+npm run dev
+```
+
+Then open the printed local URL. There's no environment configuration, no
+API keys, and no backend to stand up — the dev server is the entire stack.
+
+## Scripts
+
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | Start the local dev server (Vite) |
+| `npm run build` | Production build to `dist/` |
+| `npm run preview` | Serve the production build locally |
+| `npm run typecheck` | `tsc --noEmit`, strict mode |
+| `npm run lint` | ESLint, including the import-boundary rules in [CONTRIBUTING.md](./CONTRIBUTING.md) |
+| `npm run test` | Vitest — unit tests plus headless-Chromium browser tests |
+| `npm run test:e2e` | Playwright, against a real production build |
+| `npm run contrast` | Recomputes every ink/surface colour pairing in `src/styles/tokens.css` against WCAG AA, in both themes |
+| `npm run size` | Verifies the CI-enforced initial-load size budget (see [CONTRIBUTING.md](./CONTRIBUTING.md)) |
+| `npm run make-fixtures` | Regenerates the committed binary test fixtures in `tests/fixtures/` |
+
+Before opening a PR, run the same gate CI runs:
+
+```bash
+npm run typecheck && npm run lint && npm run test && npm run build && npm run size && npm run test:e2e
+```
+
+## Project structure
+
+```
+src/
+  types.ts          # the whole contract: Op, OpInput/Output, OpError, ToolDef — dependency-free
+  core/              # registry, Web Worker pipeline, pool — never imports from ui/
+  tools/
+    pdf/             # one *.op.ts (+ optional *.editor.ts) per tool, DOM-free, pure functions
+    image/
+    data/
+  ui/                # DOM, dropzone, results tray, command palette, animation — never runs in a worker
+  styles/            # design tokens (tokens.css) + component styles (app.css)
+tests/
+  unit/              # vitest — plain Node for pure ops, headless Chromium for canvas/OffscreenCanvas ops
+  e2e/               # Playwright, against a production build
+  fixtures/          # real, format-valid binary fixtures (see make-fixtures.mjs) — never placeholders
+docs/superpowers/     # the original design spec and implementation plan this app was built from
+```
+
+The dependency direction is strict and lint-enforced: `ui/` → `core/` →
+`types.ts`, and `tools/**` imports only `types.ts` and its own npm
+dependencies — never `core/` or `ui/`. That's what makes "copy one file, add
+one registry line" a true description of adding a tool; see
+[Add a tool in 20 lines](#add-a-tool-in-20-lines).
+
+## Testing
+
+Every op ships with the **four-test rule** from
+[CONTRIBUTING.md](./CONTRIBUTING.md#2-the-four-test-rule): a happy path, a
+typed error (a real `OpErrorCode`, never a bare `Error`), cancellation via
+`AbortSignal`, and monotonic progress ending at exactly `1`. Ops that touch
+`OffscreenCanvas`, `createImageBitmap`, or `convertToBlob` run under a
+headless-Chromium Vitest project (`*.browser.test.ts`) since those APIs
+don't exist in plain Node; everything else runs fast under Node.
+
+End-to-end coverage (`tests/e2e/`) drives a real production build with
+Playwright: golden flows for each tool family, the accessibility suite
+(keyboard-only operation, focus visibility, `aria-live` announcements), and
+the bespoke visual editors (PDF page board, image crop, rotate preview).
+
+## Deployment
+
+CI (`.github/workflows/ci.yml`) runs on every push and pull request:
+typecheck, lint, colour-contrast check, unit/browser tests, production
+build, size-budget check, and the full e2e suite.
+
+Publishing to GitHub Pages (`.github/workflows/deploy.yml`) is
+**manually triggered** (Actions → Deploy → Run workflow), not automatic on
+push. GitHub Pages isn't available for a private repository below
+GitHub Pro/Team/Enterprise, so this is intentional rather than a leftover —
+run it by hand once the repo is public or on a plan that supports private
+Pages.
+
 ## Known limitations (honest, on purpose)
 
 - **AVIF encoding does not actually work in any browser today.** Canvas's
@@ -151,27 +271,14 @@ from your browser's address bar if you want it out of a tab.
   contained text, and making it useful on scans meant carrying an OCR engine,
   which is more machinery than this project wants.
 
-## Running it
+## Contributing
 
-Requires Node ≥ 20.
-
-```bash
-npm install
-npm run dev        # local dev server
-npm run build       # production build to dist/
-npm run preview     # serve the production build locally
-```
-
-```bash
-npm run typecheck   # tsc --noEmit
-npm run lint        # eslint
-npm run test         # vitest (unit + headless-Chromium browser tests)
-npm run test:e2e     # playwright, against a production build
-npm run size         # verify the CI-enforced size budget (see CONTRIBUTING.md)
-```
-
-Deployment is automatic: pushing to `main` builds and publishes to GitHub
-Pages via `.github/workflows/deploy.yml`.
+Contributions are welcome. Before sending a PR, read
+[CONTRIBUTING.md](./CONTRIBUTING.md) — it covers the three things that are
+mechanically enforced (import boundaries, the four-test rule, and the size
+budget) rather than left to reviewer taste, plus the commands CI runs so you
+can catch a failure locally first. Commit messages follow
+[Conventional Commits](https://www.conventionalcommits.org/).
 
 ## Add a tool in 20 lines
 
