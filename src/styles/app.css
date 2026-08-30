@@ -5,8 +5,19 @@
  * a single grid cell so the dropzone can dissolve into the workbench in place,
  * with no reflow mid-transition (motion.ts drives the transform/opacity side).
  *
- * Hover and selection states use transform and colour only — nothing here
- * animates a layout property.
+ * Three rules this file keeps to:
+ *
+ *   1. NOTHING ANIMATES A LAYOUT PROPERTY. Hover and selection states move
+ *      `transform` and change colour; they never touch width, height, padding
+ *      or margin, so a hover can never reflow the grid under the pointer.
+ *
+ *   2. ELEVATION IS A LADDER, NOT A DECORATION. A surface is raised by the
+ *      `--bg-*` step it sits on plus `--edge` (a one-pixel top highlight) and a
+ *      shadow. The three appear together or not at all.
+ *
+ *   3. THE ACCENT MEANS "YOU CAN ACT ON THIS". Family hues (`data-kind`) mean
+ *      "this is a PDF thing / an image thing / a data thing" and are confined
+ *      to glyphs and section labels. See the note at the top of tokens.css.
  */
 
 *,
@@ -88,16 +99,50 @@ button {
   min-height: 100dvh;
 }
 
+/* The family tint, resolved once per subtree. Every `[data-kind]` element below
+ * reads `--fam` and `--fam-quiet` instead of naming a family directly, so a card,
+ * a section header and a file row stay in step by construction. */
+[data-kind='pdf'] {
+  --fam: var(--fam-pdf);
+  --fam-quiet: var(--fam-pdf-quiet);
+}
+
+[data-kind='image'] {
+  --fam: var(--fam-image);
+  --fam-quiet: var(--fam-image-quiet);
+}
+
+[data-kind='data'] {
+  --fam: var(--fam-data);
+  --fam-quiet: var(--fam-data-quiet);
+}
+
 /* ---------------------------------------------------------------- topbar */
 
+/* Sticky, because Ctrl/Cmd-K and the theme toggle are the two controls that
+ * must be reachable from anywhere on a long page — and a translucent bar over
+ * scrolling content needs a bottom edge or the content appears to bleed
+ * through it. `--topbar-h` is its own height, published so the sticky file
+ * rail below can clear it. */
 .topbar {
+  --topbar-h: 3.375rem;
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  padding: var(--s-3) var(--s-5);
+  background: color-mix(in oklab, var(--bg) 86%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line);
+}
+
+.topbar__inner {
   display: flex;
   align-items: center;
-  gap: var(--s-4);
+  gap: var(--s-3);
   width: 100%;
   max-width: var(--page);
   margin-inline: auto;
-  padding: var(--s-4) var(--s-5);
 }
 
 .brand {
@@ -105,30 +150,44 @@ button {
   align-items: center;
   gap: var(--s-2);
   font-size: var(--fs-md);
-  font-weight: 600;
+  font-weight: 620;
   letter-spacing: var(--tracking-tight);
 }
 
 .brand__mark {
   display: grid;
   place-items: center;
-  width: 1.75rem;
-  height: 1.75rem;
+  width: 1.875rem;
+  height: 1.875rem;
   border-radius: var(--r-sm);
-  background: var(--accent-quiet);
+  background: linear-gradient(160deg, var(--accent-quiet), color-mix(in oklab, var(--accent-quiet) 55%, var(--bg-1)));
   color: var(--accent);
   border: 1px solid var(--accent-line);
+  box-shadow: var(--edge);
 }
 
 .brand__claim {
   flex: 1;
   min-width: 0;
+  padding-inline-start: var(--s-3);
+  border-inline-start: 1px solid var(--line);
   color: var(--ink-3);
   font-size: var(--fs-sm);
 }
 
-@media (max-width: 34rem) {
+@media (max-width: 48rem) {
   .brand__claim {
+    display: none;
+  }
+}
+
+.searchbtn {
+  gap: var(--s-2);
+}
+
+@media (max-width: 30rem) {
+  .searchbtn__label,
+  .searchbtn kbd {
     display: none;
   }
 }
@@ -139,7 +198,7 @@ button {
   width: 100%;
   max-width: var(--page);
   margin-inline: auto;
-  padding: var(--s-2) var(--s-5) var(--s-7);
+  padding: var(--s-5) var(--s-5) var(--s-8);
   display: grid;
   gap: var(--s-6);
   align-content: start;
@@ -159,15 +218,8 @@ button {
 
 .hero {
   display: grid;
-  place-items: center;
-  min-height: min(58vh, 26rem);
-  padding: var(--s-6) var(--s-4);
-  border: 1px dashed var(--line-2);
-  border-radius: var(--r-xl);
-  background:
-    radial-gradient(120% 90% at 50% 0%, var(--bg-1) 0%, transparent 70%),
-    var(--bg);
-  transition: border-color var(--dur-base) var(--ease);
+  gap: var(--s-6);
+  align-content: start;
 }
 
 .hero.is-exiting {
@@ -175,49 +227,108 @@ button {
   pointer-events: none;
 }
 
+/* The drop surface. Dashed, because a dashed edge is the one border convention
+ * that reads as "put something here" before anyone has read the words. */
+.hero__drop {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: min(46vh, 21rem);
+  padding: var(--s-7) var(--s-5);
+  border: 1px dashed var(--line-2);
+  border-radius: var(--r-xl);
+  overflow: hidden;
+  background:
+    radial-gradient(90% 120% at 50% -10%, var(--accent-glow), transparent 55%),
+    radial-gradient(120% 100% at 50% 0%, var(--bg-1) 0%, transparent 72%),
+    var(--bg);
+  transition:
+    border-color var(--dur-base) var(--ease),
+    background-color var(--dur-base) var(--ease);
+}
+
+/* A faint grid, so the empty surface has texture instead of being a void.
+ * Masked to fade out toward the edges — a grid that runs into the border looks
+ * like a mistake, one that dissolves looks like paper. */
+.hero__drop::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, var(--line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--line) 1px, transparent 1px);
+  background-size: 3rem 3rem;
+  opacity: 0.5;
+  mask-image: radial-gradient(70% 60% at 50% 45%, #000 0%, transparent 100%);
+  pointer-events: none;
+}
+
 .hero__panel {
+  position: relative;
   display: grid;
   justify-items: center;
-  gap: var(--s-3);
-  max-width: 34rem;
+  gap: var(--s-4);
+  max-width: 40rem;
   text-align: center;
 }
 
-.hero__mark {
-  display: grid;
-  place-items: center;
-  width: 2.75rem;
-  height: 2.75rem;
-  margin-bottom: var(--s-1);
-  border-radius: var(--r-md);
-  background: var(--accent-quiet);
+.hero__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 0.3rem 0.75rem 0.3rem 0.55rem;
+  border-radius: var(--r-pill);
   border: 1px solid var(--accent-line);
+  background: var(--accent-quiet);
   color: var(--accent);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
-.hero__mark .icon {
-  width: 1.4rem;
-  height: 1.4rem;
+.hero__pip {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: var(--r-pill);
+  background: var(--accent);
 }
 
 .hero__title {
+  display: grid;
   font-size: var(--fs-hero);
   line-height: var(--lh-tight);
-  letter-spacing: var(--tracking-tight);
-  font-weight: 600;
+  letter-spacing: var(--tracking-tighter);
+  font-weight: 680;
   text-wrap: balance;
+}
+
+/* The second line carries the accent as a gradient wash rather than a flat
+ * fill: flat accent at display size is loud enough to compete with the button,
+ * which is the only thing on this screen that should be shouting. */
+.hero__line--accent {
+  background: linear-gradient(100deg, var(--ink) 10%, var(--accent) 92%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 .hero__sub {
   color: var(--ink-2);
-  max-width: 30rem;
-  text-wrap: pretty;
+  max-width: 33rem;
+  text-wrap: balance;
+}
+
+.hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--s-3);
+  margin-top: var(--s-2);
 }
 
 .hero__hint {
   color: var(--ink-3);
   font-size: var(--fs-sm);
-  margin-top: var(--s-1);
 }
 
 kbd {
@@ -236,13 +347,131 @@ html.is-dragging body::after {
   inset: var(--s-3);
   border: 2px dashed var(--accent);
   border-radius: var(--r-xl);
-  background: color-mix(in oklab, var(--accent) 8%, transparent);
+  background: color-mix(in oklab, var(--accent) 7%, transparent);
   pointer-events: none;
   z-index: 50;
 }
 
-html.is-dragging .hero {
+html.is-dragging .hero__drop {
   border-color: var(--accent);
+}
+
+/* -------------------------------------------------- hero: the three facts */
+
+.facts {
+  display: grid;
+  gap: var(--s-3);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+}
+
+.fact {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--bg-1);
+  box-shadow: var(--edge);
+}
+
+.fact__icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--r-sm);
+  background: var(--accent-quiet);
+  color: var(--accent);
+}
+
+.fact__icon .icon {
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+.fact__title {
+  font-size: var(--fs-sm);
+  font-weight: 620;
+  letter-spacing: var(--tracking-tight);
+}
+
+.fact__text {
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-snug);
+  margin-top: 0.15rem;
+}
+
+/* ----------------------------------------------- hero: the tool families */
+
+.families {
+  display: grid;
+  gap: var(--s-4);
+  padding: var(--s-5);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--bg-1);
+  box-shadow: var(--edge);
+}
+
+.families__title {
+  font-size: var(--fs-md);
+  font-weight: 620;
+  letter-spacing: var(--tracking-tight);
+}
+
+.families__list {
+  display: grid;
+  gap: var(--s-4);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+}
+
+.family {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  padding-inline-start: var(--s-3);
+  border-inline-start: 2px solid var(--fam);
+}
+
+.family__icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: var(--r-sm);
+  background: var(--fam-quiet);
+  color: var(--fam);
+}
+
+.family__icon .icon {
+  width: 1rem;
+  height: 1rem;
+}
+
+.family__name {
+  font-size: var(--fs-sm);
+  font-weight: 620;
+  color: var(--fam);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+}
+
+.family__text {
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-snug);
+  margin-top: 0.2rem;
+}
+
+.families__note {
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--line);
 }
 
 /* ------------------------------------------------------------- workbench */
@@ -253,9 +482,20 @@ html.is-dragging .hero {
   align-items: start;
 }
 
-@media (min-width: 60rem) {
+@media (min-width: 64rem) {
   .workbench {
-    grid-template-columns: minmax(0, 21rem) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 21.5rem) minmax(0, 1fr);
+  }
+
+  /* The file rail follows the tool column, because the tray IS the context for
+   * everything on the right — merge order especially. 3.375rem is the topbar's
+   * own height (see `--topbar-h`), which this must clear. */
+  .panel--files {
+    position: sticky;
+    top: calc(3.375rem + var(--s-4));
+    max-height: calc(100dvh - 3.375rem - var(--s-6));
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
 }
 
@@ -267,19 +507,32 @@ html.is-dragging .hero {
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   background: var(--bg-1);
+  box-shadow: var(--edge);
 }
 
 .panel--work {
   background: transparent;
   border: 0;
   padding: 0;
-  gap: var(--s-5);
+  gap: var(--s-6);
+  box-shadow: none;
 }
 
 .panel__title {
   font-size: var(--fs-md);
-  font-weight: 600;
+  font-weight: 620;
   letter-spacing: var(--tracking-tight);
+}
+
+/* The "remove all" button is destructive and permanent; it sits apart from the
+ * tray rather than inside its rhythm, and only names its danger on hover. */
+.clearbtn {
+  justify-self: start;
+}
+
+.clearbtn:hover:not(:disabled) {
+  color: var(--bad);
+  border-color: color-mix(in oklab, var(--bad) 45%, transparent);
 }
 
 /* ------------------------------------------------------------- file tray */
@@ -306,6 +559,8 @@ html.is-dragging .hero {
   align-items: baseline;
   justify-content: space-between;
   gap: var(--s-2);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--line);
 }
 
 .tray__count {
@@ -343,6 +598,7 @@ html.is-dragging .hero {
 
 .tray__item:hover {
   border-color: var(--line-2);
+  background: var(--bg-3);
 }
 
 .tray__item.is-dragging {
@@ -379,7 +635,7 @@ html.is-dragging .hero {
   height: 2.5rem;
   border-radius: var(--r-sm);
   overflow: hidden;
-  background: var(--bg-3);
+  background: var(--fam-quiet, var(--bg-3));
   border: 1px solid var(--line);
 }
 
@@ -390,9 +646,9 @@ html.is-dragging .hero {
 }
 
 .tray__badge {
-  font: 600 var(--fs-xs) / 1 var(--font-mono);
-  letter-spacing: var(--tracking-wide);
-  color: var(--ink-3);
+  font: 700 0.625rem / 1 var(--font-mono);
+  letter-spacing: 0.04em;
+  color: var(--fam, var(--ink-3));
 }
 
 .tray__body {
@@ -439,7 +695,7 @@ html.is-dragging .hero {
 
 .tray__nudge:hover:not(:disabled) {
   color: var(--ink);
-  background: var(--bg-3);
+  background: var(--bg-1);
 }
 
 .tray__nudge:disabled {
@@ -456,26 +712,35 @@ html.is-dragging .hero {
 
 .tools {
   display: grid;
-  gap: var(--s-3);
+  gap: var(--s-5);
+}
+
+.tools__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-2) var(--s-3);
 }
 
 .tools__count {
   color: var(--ink-3);
   font-size: var(--fs-xs);
-  margin-top: calc(-1 * var(--s-2));
+  font-variant-numeric: tabular-nums;
 }
 
 .tools__groups {
   display: grid;
-  gap: var(--s-5);
+  gap: var(--s-6);
 }
 
 .tools__empty {
-  padding: var(--s-4);
+  padding: var(--s-5);
   border: 1px dashed var(--line-2);
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
   color: var(--ink-2);
   font-size: var(--fs-sm);
+  text-wrap: pretty;
 }
 
 .toolgroup {
@@ -483,43 +748,114 @@ html.is-dragging .hero {
   gap: var(--s-3);
 }
 
+.toolgroup__head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+/* The rule runs from the label to the far edge, so a group reads as a band
+ * across the grid rather than a stray word above some cards. */
+.toolgroup__head::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(to right, var(--line), transparent);
+}
+
+.toolgroup__icon {
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 0.4rem;
+  background: var(--fam-quiet);
+  color: var(--fam);
+}
+
+.toolgroup__icon .icon {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
 .toolgroup__title {
   font-size: var(--fs-xs);
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: var(--tracking-wide);
   text-transform: uppercase;
+  color: var(--fam);
+}
+
+.toolgroup__count {
+  font: 600 var(--fs-xs) / 1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
   color: var(--ink-3);
+  padding: 0.15rem 0.4rem;
+  border-radius: var(--r-pill);
+  background: var(--bg-2);
 }
 
 .toolgroup__grid {
   display: grid;
   gap: var(--s-3);
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr));
 }
 
 .toolcard {
+  position: relative;
   display: grid;
-  gap: var(--s-1);
-  padding: var(--s-3) var(--s-4);
+  /* Pinned to the top: a stretched grid would centre each card's rows inside
+     the tallest card in the row, so a two-line blurb next to a three-line one
+     would push their titles off a shared baseline. */
+  align-content: start;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4) var(--s-4);
   text-align: left;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: var(--bg-1);
+  box-shadow: var(--edge);
   cursor: pointer;
+  overflow: hidden;
   transition:
     transform var(--dur-base) var(--ease),
     border-color var(--dur-base) var(--ease),
+    box-shadow var(--dur-base) var(--ease),
     background-color var(--dur-base) var(--ease);
+}
+
+/* The family's colour, as a hairline along the card's top edge. It is the
+ * cheapest possible way to make a grid of eighteen near-identical rectangles
+ * sort itself into three groups at a glance — and it costs no layout. */
+.toolcard::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 2px;
+  background: var(--fam);
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease);
 }
 
 .toolcard:hover {
   border-color: var(--line-2);
   transform: translateY(-2px);
+  box-shadow: var(--edge), var(--shadow-2);
+}
+
+.toolcard:hover::before {
+  opacity: 0.8;
 }
 
 .toolcard.is-selected {
   border-color: var(--accent-line);
   background: var(--accent-quiet);
+  box-shadow: var(--edge), 0 0 0 1px var(--accent-line);
+}
+
+.toolcard.is-selected::before {
+  background: var(--accent);
+  opacity: 1;
 }
 
 .toolcard__top {
@@ -528,11 +864,33 @@ html.is-dragging .hero {
   gap: var(--s-2);
 }
 
+.toolcard__icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 1.875rem;
+  height: 1.875rem;
+  border-radius: var(--r-sm);
+  background: var(--fam-quiet);
+  color: var(--fam);
+  transition: background-color var(--dur-base) var(--ease), color var(--dur-base) var(--ease);
+}
+
+.toolcard__icon .icon {
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+.toolcard.is-selected .toolcard__icon {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
 .toolcard__name {
   flex: 1;
   min-width: 0;
   font-size: var(--fs-base);
-  font-weight: 600;
+  font-weight: 620;
   letter-spacing: var(--tracking-tight);
 }
 
@@ -561,26 +919,63 @@ html.is-dragging .hero {
   display: grid;
   gap: var(--s-4);
   padding: var(--s-5);
-  border: 1px solid var(--line);
+  border: 1px solid var(--accent-line);
   border-radius: var(--r-lg);
   background: var(--bg-1);
-  box-shadow: var(--shadow-1);
+  box-shadow: var(--edge), var(--shadow-2);
+}
+
+.run__head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+}
+
+.run__glyph {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 2.375rem;
+  height: 2.375rem;
+  border-radius: var(--r-md);
+  background: var(--fam-quiet);
+  color: var(--fam);
+}
+
+.run__glyph .icon {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.run__titles {
+  min-width: 0;
 }
 
 .run__blurb {
   color: var(--ink-2);
   font-size: var(--fs-sm);
-  margin-top: calc(-1 * var(--s-3));
-  max-width: 44rem;
+  line-height: var(--lh-snug);
+  max-width: 48rem;
 }
 
+/* The action row sticks to the bottom of the viewport while the panel is on
+ * screen, so Run stays reachable under a tall editor (the page board can be
+ * several screens long) without scrolling back down to find it. */
 .run__bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--s-3);
-  padding-top: var(--s-3);
+  margin: calc(-1 * var(--s-5));
+  margin-top: 0;
+  padding: var(--s-4) var(--s-5);
   border-top: 1px solid var(--line);
+  border-radius: 0 0 var(--r-lg) var(--r-lg);
+  background: color-mix(in oklab, var(--bg-1) 96%, transparent);
+  backdrop-filter: blur(10px);
 }
 
 .run__progress {
@@ -592,16 +987,22 @@ html.is-dragging .hero {
 
 /* --------------------------------------------------------------- options */
 
+/* Capped: at the run panel's full width an option row becomes a metre-long bar
+   with a 6rem select stranded at one end. A form column reads as a form. */
 .options {
   display: grid;
-  gap: var(--s-4);
+  gap: var(--s-3);
+  max-width: 42rem;
 }
 
 .opt {
   display: grid;
-  gap: var(--s-2);
-  grid-template-columns: minmax(0, 12rem) minmax(0, 1fr);
+  gap: var(--s-2) var(--s-4);
+  grid-template-columns: minmax(0, 11rem) minmax(0, 1fr);
   align-items: center;
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-sm);
+  background: var(--bg-2);
 }
 
 @media (max-width: 40rem) {
@@ -613,6 +1014,7 @@ html.is-dragging .hero {
 .opt__label {
   font-size: var(--fs-sm);
   color: var(--ink-2);
+  font-weight: 500;
 }
 
 .opt__control {
@@ -655,13 +1057,18 @@ html.is-dragging .hero {
 
 .field {
   min-width: 0;
-  padding: 0.45rem 0.6rem;
+  padding: 0.4rem 0.6rem;
   border: 1px solid var(--line-2);
   border-radius: var(--r-sm);
-  background: var(--bg-2);
+  background: var(--bg-1);
   color: var(--ink);
   font: inherit;
   font-size: var(--fs-sm);
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.field:hover {
+  border-color: var(--ink-3);
 }
 
 .field--select {
@@ -683,6 +1090,10 @@ html.is-dragging .hero {
   border: 0;
   background: transparent;
   accent-color: var(--accent);
+}
+
+.field--range:hover {
+  border: 0;
 }
 
 .switch {
@@ -737,8 +1148,8 @@ html.is-dragging .hero {
   position: relative;
   display: grid;
   place-items: center;
-  width: 3rem;
-  height: 3rem;
+  width: 2.75rem;
+  height: 2.75rem;
 }
 
 .ring svg {
@@ -785,18 +1196,43 @@ html.is-dragging .hero {
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   background: var(--bg-1);
+  box-shadow: var(--edge), var(--shadow-1);
 }
 
 .results__head {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   gap: var(--s-2) var(--s-3);
 }
 
-.results__summary {
+.results__glyph {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 2.125rem;
+  height: 2.125rem;
+  border-radius: var(--r-pill);
+  background: var(--good-quiet);
+  color: var(--good);
+}
+
+.results[data-state='partial'] .results__glyph {
+  background: var(--warn-quiet);
+  color: var(--warn);
+}
+
+.results[data-state='error'] .results__glyph {
+  background: var(--bad-quiet);
+  color: var(--bad);
+}
+
+.results__titles {
   flex: 1;
   min-width: 0;
+}
+
+.results__summary {
   color: var(--ink-3);
   font-size: var(--fs-sm);
 }
@@ -821,10 +1257,12 @@ html.is-dragging .hero {
   font-size: var(--fs-sm);
 }
 
+/* auto-FIT, not auto-fill: a single output should fill the tray rather than
+   sit in a 19rem column with three empty ones beside it. */
 .results__grid {
   display: grid;
   gap: var(--s-3);
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
 }
 
 .banner {
@@ -847,7 +1285,7 @@ html.is-dragging .hero {
   display: grid;
   gap: var(--s-2);
   align-content: start;
-  padding: var(--s-3) var(--s-4);
+  padding: var(--s-3) var(--s-4) var(--s-4);
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: var(--bg-2);
@@ -884,7 +1322,7 @@ html.is-dragging .hero {
   flex: 1;
   min-width: 0;
   font-size: var(--fs-sm);
-  font-weight: 600;
+  font-weight: 620;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -903,7 +1341,7 @@ html.is-dragging .hero {
 .card__thumb {
   display: grid;
   place-items: center;
-  padding: var(--s-2);
+  padding: var(--s-3);
   border-radius: var(--r-sm);
   background-color: var(--bg-3);
   background-image:
@@ -1012,6 +1450,7 @@ html.is-dragging .hero {
   transition:
     transform var(--dur-fast) var(--ease),
     border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease),
     background-color var(--dur-fast) var(--ease);
 }
 
@@ -1032,12 +1471,14 @@ html.is-dragging .hero {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-ink);
-  font-weight: 600;
+  font-weight: 620;
+  box-shadow: 0 1px 0 0 color-mix(in oklab, var(--accent-2) 60%, transparent) inset;
 }
 
 .btn--primary:hover:not(:disabled) {
   background: var(--accent-2);
   border-color: var(--accent-2);
+  box-shadow: 0 0 0 4px var(--accent-glow);
 }
 
 .btn--ghost {
@@ -1062,7 +1503,7 @@ html.is-dragging .hero {
 }
 
 .btn--lg {
-  padding: 0.7rem 1.4rem;
+  padding: 0.7rem 1.3rem;
   font-size: var(--fs-base);
 }
 
@@ -1088,28 +1529,29 @@ html.is-dragging .hero {
   align-content: start;
   justify-content: center;
   padding: min(14vh, 6rem) var(--s-4) var(--s-4);
-  background: color-mix(in oklab, black 45%, transparent);
+  background: color-mix(in oklab, black 55%, transparent);
+  backdrop-filter: blur(3px);
 }
 
 :root[data-theme='light'] .palette-backdrop {
-  background: color-mix(in oklab, black 20%, transparent);
+  background: color-mix(in oklab, #1b2430 28%, transparent);
 }
 
 @media (prefers-color-scheme: light) {
   :root:not([data-theme='dark']) .palette-backdrop {
-    background: color-mix(in oklab, black 20%, transparent);
+    background: color-mix(in oklab, #1b2430 28%, transparent);
   }
 }
 
 .palette {
-  width: min(100%, 34rem);
-  max-height: min(80vh, 32rem);
+  width: min(100%, 36rem);
+  max-height: min(80vh, 34rem);
   display: grid;
   grid-template-rows: auto 1fr auto auto;
   border: 1px solid var(--line-2);
   border-radius: var(--r-lg);
   background: var(--bg-1);
-  box-shadow: var(--shadow-2);
+  box-shadow: var(--edge), var(--shadow-3);
   overflow: hidden;
 }
 
@@ -1129,6 +1571,10 @@ html.is-dragging .hero {
   color: var(--ink);
   font: inherit;
   font-size: var(--fs-md);
+}
+
+.palette__input::placeholder {
+  color: var(--ink-3);
 }
 
 .palette__input:focus {
@@ -1164,15 +1610,41 @@ html.is-dragging .hero {
 }
 
 .palette__row {
-  display: grid;
-  gap: 0.15rem;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
   padding: var(--s-2) var(--s-3);
   border-radius: var(--r-md);
   cursor: pointer;
 }
 
+.palette__icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 1.75rem;
+  height: 1.75rem;
+  margin-top: 0.1rem;
+  border-radius: var(--r-sm);
+  background: var(--fam-quiet);
+  color: var(--fam);
+}
+
+.palette__icon .icon {
+  width: 1rem;
+  height: 1rem;
+}
+
+.palette__rowbody {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+  flex: 1;
+}
+
 .palette__row.is-active {
   background: var(--accent-quiet);
+  box-shadow: inset 2px 0 0 0 var(--accent);
 }
 
 .palette__row.is-unavailable {
@@ -1188,7 +1660,7 @@ html.is-dragging .hero {
 
 .palette__name {
   font-size: var(--fs-sm);
-  font-weight: 600;
+  font-weight: 620;
 }
 
 .palette__row.is-active .palette__name {
@@ -1230,6 +1702,10 @@ html.is-dragging .hero {
 /* ---------------------------------------------------------------- footer */
 
 .footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-4);
   width: 100%;
   max-width: var(--page);
   margin-inline: auto;
@@ -1239,6 +1715,35 @@ html.is-dragging .hero {
   border-top: 1px solid var(--line);
 }
 
+.footer__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--fs-sm);
+  font-weight: 620;
+  color: var(--ink-2);
+  letter-spacing: var(--tracking-tight);
+}
+
+.footer__mark {
+  display: grid;
+  place-items: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  color: var(--accent);
+}
+
+.footer__mark .icon {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.footer__text {
+  flex: 1;
+  min-width: 14rem;
+  text-wrap: pretty;
+}
+
 @media (max-width: 30rem) {
   .stage,
   .topbar,
@@ -1246,8 +1751,19 @@ html.is-dragging .hero {
     padding-inline: var(--s-4);
   }
 
+  .hero__drop {
+    padding: var(--s-6) var(--s-4);
+  }
+
   .run,
-  .results {
+  .results,
+  .families {
     padding: var(--s-4);
+  }
+
+  .run__bar {
+    margin: calc(-1 * var(--s-4));
+    margin-top: 0;
+    padding: var(--s-3) var(--s-4);
   }
 }

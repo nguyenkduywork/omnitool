@@ -19,7 +19,7 @@
 
 import { label, sniffType } from '../core/format';
 import { TOOLS, getTool, toolsFor } from '../core/registry';
-import type { Job, JobResult, OpErrorCode, ToolDef, ToolGroup } from '../types';
+import type { Job, JobResult, OpErrorCode, ToolDef } from '../types';
 import { el, icon } from './dom';
 import { createDropzone } from './dropzone';
 import { disabledFormatChoices } from './encoder';
@@ -30,16 +30,9 @@ import { createPalette } from './palette';
 import { prefetchModule, prefetchTool } from './prefetch';
 import { createProgressRing } from './progress';
 import { createResults } from './results';
+import { GROUP_ICON, GROUP_ORDER, GROUP_TITLE, toolIcon } from './toolicons';
 
 export type ShellHandle = { destroy(): void };
-
-const GROUP_TITLE: Record<ToolGroup, string> = {
-  pdf: 'PDF',
-  image: 'Images',
-  data: 'Data & text',
-};
-
-const GROUP_ORDER: ToolGroup[] = ['pdf', 'image', 'data'];
 
 const THEME_KEY = 'omnitool:theme';
 type ThemePref = 'system' | 'light' | 'dark';
@@ -145,13 +138,19 @@ export function mountShell(root: HTMLElement): ShellHandle {
     announce(THEME_NAME[theme]);
   });
 
-  const paletteButton = el('button', 'btn btn--ghost btn--sm', 'Search tools');
+  const paletteButton = el('button', 'btn btn--ghost btn--sm searchbtn');
   paletteButton.type = 'button';
-  paletteButton.append(el('kbd', undefined, `${MOD} K`));
+  paletteButton.append(
+    icon('search'),
+    el('span', 'searchbtn__label', 'Search tools'),
+    el('kbd', undefined, `${MOD} K`),
+  );
   paletteButton.setAttribute('aria-label', `Search tools (${MOD} K)`);
   paletteButton.addEventListener('click', () => palette.open());
 
-  topbar.append(brand, claim, paletteButton, themeButton);
+  const topbarInner = el('div', 'topbar__inner');
+  topbarInner.append(brand, claim, paletteButton, themeButton);
+  topbar.append(topbarInner);
 
   // --------------------------------------------------------------- stage
   const stage = el('main', 'stage');
@@ -160,7 +159,12 @@ export function mountShell(root: HTMLElement): ShellHandle {
   const results = createResults();
   const progress = createProgressRing();
 
-  const dropzone = createDropzone({ onFiles: (files) => void intake(files) });
+  const dropzone = createDropzone({
+    onFiles: (files) => void intake(files),
+    // `palette` is created further down; this only runs on a click, long after.
+    onBrowse: () => palette.open(),
+    toolCount: TOOLS.length,
+  });
 
   const tray: FileTrayHandle = createFileTray({
     onChange: (next) => {
@@ -172,7 +176,7 @@ export function mountShell(root: HTMLElement): ShellHandle {
   });
 
   const filesPanel = el('div', 'panel panel--files');
-  const clearButton = el('button', 'btn btn--quiet btn--sm', 'Remove all files');
+  const clearButton = el('button', 'btn btn--quiet btn--sm clearbtn', 'Remove all files');
   clearButton.type = 'button';
   clearButton.addEventListener('click', () => {
     entries = [];
@@ -190,21 +194,28 @@ export function mountShell(root: HTMLElement): ShellHandle {
   // tool grid
   const toolsPanel = el('section', 'tools');
   toolsPanel.setAttribute('aria-labelledby', 'tools-heading');
+  const toolsHead = el('div', 'tools__head');
   const toolsHeading = el('h2', 'panel__title', 'Tools for these files');
   toolsHeading.id = 'tools-heading';
   const toolsCount = el('p', 'tools__count');
+  toolsHead.append(toolsHeading, toolsCount);
   const toolsGrid = el('div', 'tools__groups');
   const toolsEmpty = el('p', 'tools__empty');
   toolsEmpty.hidden = true;
-  toolsPanel.append(toolsHeading, toolsCount, toolsGrid, toolsEmpty);
+  toolsPanel.append(toolsHead, toolsGrid, toolsEmpty);
 
   // run panel
   const runPanel = el('section', 'run');
   runPanel.hidden = true;
   runPanel.setAttribute('aria-labelledby', 'run-heading');
-  const runHeading = el('h2', 'panel__title');
+  const runHead = el('div', 'run__head');
+  const runGlyph = el('span', 'run__glyph');
+  const runTitles = el('div', 'run__titles');
+  const runHeading = el('h2', 'panel__title', '');
   runHeading.id = 'run-heading';
   const runBlurb = el('p', 'run__blurb');
+  runTitles.append(runHeading, runBlurb);
+  runHead.append(runGlyph, runTitles);
   const runOptions = el('div', 'run__options');
   const runBar = el('div', 'run__bar');
 
@@ -221,7 +232,7 @@ export function mountShell(root: HTMLElement): ShellHandle {
   progressWrap.append(progress.el);
 
   runBar.append(runButton, cancelButton, progressWrap);
-  runPanel.append(runHeading, runBlurb, runOptions, runBar);
+  runPanel.append(runHead, runOptions, runBar);
 
   const workPanel = el('div', 'panel panel--work');
   workPanel.append(toolsPanel, runPanel);
@@ -236,10 +247,15 @@ export function mountShell(root: HTMLElement): ShellHandle {
   stage.append(switcher, results.el);
 
   const footer = el('footer', 'footer');
+  const footerMark = el('span', 'footer__mark');
+  footerMark.append(icon('spark'));
+  const footerBrand = el('p', 'footer__brand');
+  footerBrand.append(footerMark, el('span', undefined, 'omnitool'));
   footer.append(
+    footerBrand,
     el(
       'p',
-      undefined,
+      'footer__text',
       'Open source, MIT licensed. No uploads, no accounts, no telemetry — every byte is processed by this browser.',
     ),
   );
@@ -322,7 +338,16 @@ export function mountShell(root: HTMLElement): ShellHandle {
       if (inGroup.length === 0) continue;
 
       const section = el('div', 'toolgroup');
-      section.append(el('h3', 'toolgroup__title', GROUP_TITLE[group]));
+      section.dataset.kind = group;
+      const head = el('div', 'toolgroup__head');
+      const glyph = el('span', 'toolgroup__icon');
+      glyph.append(icon(GROUP_ICON[group]));
+      head.append(
+        glyph,
+        el('h3', 'toolgroup__title', GROUP_TITLE[group]),
+        el('span', 'toolgroup__count', String(inGroup.length)),
+      );
+      section.append(head);
       const grid = el('div', 'toolgroup__grid');
       for (const tool of inGroup) grid.append(toolCard(tool, cards));
       section.append(grid);
@@ -362,14 +387,17 @@ export function mountShell(root: HTMLElement): ShellHandle {
     const card = el('button', 'toolcard');
     card.type = 'button';
     card.dataset.tool = tool.id;
+    card.dataset.kind = tool.group;
     card.setAttribute('aria-pressed', 'false');
 
     // Selection is marked by a tick as well as by colour — colour alone would
     // fail WCAG 1.4.1 for anyone who cannot distinguish the accent.
     const top = el('span', 'toolcard__top');
+    const glyph = el('span', 'toolcard__icon');
+    glyph.append(icon(toolIcon(tool)));
     const check = el('span', 'toolcard__check');
     check.append(icon('check'));
-    top.append(el('span', 'toolcard__name', tool.name), check);
+    top.append(glyph, el('span', 'toolcard__name', tool.name), check);
     card.append(top, el('span', 'toolcard__blurb', tool.blurb));
 
     // Intent prefetch (§6.1 mechanism 5) on BOTH pointer and keyboard intent.
@@ -453,6 +481,8 @@ export function mountShell(root: HTMLElement): ShellHandle {
     markSelected(id);
     runHeading.textContent = tool.name;
     runBlurb.textContent = tool.blurb;
+    runGlyph.replaceChildren(icon(toolIcon(tool)));
+    runPanel.dataset.kind = tool.group;
     runPanel.hidden = false;
     progressWrap.hidden = true;
     announce(`${tool.name} selected. ${tool.blurb}`);

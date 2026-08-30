@@ -6,47 +6,80 @@
  * intended size; the three-step ink ramp exists so that "quiet" text is quiet by
  * being lower contrast against the same background, never by being smaller.
  *
- * One accent. It is used for exactly three things: the primary action, the
- * current selection, and focus. If it starts appearing anywhere else, that is a
- * bug in the design, not a missing token.
+ * TWO KINDS OF COLOUR, and they do not mix:
+ *
+ *   1. ONE ACCENT (`--accent*`). It marks the primary action, the current
+ *      selection, and focus. Nothing else. If it starts appearing anywhere
+ *      else, that is a bug in the design, not a missing token.
+ *
+ *   2. THREE FAMILY HUES (`--fam-pdf`, `--fam-image`, `--fam-data`). A tool
+ *      grid this size, across three families, is unscannable in a single
+ *      colour, so each family gets an identity tint — used ONLY on that
+ *      family's glyph and section label, never on a control, never to mean
+ *      "active", never as a fill behind text. They identify; they never
+ *      instruct. That is why they can sit beside the accent without competing
+ *      with it: nothing in the app is ever clickable *because* it is amber.
+ *
+ * The surface ramp is a real elevation ladder — `--bg` is the page, and each
+ * step up sits nearer the reader. Borders come in two weights so a raised card
+ * can be defined without shouting.
  */
 
 :root {
   color-scheme: dark;
 
   /* -- surfaces ------------------------------------------------------- */
-  --bg: #0a0b0d;
-  --bg-1: #101216;
-  --bg-2: #161a1f;
-  --bg-3: #1e2329;
-  --line: #262c33;
-  --line-2: #333b44;
+  --bg: #0a0c10; /* the page itself */
+  --bg-1: #111620; /* raised: panels, cards, the palette */
+  --bg-2: #171d28; /* raised further: rows, fields, thumbs */
+  --bg-3: #202836; /* highest: hover fills, badges */
+  --line: #222a37; /* hairline, quiet */
+  --line-2: #333e4e; /* hairline, stated */
+
+  /* A one-pixel top highlight. On a dark ground a raised surface reads as
+   * raised because light catches its top edge, not because it is lighter
+   * everywhere — that just looks like a different colour. */
+  --edge: inset 0 1px 0 0 rgb(255 255 255 / 0.04);
 
   /* -- ink ------------------------------------------------------------ */
-  --ink: #eef1f4; /* 17:1 on --bg */
-  --ink-2: #b3bcc5; /* 10:1 */
-  --ink-3: #7c8792; /*  5.3:1 — the quiet floor, still AA for body text */
+  --ink: #eef2f7; /* 17.3:1 on --bg */
+  --ink-2: #b0bcca; /* 9.6:1 — supporting copy */
+  --ink-3: #87929e; /* 4.7:1 on the TOP of the surface ramp, so it is AA everywhere */
 
   /* -- accent (one, and only one) -------------------------------------- */
-  --accent: #5eded0;
-  --accent-2: #8fece1;
-  --accent-quiet: #12312e;
-  --accent-line: #1e5551;
-  --accent-ink: #04211f; /* text ON the accent fill: 10:1 */
+  --accent: #5fe0d0;
+  --accent-2: #8ff0e3; /* hover: brighter, because the fill is the button */
+  --accent-quiet: #0e2f2c; /* tinted fill behind accent text */
+  --accent-line: #1d5c56;
+  --accent-ink: #032220; /* text ON the accent fill: 11:1 */
+  --accent-glow: rgb(95 224 208 / 0.16);
+
+  /* -- family identity (never an action, never a state) ---------------- */
+  --fam-pdf: #f4a26b;
+  --fam-pdf-quiet: #2c1d13;
+  --fam-image: #b6a0f8;
+  --fam-image-quiet: #201c33;
+  --fam-data: #78c3f7;
+  --fam-data-quiet: #12222f;
 
   /* -- state ---------------------------------------------------------- */
   --good: #7ee0a0;
-  --good-quiet: #10301f;
+  --good-quiet: #0f2e1e;
   --warn: #f5c877;
-  --warn-quiet: #33280f;
+  --warn-quiet: #302511;
   --bad: #ff9b93;
-  --bad-quiet: #3a1b19;
+  --bad-quiet: #351a19;
 
-  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.4);
-  --shadow-2: 0 12px 32px -12px rgb(0 0 0 / 0.7);
+  /* -- elevation ------------------------------------------------------ */
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.5);
+  --shadow-2: 0 2px 4px rgb(0 0 0 / 0.4), 0 8px 20px -8px rgb(0 0 0 / 0.6);
+  --shadow-3: 0 24px 60px -20px rgb(0 0 0 / 0.75);
   --ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
 
   /* -- type ----------------------------------------------------------- */
+  /* System stacks only. omnitool makes zero network calls at runtime, and a
+   * webfont is a network call — so the type has to earn its character from
+   * scale, weight and tracking instead. */
   --font: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Ubuntu, Cantarell,
     'Helvetica Neue', sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono',
@@ -56,15 +89,16 @@
   --fs-sm: 0.8125rem;
   --fs-base: 0.9375rem;
   --fs-md: 1.0625rem;
-  --fs-lg: 1.375rem;
+  --fs-lg: 1.25rem;
   --fs-xl: clamp(1.5rem, 1.1rem + 1.6vw, 1.875rem);
-  --fs-hero: clamp(1.9rem, 1.1rem + 3.6vw, 3rem);
+  --fs-hero: clamp(2.1rem, 1.2rem + 4vw, 3.5rem);
 
-  --lh-tight: 1.15;
+  --lh-tight: 1.05;
   --lh-snug: 1.35;
   --lh-body: 1.6;
   --tracking-tight: -0.02em;
-  --tracking-wide: 0.06em;
+  --tracking-tighter: -0.035em;
+  --tracking-wide: 0.08em;
 
   /* -- space (4px base) ----------------------------------------------- */
   --s-1: 0.25rem;
@@ -78,15 +112,16 @@
 
   --r-sm: 0.5rem;
   --r-md: 0.75rem;
-  --r-lg: 1.125rem;
+  --r-lg: 1rem;
   --r-xl: 1.5rem;
   --r-pill: 999px;
 
-  --page: 76rem;
+  --page: 82rem;
 
   /* -- motion (CSS side; anime.js has its own tokens in motion.ts) ---- */
   --dur-fast: 120ms;
   --dur-base: 180ms;
+  --dur-slow: 320ms;
   --ease: cubic-bezier(0.22, 0.8, 0.28, 1);
 }
 
@@ -97,55 +132,73 @@
 @media (prefers-color-scheme: light) {
   :root:not([data-theme='dark']) {
     color-scheme: light;
-    --bg: #fbfbfa;
+    --bg: #f6f6f4;
     --bg-1: #ffffff;
-    --bg-2: #f3f4f3;
-    --bg-3: #e9ebea;
-    --line: #e0e3e2;
-    --line-2: #c6cccb;
-    --ink: #12161a;
-    --ink-2: #46525b;
-    --ink-3: #636e77; /* 4.98:1 on --bg */
-    --accent: #0f7d72;
-    --accent-2: #0a6a61;
-    --accent-quiet: #e2f2f0;
-    --accent-line: #a9d6d0;
+    --bg-2: #f2f3f1;
+    --bg-3: #e7e9e7;
+    --line: #e3e5e3;
+    --line-2: #c7cccb;
+    --edge: inset 0 1px 0 0 rgb(255 255 255 / 0.9);
+    --ink: #11151a;
+    --ink-2: #454f59;
+    --ink-3: #5e6971; /* 4.6:1 on the top of the ramp */
+    --accent: #0d7a70;
+    --accent-2: #0a655c;
+    --accent-quiet: #e8f5f3;
+    --accent-line: #a5d3cd;
     --accent-ink: #ffffff;
+    --accent-glow: rgb(13 122 112 / 0.14);
+    --fam-pdf: #a2542a;
+    --fam-pdf-quiet: #f8ece3;
+    --fam-image: #6242c4;
+    --fam-image-quiet: #eeeafb;
+    --fam-data: #1266a6;
+    --fam-data-quiet: #e5f0f9;
     --good: #0f7a45;
     --good-quiet: #e2f3e9;
     --warn: #8a5a00;
     --warn-quiet: #fbf0d8;
     --bad: #b02a20;
     --bad-quiet: #fbe6e4;
-    --shadow-1: 0 1px 2px rgb(16 24 32 / 0.08);
-    --shadow-2: 0 14px 34px -14px rgb(16 24 32 / 0.28);
+    --shadow-1: 0 1px 2px rgb(16 24 32 / 0.07);
+    --shadow-2: 0 1px 2px rgb(16 24 32 / 0.06), 0 8px 20px -10px rgb(16 24 32 / 0.18);
+    --shadow-3: 0 28px 60px -22px rgb(16 24 32 / 0.3);
   }
 }
 
 :root[data-theme='light'] {
   color-scheme: light;
-  --bg: #fbfbfa;
+  --bg: #f6f6f4;
   --bg-1: #ffffff;
-  --bg-2: #f3f4f3;
-  --bg-3: #e9ebea;
-  --line: #e0e3e2;
-  --line-2: #c6cccb;
-  --ink: #12161a;
-  --ink-2: #46525b;
-  --ink-3: #636e77;
-  --accent: #0f7d72;
-  --accent-2: #0a6a61;
-  --accent-quiet: #e2f2f0;
-  --accent-line: #a9d6d0;
+  --bg-2: #f2f3f1;
+  --bg-3: #e7e9e7;
+  --line: #e3e5e3;
+  --line-2: #c7cccb;
+  --edge: inset 0 1px 0 0 rgb(255 255 255 / 0.9);
+  --ink: #11151a;
+  --ink-2: #454f59;
+  --ink-3: #5e6971;
+  --accent: #0d7a70;
+  --accent-2: #0a655c;
+  --accent-quiet: #e8f5f3;
+  --accent-line: #a5d3cd;
   --accent-ink: #ffffff;
+  --accent-glow: rgb(13 122 112 / 0.14);
+  --fam-pdf: #a2542a;
+  --fam-pdf-quiet: #f8ece3;
+  --fam-image: #6242c4;
+  --fam-image-quiet: #eeeafb;
+  --fam-data: #1266a6;
+  --fam-data-quiet: #e5f0f9;
   --good: #0f7a45;
   --good-quiet: #e2f3e9;
   --warn: #8a5a00;
   --warn-quiet: #fbf0d8;
   --bad: #b02a20;
   --bad-quiet: #fbe6e4;
-  --shadow-1: 0 1px 2px rgb(16 24 32 / 0.08);
-  --shadow-2: 0 14px 34px -14px rgb(16 24 32 / 0.28);
+  --shadow-1: 0 1px 2px rgb(16 24 32 / 0.07);
+  --shadow-2: 0 1px 2px rgb(16 24 32 / 0.06), 0 8px 20px -10px rgb(16 24 32 / 0.18);
+  --shadow-3: 0 28px 60px -22px rgb(16 24 32 / 0.3);
 }
 
 /* Reduced motion: kill every CSS transition too, not just the anime.js ones
@@ -155,6 +208,7 @@
   :root {
     --dur-fast: 1ms;
     --dur-base: 1ms;
+    --dur-slow: 1ms;
   }
 
   *,
