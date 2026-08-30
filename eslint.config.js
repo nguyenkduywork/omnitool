@@ -25,7 +25,10 @@ const ANIME_MESSAGE = "Only src/ui/motion.ts may import 'animejs'.";
 
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'node_modules/**', 'coverage/**', 'playwright-report/**', 'test-results/**'],
+    // public/** covers public/ocr/ specifically: vendored, third-party,
+    // pre-minified JS (scripts/vendor-ocr.mjs copies it verbatim from
+    // node_modules) — never source, never ours to lint.
+    ignores: ['dist/**', 'node_modules/**', 'coverage/**', 'playwright-report/**', 'test-results/**', 'public/**'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

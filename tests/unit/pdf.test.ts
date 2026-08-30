@@ -691,10 +691,12 @@ describe('pdf-extract-text', () => {
       'scan.pdf',
     );
     // The message has to be actionable, not just negative: say it is a scan,
-    // say OCR is what would be needed, and point at a tool that does help.
+    // say OCR is what would be needed, and point at the tool that does it.
+    // (Previously pointed at "PDF to images", back when omnitool had no OCR
+    // tool of its own — see src/tools/data/ocr.op.ts.)
     expect(err.message).toMatch(/no text layer/i);
     expect(err.message).toMatch(/OCR/);
-    expect(err.message).toMatch(/PDF to images/i);
+    expect(err.message).toMatch(/Scan to text/i);
   });
 
   it('still delivers a mixed PDF, but flags the pages that had no text', async () => {

@@ -151,4 +151,26 @@ export const DATA_TOOLS: ToolDef[] = [
     },
     load: () => import('../tools/data/qr.op.js'),
   },
+  {
+    id: 'ocr',
+    name: 'Scan to text',
+    blurb: 'Read text from scanned PDFs and photos, using OCR.',
+    group: 'data',
+    accepts: ['application/pdf', 'image/*'],
+    minInputs: 1,
+    maxInputs: null,
+    // `options` stays as the declarative fallback and the source of the
+    // op's defaults. The `editor` below supersedes it in the UI: the flat
+    // schema cannot show a per-language download size read from a generated
+    // manifest, a running "how much will this download" total, which
+    // languages are already cached, or a page count validated against a
+    // real dropped PDF — see src/tools/data/ocr.editor.ts.
+    options: {
+      languages: { kind: 'text', label: 'Languages', placeholder: 'eng', default: 'eng' },
+      pages: { kind: 'text', label: 'Pages (PDF only)', placeholder: 'all pages', default: '' },
+      dpi: { kind: 'number', label: 'Resolution (DPI)', min: 72, max: 600, step: 1, default: 300 },
+    },
+    editor: () => import('../tools/data/ocr.editor.js'),
+    load: () => import('../tools/data/ocr.op.js'),
+  },
 ];

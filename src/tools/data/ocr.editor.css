@@ -1,0 +1,165 @@
+/* src/tools/data/ocr.editor.css — options UI for the `ocr` tool.
+ *
+ * Ships with the lazily-imported editor, so it costs the initial CSS budget
+ * nothing. Uses the app's own tokens for both themes.
+ */
+
+.ocru {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+.ocru__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s-2) var(--s-4);
+}
+
+.ocru__label {
+  flex: 0 0 8rem;
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+
+.ocru__controls {
+  flex: 1 1 16rem;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  align-items: center;
+}
+
+/* ---------------------------------------------------------------- notice */
+
+.ocru__notice {
+  margin: 0;
+  padding: var(--s-3);
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+
+.ocru__notice b {
+  color: var(--ink);
+}
+
+/* -------------------------------------------------------------- languages */
+
+.ocru__langs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-3);
+}
+
+.ocru__lang {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 0.3rem 0.6rem;
+  background: var(--bg-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.ocru__lang input[type='checkbox'] {
+  accent-color: var(--accent);
+}
+
+.ocru__lang-name {
+  color: var(--ink);
+}
+
+.ocru__lang-size {
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.ocru__lang-size--cached {
+  color: var(--good);
+}
+
+/* -------------------------------------------------------------- text inputs */
+
+.ocru__num,
+.ocru__text {
+  appearance: none;
+  background: var(--bg-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-sm);
+  padding: 0.4rem 0.6rem;
+}
+
+.ocru__num {
+  width: 6rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.ocru__text {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.ocru__num:focus-visible,
+.ocru__text:focus-visible {
+  outline: none;
+  border-color: var(--accent-line);
+  box-shadow: var(--ring);
+}
+
+.ocru__text[aria-invalid='true'] {
+  border-color: var(--bad);
+}
+
+.ocru__value {
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+}
+
+/* ------------------------------------------------------------ helper text */
+
+.ocru__hint {
+  flex: 1 0 100%;
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+}
+
+.ocru__hint--error {
+  color: var(--bad);
+}
+
+/* The summary is the point of this editor: it answers "what will happen"
+   before the run, including how much will download the first time. */
+.ocru__summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s-2) var(--s-3);
+  padding: var(--s-3);
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+
+.ocru__summary b {
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.ocru__warn {
+  color: var(--warn);
+}

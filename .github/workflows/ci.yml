@@ -22,6 +22,13 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
+      - name: Vendor OCR assets
+        # Copies the OCR worker/core/language files into public/ocr/ (see
+        # scripts/vendor-ocr.mjs). Also runs automatically via the "pretest"
+        # and "prebuild" npm hooks below, but an explicit step here keeps it
+        # visible in the log and out of the "Test"/"Build" step's own timing.
+        run: npm run vendor:ocr
+
       - name: Typecheck
         run: npm run typecheck
 
