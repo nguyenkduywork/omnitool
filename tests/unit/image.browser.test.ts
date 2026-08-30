@@ -23,6 +23,7 @@ import crop from '../../src/tools/image/crop.op';
 import mergeSheet from '../../src/tools/image/merge-sheet.op';
 import rotate from '../../src/tools/image/rotate.op';
 import editor from '../../src/tools/image/crop.editor';
+import rotateEditor from '../../src/tools/image/rotate.editor';
 
 import { IMAGE_TOOLS } from '../../src/core/registry.image';
 import { IMAGE_LOADERS } from '../../src/core/workers/loaders.image';
@@ -284,6 +285,37 @@ describe('image registry entries', () => {
     expect(byId.get('image-crop')?.editor).toBeTypeOf('function');
     expect(byId.get('image-crop')?.minInputs).toBe(1);
     expect(byId.get('image-crop')?.maxInputs).toBe(1);
+
+    // image-rotate keeps its declarative schema — it is what the op's defaults
+    // come from, and the fallback if the editor chunk ever fails to load — AND
+    // gains the preview editor that supersedes it in the UI. Losing either half
+    // is a silent regression: the schema alone means no preview, the editor
+    // alone means no fallback.
+    expect(byId.get('image-rotate')?.editor).toBeTypeOf('function');
+    expect(byId.get('image-rotate')?.options).toEqual({
+      angle: {
+        kind: 'select',
+        label: 'Rotate',
+        choices: [
+          { value: '90', label: '90° clockwise' },
+          { value: '180', label: '180°' },
+          { value: '270', label: '90° anticlockwise' },
+          { value: '0', label: 'No rotation' },
+        ],
+        default: '90',
+      },
+      flip: {
+        kind: 'select',
+        label: 'Mirror',
+        choices: [
+          { value: 'none', label: 'No mirror' },
+          { value: 'horizontal', label: 'Left to right' },
+          { value: 'vertical', label: 'Top to bottom' },
+        ],
+        default: 'none',
+      },
+      quality: { kind: 'range', label: 'Re-encode quality', min: 10, max: 100, step: 5, default: 92 },
+    });
 
     expect(byId.get('image-merge-sheet')?.options).toEqual({
       layout: {
@@ -748,5 +780,230 @@ describe('crop.editor', () => {
     } finally {
       mount.remove();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// rotate.editor — a preview that must not lie about orientation
+// ---------------------------------------------------------------------------
+
+/** The two-tone OpInput as a File, which is what a ToolEditor is handed. */
+async function twoToneFile(name = 'two-tone.png', type = 'image/png'): Promise<File> {
+  const input = await twoTone(name);
+  return new File([input.buffer], name, { type });
+}
+
+/** Read one real pixel out of the editor's preview canvas. */
+function canvasPixel(canvas: HTMLCanvasElement, x: number, y: number): [number, number, number, number] {
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('no 2d context');
+  const data = context.getImageData(x, y, 1, 1).data;
+  return [data[0] ?? 0, data[1] ?? 0, data[2] ?? 0, data[3] ?? 0];
+}
+
+type MountedEditor = {
+  mount: HTMLElement;
+  canvas: HTMLCanvasElement;
+  events: Record<string, unknown>[];
+  teardown: () => void;
+};
+
+/** Mount the editor and wait until the image has been decoded and drawn. */
+async function mountRotateEditor(files: File[]): Promise<MountedEditor> {
+  const mount = document.createElement('div');
+  mount.style.width = '400px';
+  document.body.appendChild(mount);
+
+  const events: Record<string, unknown>[] = [];
+  const teardown = rotateEditor(mount, files, (opts) => events.push(opts));
+
+  // The stage stays hidden until a bitmap exists, so un-hiding it is the
+  // editor's own "the preview is real now" signal — not an arbitrary wait.
+  const stage = mount.querySelector('.rot__stage') as HTMLElement | null;
+  await waitFor(() => stage !== null && !stage.hidden);
+
+  return { mount, canvas: mount.querySelector('canvas') as HTMLCanvasElement, events, teardown };
+}
+
+function segButton(mount: HTMLElement, label: string): HTMLButtonElement {
+  const button = mount.querySelector(`button[aria-label="${label}"]`);
+  if (!button) throw new Error(`no segmented button labelled ${label}`);
+  return button as HTMLButtonElement;
+}
+
+function qualityRow(mount: HTMLElement): HTMLElement {
+  const row = mount.querySelector('input[type="range"]')?.closest('.rot__row');
+  if (!row) throw new Error('no quality row');
+  return row as HTMLElement;
+}
+
+describe('rotate.editor', () => {
+  it('previews the same pixels the op produces, for the same options', async () => {
+    const { mount, canvas, teardown } = await mountRotateEditor([await twoToneFile()]);
+
+    try {
+      // The default is 90° clockwise: a 4x2 source previews as 2x4, exactly as
+      // the op's own output decodes (see the image-rotate happy path above).
+      expect({ width: canvas.width, height: canvas.height }).toEqual({ width: 2, height: 4 });
+
+      const output = (await rotate([await twoTone()], { angle: '90', flip: 'none' }, recorder().ctx))[0] as OpOutput;
+      expect(await decodeOutput(output)).toEqual({ width: canvas.width, height: canvas.height });
+      // The corner pixel is the whole point: it is what distinguishes a real
+      // rotation from a re-encode, and clockwise from anticlockwise.
+      expect(canvasPixel(canvas, 1, 0)).toEqual(await samplePixel(output, 1, 0));
+      expect(canvasPixel(canvas, 1, 0)).toEqual(GREEN);
+    } finally {
+      teardown();
+      mount.remove();
+    }
+  });
+
+  it("composes mirror-then-rotate in the op's order, not the reverse", async () => {
+    const { mount, canvas, teardown } = await mountRotateEditor([await twoToneFile()]);
+
+    try {
+      segButton(mount, 'Left to right').click(); // with the default 90° still selected
+
+      const output = (await rotate([await twoTone()], { angle: '90', flip: 'horizontal' }, recorder().ctx))[0] as OpOutput;
+      // Mirror-then-rotate carries the green corner to the BOTTOM-right (1, 3).
+      // Rotate-then-mirror — the plausible wrong order — would land it at the
+      // top-right (1, 0) instead. This pixel is what proves the preview is
+      // honest about a combination two dropdowns could never have shown.
+      expect(canvasPixel(canvas, 1, 3)).toEqual(await samplePixel(output, 1, 3));
+      expect(canvasPixel(canvas, 1, 3)).toEqual(GREEN);
+      expect(canvasPixel(canvas, 1, 0)).not.toEqual(GREEN);
+    } finally {
+      teardown();
+      mount.remove();
+    }
+  });
+
+  it('redraws for every turn, swapping the dimensions on a quarter turn only', async () => {
+    const { mount, canvas, teardown } = await mountRotateEditor([await twoToneFile()]);
+
+    try {
+      segButton(mount, '180°').click();
+      expect({ width: canvas.width, height: canvas.height }).toEqual({ width: 4, height: 2 });
+      expect(canvasPixel(canvas, 3, 1)).toEqual(GREEN); // end over end
+
+      segButton(mount, '90° anticlockwise').click();
+      expect({ width: canvas.width, height: canvas.height }).toEqual({ width: 2, height: 4 });
+      expect(canvasPixel(canvas, 0, 3)).toEqual(GREEN);
+
+      segButton(mount, 'No rotation').click();
+      expect({ width: canvas.width, height: canvas.height }).toEqual({ width: 4, height: 2 });
+      expect(canvasPixel(canvas, 0, 0)).toEqual(GREEN);
+    } finally {
+      teardown();
+      mount.remove();
+    }
+  });
+
+  it('emits the option names, values and TYPES the op validates', async () => {
+    const { mount, events, teardown } = await mountRotateEditor([await twoToneFile()]);
+
+    try {
+      expect(events.length).toBeGreaterThan(0);
+      expect(events[events.length - 1]).toEqual({ angle: '90', flip: 'none', quality: 92 });
+
+      segButton(mount, '180°').click();
+      segButton(mount, 'Top to bottom').click();
+      const last = events[events.length - 1] as Record<string, unknown>;
+      // A string, because that is what the schema's `select` emits and what
+      // rotate.op.ts's validator is written against.
+      expect(last['angle']).toBe('180');
+      expect(last['flip']).toBe('vertical');
+      expect(typeof last['quality']).toBe('number');
+
+      // And those emitted options really do drive the op: no rejection, and
+      // the dimensions the summary promised.
+      const outputs = await rotate([await twoTone()], last, recorder().ctx);
+      expect(await decodeOutput(outputs[0] as OpOutput)).toEqual({ width: 4, height: 2 });
+    } finally {
+      teardown();
+      mount.remove();
+    }
+  });
+
+  it('shows the quality slider only when the run re-encodes something lossy', async () => {
+    const jpeg = new File([await fixtureBuffer('a.jpg')], 'a.jpg', { type: 'image/jpeg' });
+    const { mount, teardown } = await mountRotateEditor([jpeg]);
+
+    try {
+      expect(qualityRow(mount).hidden).toBe(false);
+      // A passthrough run never reaches an encoder, so the slider would be a
+      // knob that changes nothing.
+      segButton(mount, 'No rotation').click();
+      expect(qualityRow(mount).hidden).toBe(true);
+      expect(mount.textContent).toContain('handed back untouched');
+    } finally {
+      teardown();
+      mount.remove();
+    }
+  });
+
+  it('hides the quality slider for PNG, which ignores it, and says why', async () => {
+    const { mount, teardown } = await mountRotateEditor([await twoToneFile()]);
+
+    try {
+      expect(qualityRow(mount).hidden).toBe(true);
+      expect(mount.textContent).toContain('PNG is lossless');
+    } finally {
+      teardown();
+      mount.remove();
+    }
+  });
+
+  it('names the previewed file and the batch it stands for when several are dropped', async () => {
+    const files = [
+      await twoToneFile('first.png'),
+      await twoToneFile('second.png'),
+      await twoToneFile('third.png'),
+    ];
+    const { mount, teardown } = await mountRotateEditor(files);
+
+    try {
+      const summary = mount.querySelector('.rot__summary') as HTMLElement;
+      expect(summary.textContent).toContain('first.png');
+      expect(summary.textContent).toContain('all 3 images');
+      // Source and result dimensions, in the SOURCE's own pixels — never the
+      // preview bitmap's, which is capped.
+      expect(summary.textContent).toContain('4 × 2 px');
+      expect(summary.textContent).toContain('2 × 4 px');
+    } finally {
+      teardown();
+      mount.remove();
+    }
+  });
+
+  it('reports an unreadable file in the panel rather than throwing', async () => {
+    const notAnImage = new File([await fixtureBuffer('corrupt.pdf')], 'corrupt.pdf', {
+      type: 'application/pdf',
+    });
+    const mount = document.createElement('div');
+    document.body.appendChild(mount);
+    const teardown = rotateEditor(mount, [notAnImage], () => {});
+
+    try {
+      await waitFor(() => (mount.textContent ?? '').includes('could not be read'));
+      expect(mount.textContent).toContain('corrupt.pdf');
+      expect((mount.querySelector('.rot__stage') as HTMLElement).hidden).toBe(true);
+    } finally {
+      teardown();
+      mount.remove();
+    }
+  });
+
+  it('teardown clears the mount and stops further emissions', async () => {
+    const { mount, events, teardown } = await mountRotateEditor([await twoToneFile()]);
+    const buttons = Array.from(mount.querySelectorAll('button'));
+
+    teardown();
+    expect(mount.childElementCount).toBe(0);
+
+    const countBefore = events.length;
+    for (const button of buttons) button.click(); // detached, but still live objects
+    expect(events.length).toBe(countBefore);
+    mount.remove();
   });
 });

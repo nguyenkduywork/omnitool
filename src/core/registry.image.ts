@@ -86,6 +86,11 @@ export const IMAGE_TOOLS: ToolDef[] = [
     accepts: ['image/*'],
     minInputs: 1,
     maxInputs: null,
+    // `options` is kept as the declarative fallback and as the source of the
+    // op's defaults. The `editor` below supersedes it in the UI because a
+    // rotation is a spatial claim a dropdown cannot make: clockwise versus
+    // anticlockwise is a coin flip in words, and rotate composes with mirror
+    // in a fixed order (mirror first) that only a picture can show.
     options: {
       angle: {
         kind: 'select',
@@ -110,6 +115,7 @@ export const IMAGE_TOOLS: ToolDef[] = [
       },
       quality: { kind: 'range', label: 'Re-encode quality', min: 10, max: 100, step: 5, default: 92 },
     },
+    editor: () => import('../tools/image/rotate.editor'),
     load: () => import('../tools/image/rotate.op'),
   },
   {

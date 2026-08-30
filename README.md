@@ -69,7 +69,7 @@ from your browser's address bar if you want it out of a tab.
 | Resize image | By exact dimensions or by percentage, with optional aspect lock |
 | Compress image | Re-encode at a lower quality, same format |
 | Crop image | Draw a crop box on a visual editor, in the image's own pixels |
-| Rotate image | Turn in 90° steps, mirror left-to-right or top-to-bottom |
+| Rotate image | Turn in 90° steps, mirror left-to-right or top-to-bottom, with a live preview |
 | Strip metadata | Remove EXIF, GPS, XMP and comments — without re-encoding |
 | Merge into a sheet | Arrange several images into one contact sheet |
 
@@ -115,7 +115,10 @@ from your browser's address bar if you want it out of a tab.
   because PNG is lossless either way. A genuinely lossless 90° JPEG rotate
   means transposing DCT coefficient blocks (what `jpegtran` does), which needs
   a JPEG codec omnitool does not carry. Rotating by 0 with no mirror hands
-  back the original bytes rather than re-encoding for nothing.
+  back the original bytes rather than re-encoding for nothing. The tool's live
+  preview is a claim about **orientation only** — it never re-encodes, so it
+  cannot show you what the quality slider costs, and it says so rather than
+  implying the result will look pixel-for-pixel like the preview.
 - **"Strip metadata" covers JPEG, PNG and WebP, and nothing else.** Those are
   the containers whose metadata can be cut out without touching a pixel: it
   removes JPEG APP1/APP3-13/APP15 and COM segments, PNG `tEXt`/`zTXt`/`iTXt`/
