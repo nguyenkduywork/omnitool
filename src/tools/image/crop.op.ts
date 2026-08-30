@@ -9,6 +9,7 @@
 //     it raises InvalidOptions rather than silently producing a 1x1 image.
 
 import { OpError, type Op, type OpInput, type OpOutput } from '../../types';
+import { outputMimeFor, renameForMime } from './mime';
 
 function stop(signal: AbortSignal): void {
   if (signal.aborted) throw new OpError('Cancelled', 'Cancelled');
@@ -31,12 +32,6 @@ async function decodeImage(input: OpInput): Promise<ImageBitmap> {
     const reason = error instanceof Error ? error.message : String(error);
     throw new OpError('CorruptFile', `Could not decode ${input.name} as an image: ${reason}`, input.name);
   }
-}
-
-const KNOWN_MIMES = ['image/png', 'image/jpeg', 'image/webp', 'image/avif'];
-
-function outputMimeFor(input: OpInput): string {
-  return input.type && KNOWN_MIMES.includes(input.type) ? input.type : 'image/png';
 }
 
 async function encodeCanvas(canvas: OffscreenCanvas, mime: string): Promise<ArrayBuffer> {
@@ -112,7 +107,11 @@ const crop: Op = async (inputs, options, ctx): Promise<OpOutput[]> => {
 
     const mime = outputMimeFor(input);
     const buffer = await encodeCanvas(canvas, mime);
-    outputs.push({ name: input.name, type: mime, buffer });
+    // `outputMimeFor` falls back to PNG for a format the canvas cannot encode
+    // (GIF, BMP, TIFF, SVG), so the NAME has to move with the bytes instead of
+    // labelling a PNG `.gif`.
+    const name = input.type === mime ? input.name : renameForMime(input.name, mime);
+    outputs.push({ name, type: mime, buffer });
 
     done += 1;
     ctx.onProgress(done / inputs.length);

@@ -243,7 +243,15 @@ Pages.
   back the original bytes rather than re-encoding for nothing. The tool's live
   preview is a claim about **orientation only** — it never re-encodes, so it
   cannot show you what the quality slider costs, and it says so rather than
-  implying the result will look pixel-for-pixel like the preview.
+  implying the result will look pixel-for-pixel like the preview. A format the
+  browser can decode but not *encode* — GIF, BMP, TIFF, SVG — comes back as a
+  PNG, and the filename moves with it: rotating `holiday.gif` gives you
+  `holiday.png`, never PNG bytes still wearing a `.gif` name. The same holds
+  for Resize, Compress, Crop and Watermark, which all re-encode through the
+  same canvas. "Compress image" is the one exception, and deliberately so:
+  when the re-encoded bytes are **not** smaller it hands back the original
+  file, so that one keeps its original name and mime — bytes that were never
+  re-encoded must not be labelled with the format they would have become.
 - **"Strip metadata" covers JPEG, PNG and WebP, and nothing else.** Those are
   the containers whose metadata can be cut out without touching a pixel: it
   removes JPEG APP1/APP3-13/APP15 and COM segments, PNG `tEXt`/`zTXt`/`iTXt`/

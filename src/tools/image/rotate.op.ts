@@ -13,10 +13,15 @@
 //
 // Order of operations: the image is mirrored first, then rotated — so
 // `angle: 90, flip: horizontal` means "mirror it, then turn it".
+//
+// An image in a format the canvas cannot ENCODE — GIF, BMP, TIFF, SVG, all of
+// which it can happily decode — comes back as a PNG, and the filename is moved
+// to `.png` with it. Rotating `holiday.gif` gives you `holiday.png`, never PNG
+// bytes still wearing a `.gif` name.
 
 import { OpError, type Op, type OpOutput } from '../../types';
 import { decodeImage, encodeCanvas } from './convert.op';
-import { LOSSLESS_MIMES, outputMimeFor } from './mime';
+import { LOSSLESS_MIMES, outputMimeFor, renameForMime } from './mime';
 
 type Angle = 0 | 90 | 180 | 270;
 type Flip = 'none' | 'horizontal' | 'vertical';
@@ -107,7 +112,12 @@ const rotate: Op = async (inputs, options, ctx): Promise<OpOutput[]> => {
 
     const mime = outputMimeFor(input);
     const buffer = await encodeCanvas(canvas, mime, LOSSLESS_MIMES.includes(mime) ? undefined : quality / 100);
-    outputs.push({ name: input.name, type: mime, buffer });
+    // `outputMimeFor` falls back to PNG for a format the canvas cannot encode
+    // (GIF, BMP, TIFF, SVG), so the NAME has to move with the bytes — handing
+    // back a PNG still called `holiday.gif` is the same lie as labelling an
+    // encoder's PNG output `.avif`.
+    const name = input.type === mime ? input.name : renameForMime(input.name, mime);
+    outputs.push({ name, type: mime, buffer });
 
     done += 1;
     ctx.onProgress(done / inputs.length);

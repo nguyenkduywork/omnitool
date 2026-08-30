@@ -111,6 +111,42 @@ async function samplePixel(output: OpOutput, x: number, y: number): Promise<[num
   return [data[0] ?? 0, data[1] ?? 0, data[2] ?? 0, data[3] ?? 0];
 }
 
+/** CRC-32, as PNG's chunk checksum defines it. */
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit++) crc = crc & 1 ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1;
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+/**
+ * A valid PNG carrying a 20 KB tEXt comment. Re-encoding it is therefore
+ * unambiguously SMALLER than the original, which is the only way to reach
+ * image-compress's "the reduction was real, keep it" branch deterministically
+ * — comparing two encodes of the same tiny image would be a coin toss.
+ */
+async function paddedPng(name: string): Promise<OpInput> {
+  const source = new Uint8Array((await twoTone()).buffer);
+
+  const data = new TextEncoder().encode('Comment\u0000' + 'a'.repeat(20_000));
+  const chunk = new Uint8Array(12 + data.length);
+  const view = new DataView(chunk.buffer);
+  view.setUint32(0, data.length);
+  chunk.set(new TextEncoder().encode('tEXt'), 4);
+  chunk.set(data, 8);
+  view.setUint32(8 + data.length, crc32(chunk.slice(4, 8 + data.length)));
+
+  // After the 8-byte signature and the 25-byte IHDR, where tEXt is legal.
+  const at = 8 + 25;
+  const out = new Uint8Array(source.length + chunk.length);
+  out.set(source.subarray(0, at), 0);
+  out.set(chunk, at);
+  out.set(source.subarray(at), at + chunk.length);
+  return { name, type: 'image/png', buffer: out.buffer };
+}
+
 async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
   const start = Date.now();
   while (!predicate()) {
@@ -194,6 +230,41 @@ describe('image-rotate', () => {
     const outputs = await rotate([input], { angle: '0', flip: 'none' }, ctx);
 
     expect(new Uint8Array((outputs[0] as OpOutput).buffer)).toEqual(before);
+  });
+
+  it('renames the file when the output format has to change', async () => {
+    // A format the canvas can DECODE but not ENCODE comes back as PNG. The
+    // input here carries PNG bytes under a GIF label — createImageBitmap
+    // sniffs the real content, so this exercises exactly the path a real GIF
+    // takes, and the name must follow the bytes.
+    const source = await twoTone('holiday.gif');
+    const { ctx } = recorder();
+    const outputs = await rotate([{ ...source, type: 'image/gif' }], { angle: '90' }, ctx);
+
+    expect(outputs[0]?.type).toBe('image/png');
+    expect(outputs[0]?.name).toBe('holiday.png');
+    // Still a real rotation, not just a rename: 4x2 came back as 2x4.
+    expect(await decodeOutput(outputs[0] as OpOutput)).toEqual({ width: 2, height: 4 });
+  });
+
+  it('keeps the name untouched when the format survives the round trip', async () => {
+    const { ctx } = recorder();
+    const outputs = await rotate([await twoTone('holiday.png')], { angle: '90' }, ctx);
+
+    expect(outputs[0]?.type).toBe('image/png');
+    expect(outputs[0]?.name).toBe('holiday.png');
+  });
+
+  it('leaves an unencodable format alone on the passthrough path', async () => {
+    // No rotation and no mirror returns the INPUT's bytes, which really are
+    // GIF bytes — so renaming them .png here would be the opposite lie.
+    const source = { ...(await twoTone('holiday.gif')), type: 'image/gif' };
+    const { ctx } = recorder();
+    const outputs = await rotate([source], { angle: '0', flip: 'none' }, ctx);
+
+    expect(outputs[0]?.name).toBe('holiday.gif');
+    expect(outputs[0]?.type).toBe('image/gif');
+    expect(outputs[0]?.buffer).toBe(source.buffer);
   });
 
   it('rejects an angle that is not a quarter turn with InvalidOptions', async () => {
@@ -502,6 +573,25 @@ describe('image-resize', () => {
     await resize(inputs, { mode: 'percent', percent: 50 }, ctx);
     expectMonotonicEndingAtOne(fractions);
   });
+
+  it('renames the file when the output format has to change', async () => {
+    // A format the canvas can DECODE but not ENCODE comes back as PNG. PNG
+    // bytes under a GIF label take exactly the path a real GIF takes, because
+    // createImageBitmap sniffs the content rather than trusting the label.
+    const source = await twoTone('holiday.gif');
+    const { ctx } = recorder();
+    const outputs = await resize(
+      [{ ...source, type: 'image/gif' }],
+      { mode: 'percent', percent: 50 },
+      ctx,
+    );
+
+    expect(outputs[0]?.type).toBe('image/png');
+    expect(outputs[0]?.name).toBe('holiday.png');
+    // Still a real resize, not just a rename: 4x2 halved is 2x1.
+    expect(await decodeOutput(outputs[0] as OpOutput)).toEqual({ width: 2, height: 1 });
+  });
+
 });
 
 // ---------------------------------------------------------------------------
@@ -544,6 +634,32 @@ describe('image-compress', () => {
     await compress(inputs, { quality: 50 }, ctx);
     expectMonotonicEndingAtOne(fractions);
   });
+
+  it('renames the file when a kept re-encode changes the format', async () => {
+    const source = await paddedPng('holiday.gif');
+    const { ctx } = recorder();
+    const outputs = await compress([{ ...source, type: 'image/gif' }], { quality: 80 }, ctx);
+
+    // The re-encode really was smaller, so these are new bytes in a new
+    // format — and the name has to say so.
+    expect(outputs[0]?.buffer.byteLength).toBeLessThan(source.buffer.byteLength);
+    expect(outputs[0]?.type).toBe('image/png');
+    expect(outputs[0]?.name).toBe('holiday.png');
+  });
+
+  it('returns unshrunk bytes under their OWN name and mime, not the format they would have become', async () => {
+    // Nothing was re-encoded here, so calling the result a PNG would be a
+    // label on bytes that are still whatever they always were.
+    const source = { ...(await twoTone('holiday.gif')), type: 'image/gif' };
+    const before = new Uint8Array(source.buffer.slice(0));
+    const { ctx } = recorder();
+    const outputs = await compress([source], { quality: 80 }, ctx);
+
+    expect(outputs[0]?.name).toBe('holiday.gif');
+    expect(outputs[0]?.type).toBe('image/gif');
+    expect(new Uint8Array((outputs[0] as OpOutput).buffer)).toEqual(before);
+  });
+
 });
 
 // ---------------------------------------------------------------------------
@@ -603,6 +719,21 @@ describe('image-crop', () => {
     await crop([input], { x: 0, y: 0, width: 4, height: 4 }, ctx);
     expectMonotonicEndingAtOne(fractions);
   });
+
+  it('renames the file when the output format has to change', async () => {
+    const source = await twoTone('holiday.gif');
+    const { ctx } = recorder();
+    const outputs = await crop(
+      [{ ...source, type: 'image/gif' }],
+      { x: 0, y: 0, width: 2, height: 2 },
+      ctx,
+    );
+
+    expect(outputs[0]?.type).toBe('image/png');
+    expect(outputs[0]?.name).toBe('holiday.png');
+    expect(await decodeOutput(outputs[0] as OpOutput)).toEqual({ width: 2, height: 2 });
+  });
+
 });
 
 // ---------------------------------------------------------------------------

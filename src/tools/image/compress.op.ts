@@ -5,9 +5,14 @@
 // come back LARGER than the original (recompression overhead, lossless PNG
 // has no quality knob at all). This tool never claims a reduction it did not
 // achieve — if the recompressed bytes are not smaller, the original bytes
-// are returned unchanged, still labelled correctly.
+// are returned unchanged, under their own name AND their own mime. Bytes that
+// were never re-encoded must not be labelled with the format they would have
+// become: a GIF that the canvas would have turned into a PNG comes back as the
+// GIF it still is. When the re-encode IS kept, and the canvas could not encode
+// the input's format, the name moves with it (`renameForMime` in mime.ts).
 
 import { OpError, type Op, type OpInput, type OpOutput } from '../../types';
+import { outputMimeFor, renameForMime } from './mime';
 
 function stop(signal: AbortSignal): void {
   if (signal.aborted) throw new OpError('Cancelled', 'Cancelled');
@@ -30,12 +35,6 @@ async function decodeImage(input: OpInput): Promise<ImageBitmap> {
     const reason = error instanceof Error ? error.message : String(error);
     throw new OpError('CorruptFile', `Could not decode ${input.name} as an image: ${reason}`, input.name);
   }
-}
-
-const KNOWN_MIMES = ['image/png', 'image/jpeg', 'image/webp', 'image/avif'];
-
-function outputMimeFor(input: OpInput): string {
-  return input.type && KNOWN_MIMES.includes(input.type) ? input.type : 'image/png';
 }
 
 /** Per-mime cache: the probe result never changes within one browser session. */
@@ -116,13 +115,26 @@ const compress: Op = async (inputs, options, ctx): Promise<OpOutput[]> => {
     const isLossy = mime === 'image/jpeg' || mime === 'image/webp' || mime === 'image/avif';
     const buffer = await encodeCanvas(canvas, mime, isLossy ? quality / 100 : undefined);
 
-    // Never claim a reduction that did not happen.
+    // Never claim a reduction that did not happen — and label whichever bytes
+    // come back for what they actually are. Handing the ORIGINAL bytes back
+    // means handing back the original name and mime with them: they are still
+    // a GIF, whatever format the canvas would have re-encoded them to. Only
+    // the re-encoded branch takes the output mime, and its name moves along
+    // with it (see `renameForMime` in mime.ts).
     const smaller = buffer.byteLength < input.buffer.byteLength;
-    outputs.push({
-      name: input.name,
-      type: mime,
-      buffer: smaller ? buffer : input.buffer.slice(0),
-    });
+    outputs.push(
+      smaller
+        ? {
+            name: input.type === mime ? input.name : renameForMime(input.name, mime),
+            type: mime,
+            buffer,
+          }
+        : {
+            name: input.name,
+            type: input.type || 'application/octet-stream',
+            buffer: input.buffer.slice(0),
+          },
+    );
 
     done += 1;
     ctx.onProgress(done / inputs.length);

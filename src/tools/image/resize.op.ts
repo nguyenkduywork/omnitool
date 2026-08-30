@@ -7,9 +7,12 @@
 // lockAspect, so it always preserves aspect ratio by construction.
 //
 // Output keeps the input's own mime/extension (this tool has no `format`
-// option) — falling back to PNG for anything not already png/jpeg/webp/avif.
+// option) — falling back to PNG for anything not already png/jpeg/webp/avif,
+// in which case the FILENAME moves to `.png` with the bytes rather than
+// staying behind on a `.gif` that is no longer a GIF.
 
 import { OpError, type Op, type OpInput, type OpOutput } from '../../types';
+import { outputMimeFor, renameForMime } from './mime';
 
 function stop(signal: AbortSignal): void {
   if (signal.aborted) throw new OpError('Cancelled', 'Cancelled');
@@ -32,12 +35,6 @@ async function decodeImage(input: OpInput): Promise<ImageBitmap> {
     const reason = error instanceof Error ? error.message : String(error);
     throw new OpError('CorruptFile', `Could not decode ${input.name} as an image: ${reason}`, input.name);
   }
-}
-
-const KNOWN_MIMES = ['image/png', 'image/jpeg', 'image/webp', 'image/avif'];
-
-function outputMimeFor(input: OpInput): string {
-  return input.type && KNOWN_MIMES.includes(input.type) ? input.type : 'image/png';
 }
 
 /** Encode a canvas and verify the browser actually honoured the requested mime. */
@@ -126,7 +123,11 @@ const resize: Op = async (inputs, options, ctx): Promise<OpOutput[]> => {
 
     const mime = outputMimeFor(input);
     const buffer = await encodeCanvas(canvas, mime);
-    outputs.push({ name: input.name, type: mime, buffer });
+    // `outputMimeFor` falls back to PNG for a format the canvas cannot encode
+    // (GIF, BMP, TIFF, SVG), so the NAME has to move with the bytes instead of
+    // labelling a PNG `.gif`.
+    const name = input.type === mime ? input.name : renameForMime(input.name, mime);
+    outputs.push({ name, type: mime, buffer });
 
     done += 1;
     ctx.onProgress(done / inputs.length);
