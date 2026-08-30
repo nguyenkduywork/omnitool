@@ -1,0 +1,4 @@
+#!/bin/sh
+# Blocks a commit that would ship a missing/empty/invalid package-lock.json.
+# Installed via `npm run prepare` -> `git config core.hooksPath .githooks`.
+node "$(git rev-parse --show-toplevel)/scripts/verify-lockfile.mjs" || exit 1

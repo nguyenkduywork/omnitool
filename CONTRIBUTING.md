@@ -97,3 +97,8 @@ run size` locally before opening a PR that touches anything outside
   AVIF notes in `README.md` for what "honest reporting" means in practice.
 - Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/)
   (`feat:`, `fix:`, `test:`, `docs:`, `chore:`).
+- `npm install` wires up a `pre-commit` hook (`scripts/verify-lockfile.mjs`,
+  via `.githooks/`) that blocks a commit if `package-lock.json` is missing,
+  empty, or invalid JSON. It exists because that exact corruption once
+  reached `main` directly and broke CI until a follow-up commit fixed it —
+  catching it before a commit is cheaper than catching it after.
