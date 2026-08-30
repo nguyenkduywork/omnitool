@@ -1767,3 +1767,44 @@ html.is-dragging .hero__drop {
     padding: var(--s-3) var(--s-4);
   }
 }
+
+/* ------------------------------------------------- the second tier
+ * Any-bytes tools are always available and never the reason you came, so
+ * they read as a quiet row rather than competing with the format-aware grid. */
+.utility { margin-top: var(--s-5); }
+.utility__title {
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--ink-3);
+  margin: 0 0 var(--s-2);
+}
+.utilitybar { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+.utilitypill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--bg-2);
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.utilitypill:hover { border-color: var(--line-2); color: var(--ink); }
+.utilitypill.is-selected { border-color: var(--accent); color: var(--accent); }
+
+/* A tool whose TYPE fits but whose COUNT does not: explained, not vanished. */
+.toolcard--blocked { opacity: 0.55; cursor: not-allowed; }
+.toolcard__reason {
+  display: block;
+  margin-top: var(--s-2);
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+}
+.opt__because {
+  margin: var(--s-1) 0 0;
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+}

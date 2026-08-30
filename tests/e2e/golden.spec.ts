@@ -168,6 +168,25 @@ test.describe('golden flows — production build', () => {
     expect(names.some((name) => name.startsWith('long-long-'))).toBe(true);
   });
 
+  test('offers PDF tools prominently and byte utilities quietly', async ({ page }) => {
+    await page.goto('/');
+    await page
+      .locator('input[type=file]')
+      .setInputFiles([fixturePath('small.pdf'), fixturePath('small.pdf')]);
+
+    // Format-aware tools are cards.
+    await expect(page.locator('.toolcard[data-tool="pdf-merge"]')).toBeVisible();
+    // Any-bytes tools are demoted, not removed.
+    await expect(page.locator('.toolcard[data-tool="hash"]')).toHaveCount(0);
+    await expect(page.locator('.utilitybar [data-tool="hash"]')).toBeVisible();
+    // The generator is nowhere in a file-driven grid.
+    await expect(page.locator('[data-tool="qr-generate"]')).toHaveCount(0);
+    // A tool blocked only on count is explained, not vanished.
+    await expect(page.locator('.toolcard--blocked[data-tool="pdf-organize"]')).toContainText(
+      'Needs exactly 1 file',
+    );
+  });
+
   test('drop a photo with GPS in it, strip the metadata, and the downloaded bytes have none', async ({
     page,
   }) => {

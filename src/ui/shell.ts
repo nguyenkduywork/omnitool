@@ -6,8 +6,16 @@
 //
 // The product decision this file exists to serve is DROP FIRST, CHOOSE SECOND
 // (§7.1): tools are never offered before the files are in, and once they are in,
-// only the APPLICABLE tools are rendered. Inapplicable tools are absent, not
-// greyed, so the grid stays scannable.
+// the grid ranks them in the three tiers `applicabilityFor` returns. A tool that
+// does not fit the TYPES on the tray is absent, never greyed, so the grid stays
+// scannable. The two exceptions earn their place:
+//
+//   blocked — the type fits and only the COUNT is wrong. Rendering it disabled
+//             with the count it wants answers "can this app do that at all?",
+//             which an empty space answers wrongly.
+//   utility — runs on any bytes, so it always fits and never distinguishes one
+//             drop from another. A quiet pill row, below the grid it would
+//             otherwise flood.
 //
 // There is NO NAVIGATION (§7.2). The hero dropzone dissolves into the workbench,
 // choosing a tool expands its options inline, and results appear beneath.
@@ -17,8 +25,8 @@
 // prefetched on the first intake, so it is warm before the click. That is what
 // keeps the entry chunk inside the §1 budget.
 
-import { label, sniffType } from '../core/format';
-import { TOOLS, getTool, toolsFor } from '../core/registry';
+import { label, sniffType, type Applicability } from '../core/format';
+import { TOOLS, applicabilityFor, getTool, toolsFor } from '../core/registry';
 import type { Job, JobResult, OpErrorCode, ToolDef } from '../types';
 import { el, icon } from './dom';
 import { createDropzone } from './dropzone';
@@ -200,9 +208,23 @@ export function mountShell(root: HTMLElement): ShellHandle {
   const toolsCount = el('p', 'tools__count');
   toolsHead.append(toolsHeading, toolsCount);
   const toolsGrid = el('div', 'tools__groups');
+
+  // A tool whose TYPE fits but whose COUNT does not is shown, disabled, with the
+  // count it wants — silently omitting it reads as "this app cannot do that".
+  const blockedGrid = el('div', 'toolgroup__grid toolgroup__grid--blocked');
+  blockedGrid.hidden = true;
+
+  // The any-bytes tier. Always applicable, never the reason anyone came, so it
+  // is a quiet row under the grid rather than another eighteen cards.
+  const utilityWrap = el('section', 'utility');
+  utilityWrap.hidden = true;
+  utilityWrap.append(el('h3', 'utility__title', 'Works on any file'));
+  const utilityBar = el('div', 'utilitybar');
+  utilityWrap.append(utilityBar);
+
   const toolsEmpty = el('p', 'tools__empty');
   toolsEmpty.hidden = true;
-  toolsPanel.append(toolsHead, toolsGrid, toolsEmpty);
+  toolsPanel.append(toolsHead, toolsGrid, blockedGrid, utilityWrap, toolsEmpty);
 
   // run panel
   const runPanel = el('section', 'run');
@@ -308,9 +330,18 @@ export function mountShell(root: HTMLElement): ShellHandle {
   }
 
   // -------------------------------------------------------------- tools
-  /** Identity of the tool grid's CONTENT, so a reorder does not rebuild it. */
-  function gridSignature(applicable: ToolDef[]): string {
-    return `${entries.length}|${applicable.map((tool) => tool.id).join(',')}`;
+  /**
+   * Identity of the tool grid's CONTENT, so a reorder does not rebuild it.
+   * All THREE buckets go in: a change confined to the blocked or utility tier
+   * is still a change, and hashing only `primary` would leave it unpainted.
+   */
+  function gridSignature(app: Applicability): string {
+    return [
+      entries.length,
+      app.primary.map((tool) => tool.id).join(','),
+      app.blocked.map((blocked) => blocked.tool.id).join(','),
+      app.utility.map((tool) => tool.id).join(','),
+    ].join('|');
   }
 
   /** Identity of the FILES, so an editor built from them can be kept in sync. */
@@ -319,9 +350,10 @@ export function mountShell(root: HTMLElement): ShellHandle {
   }
 
   function refreshTools(): void {
-    const applicable = entries.length === 0 ? [] : toolsFor(mimes());
+    const app: Applicability =
+      entries.length === 0 ? { primary: [], blocked: [], utility: [] } : applicabilityFor(mimes());
 
-    const signature = gridSignature(applicable);
+    const signature = gridSignature(app);
     if (signature === lastGridSignature) {
       // A pure reorder. The grid is unchanged, but an editor whose input IS the
       // file list (crop, organize) has to be rebuilt from the new order.
@@ -331,10 +363,11 @@ export function mountShell(root: HTMLElement): ShellHandle {
     lastGridSignature = signature;
 
     toolsGrid.replaceChildren();
+    blockedGrid.replaceChildren();
 
     const cards: HTMLElement[] = [];
     for (const group of GROUP_ORDER) {
-      const inGroup = applicable.filter((tool) => tool.group === group);
+      const inGroup = app.primary.filter((tool) => tool.group === group);
       if (inGroup.length === 0) continue;
 
       const section = el('div', 'toolgroup');
@@ -354,20 +387,42 @@ export function mountShell(root: HTMLElement): ShellHandle {
       toolsGrid.append(section);
     }
 
-    const subject = entries.length === 1 ? 'this file' : `these ${entries.length} files`;
-    toolsCount.textContent =
-      applicable.length === 0
-        ? ''
-        : `${applicable.length === 1 ? '1 tool' : `${applicable.length} tools`} can run on ${subject}.`;
+    for (const { tool, reason } of app.blocked) {
+      const card = toolCard(tool, cards);
+      card.classList.add('toolcard--blocked');
+      card.disabled = true;
+      card.append(el('span', 'toolcard__reason', reason));
+      blockedGrid.append(card);
+    }
+    blockedGrid.hidden = app.blocked.length === 0;
 
-    toolsEmpty.hidden = applicable.length > 0;
-    if (applicable.length === 0 && entries.length > 0) {
+    utilityBar.replaceChildren();
+    for (const tool of app.utility) {
+      const pill = el('button', 'utilitypill');
+      pill.type = 'button';
+      pill.dataset.tool = tool.id;
+      pill.setAttribute('aria-pressed', 'false');
+      pill.append(icon(toolIcon(tool)), el('span', undefined, tool.name));
+      pill.addEventListener('click', () => void select(tool.id));
+      utilityBar.append(pill);
+    }
+    utilityWrap.hidden = app.utility.length === 0;
+
+    const subject = entries.length === 1 ? 'this file' : `these ${entries.length} files`;
+    const runnable = app.primary.length + app.utility.length;
+    toolsCount.textContent =
+      runnable === 0 ? '' : `${runnable === 1 ? '1 tool' : `${runnable} tools`} can run on ${subject}.`;
+
+    toolsEmpty.hidden = runnable > 0;
+    if (runnable === 0 && entries.length > 0) {
       toolsEmpty.textContent =
         'No tool works with this exact mix of files. Remove the odd one out — most tools want every file to be the same kind.';
     }
 
     // Keep the selection only while it is still valid for what is in the tray.
-    if (selected && !applicable.some((tool) => tool.id === selected?.id)) {
+    // A blocked card is not selectable, so it is not in this list.
+    const selectable = [...app.primary, ...app.utility];
+    if (selected && !selectable.some((tool) => tool.id === selected?.id)) {
       clearSelection();
       announce('The selected tool no longer fits these files, so it was cleared.');
     } else if (selected) {
@@ -383,7 +438,7 @@ export function mountShell(root: HTMLElement): ShellHandle {
     }
   }
 
-  function toolCard(tool: ToolDef, sink: HTMLElement[]): HTMLElement {
+  function toolCard(tool: ToolDef, sink: HTMLElement[]): HTMLButtonElement {
     const card = el('button', 'toolcard');
     card.type = 'button';
     card.dataset.tool = tool.id;
@@ -410,11 +465,12 @@ export function mountShell(root: HTMLElement): ShellHandle {
     return card;
   }
 
+  /** Both tiers: a utility pill is as selectable as a card, so it marks the same. */
   function markSelected(id: string | null): void {
-    for (const card of toolsGrid.querySelectorAll<HTMLElement>('.toolcard')) {
-      const on = card.dataset.tool === id;
-      card.classList.toggle('is-selected', on);
-      card.setAttribute('aria-pressed', on ? 'true' : 'false');
+    for (const node of toolsPanel.querySelectorAll<HTMLElement>('.toolcard, .utilitypill')) {
+      const on = node.dataset.tool === id;
+      node.classList.toggle('is-selected', on);
+      node.setAttribute('aria-pressed', on ? 'true' : 'false');
     }
   }
 
@@ -432,7 +488,14 @@ export function mountShell(root: HTMLElement): ShellHandle {
   /** Build (or rebuild) the options surface for `tool`. */
   async function mountOptions(tool: ToolDef): Promise<void> {
     lastFilesSignature = filesSignature();
-    options = defaultOptions(tool.options);
+    // A preset reads the files' METADATA only — the sniffed type, not contents.
+    const sniffed = entries.map((entry) => ({
+      name: entry.file.name,
+      size: entry.file.size,
+      type: entry.type,
+    }));
+    const preset = tool.preset?.(sniffed);
+    options = defaultOptions(tool.options, preset?.values);
 
     panel?.destroy();
     panel = null;
@@ -449,6 +512,8 @@ export function mountShell(root: HTMLElement): ShellHandle {
         options = next;
       },
       disabled,
+      presetValues: preset?.values,
+      presetBecause: preset?.because,
     });
     panel = mounted;
     options = { ...options, ...mounted.values() };

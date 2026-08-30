@@ -190,6 +190,61 @@ describe('unsupported choices', () => {
   });
 });
 
+describe('presets', () => {
+  it('starts each control at the preset value, not the schema default', () => {
+    const { handle } = mount(
+      {},
+      {
+        presetValues: { format: 'jpeg', dpi: 300, header: false, ranges: '1-3' },
+      },
+    );
+
+    expect(field<HTMLSelectElement>(handle.el, 'format', 'select').value).toBe('jpeg');
+    expect(field<HTMLInputElement>(handle.el, 'dpi', 'input').value).toBe('300');
+    expect(field<HTMLInputElement>(handle.el, 'header', 'input').checked).toBe(false);
+    expect(field<HTMLInputElement>(handle.el, 'ranges', 'input').value).toBe('1-3');
+
+    // What the panel reports must agree with what it is showing.
+    expect(handle.values()).toMatchObject({
+      format: 'jpeg',
+      dpi: 300,
+      header: false,
+      ranges: '1-3',
+    });
+  });
+
+  it('coerces a preset like any other input rather than trusting it', () => {
+    const { handle } = mount({}, { presetValues: { dpi: '9000', quality: '35' } });
+    // Clamped into the schema's bounds, and a number, not the string it arrived as.
+    expect(handle.values().dpi).toBe(300);
+    expect(handle.values().quality).toBe(35);
+    expect(typeof handle.values().quality).toBe('number');
+    expect(field<HTMLOutputElement>(handle.el, 'quality', 'output').textContent).toBe('35');
+  });
+
+  it('ignores a preset naming a choice this browser cannot honour', () => {
+    const { handle } = mount(
+      {},
+      {
+        presetValues: { format: 'webp' },
+        disabled: { format: { webp: 'Not available — no WebP encoder' } },
+      },
+    );
+    expect(handle.values().format).toBe('png');
+    expect(field<HTMLSelectElement>(handle.el, 'format', 'select').value).toBe('png');
+  });
+
+  it('renders the reason under the control it explains, as .opt__because', () => {
+    const { handle } = mount({}, { presetBecause: { format: 'from the file extension' } });
+
+    const note = handle.el.querySelector('[data-key="format"] .opt__because');
+    expect(note?.textContent).toBe('from the file extension');
+    // "chosen for you" is not "unavailable" — the two must not share a class.
+    expect(handle.el.querySelectorAll('.opt__reason').length).toBe(0);
+    expect(handle.el.querySelectorAll('.opt__because').length).toBe(1);
+  });
+});
+
 describe('the editor escape hatch', () => {
   it('lazily imports and mounts the editor instead of the generic controls', async () => {
     const mounted: HTMLElement[] = [];

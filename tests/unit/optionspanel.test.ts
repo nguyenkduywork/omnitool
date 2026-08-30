@@ -46,6 +46,22 @@ describe('defaultOptions', () => {
   it('is an empty object for a tool with no schema', () => {
     expect(defaultOptions(undefined)).toEqual({});
   });
+
+  it('layers preset values over the schema defaults', () => {
+    const values = defaultOptions(SCHEMA, { dpi: 300, header: false });
+    expect(values.dpi).toBe(300);
+    expect(values.header).toBe(false);
+    // Everything the preset did not speak for keeps the schema's answer.
+    expect(values.format).toBe('png');
+    expect(values.quality).toBe(70);
+  });
+
+  it('drops a preset for an option the schema does not declare', () => {
+    // A stray key is a registry bug; passing it through would reach the op.
+    const values = defaultOptions(SCHEMA, { nonesuch: 'boom' });
+    expect('nonesuch' in values).toBe(false);
+    expect(Object.keys(values).sort()).toEqual(['dpi', 'format', 'header', 'quality', 'ranges']);
+  });
 });
 
 describe('coerceOptionValue', () => {

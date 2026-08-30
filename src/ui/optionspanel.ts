@@ -34,6 +34,10 @@ export type RenderOptionsInit = {
   onChange: (values: Record<string, unknown>) => void;
   /** Choices this browser cannot honour, with a reason to show the user. */
   disabled?: DisabledChoices;
+  /** option key -> a value derived from the files, to start the control at. */
+  presetValues?: Record<string, unknown>;
+  /** option key -> why it was preset. Rendered under the control. */
+  presetBecause?: Record<string, string>;
 };
 
 let uid = 0;
@@ -78,12 +82,17 @@ export function coerceOptionValue(def: OptionDef, raw: string | number | boolean
   }
 }
 
-/** The schema's declared defaults, already correctly typed. */
-export function defaultOptions(schema: OptionSchema | undefined): Record<string, unknown> {
+/** Schema defaults, with any preset values layered over them. */
+export function defaultOptions(
+  schema: OptionSchema | undefined,
+  presetValues?: Record<string, unknown>,
+): Record<string, unknown> {
   const values: Record<string, unknown> = {};
-  if (!schema) return values;
-  for (const [key, def] of Object.entries(schema)) {
-    values[key] = def.default;
+  for (const [key, def] of Object.entries(schema ?? {})) values[key] = def.default;
+  for (const [key, value] of Object.entries(presetValues ?? {})) {
+    // A preset for an option this tool does not have is a registry bug, not
+    // something to pass silently through to the op.
+    if (key in values) values[key] = value;
   }
   return values;
 }
@@ -94,6 +103,27 @@ function usableDefault(def: OptionDef, blocked: Record<string, string> | undefin
   if (!blocked[def.default]) return def.default;
   const open = def.choices.find((choice) => !blocked[choice.value]);
   return open ? open.value : def.default;
+}
+
+/**
+ * The value a control STARTS at.
+ *
+ * A preset only means anything if the control shows it — a note saying "from
+ * the file's gzip signature" above a picker still reading "Compress" is worse
+ * than no preset at all. It is coerced like any other input, and it loses to
+ * the usable default when it names a choice this browser cannot honour.
+ */
+function initialValue(
+  def: OptionDef,
+  blocked: Record<string, string> | undefined,
+  preset: unknown,
+): unknown {
+  const fallback = usableDefault(def, blocked);
+  if (typeof preset !== 'string' && typeof preset !== 'number' && typeof preset !== 'boolean') {
+    return fallback;
+  }
+  const value = coerceOptionValue(def, preset);
+  return def.kind === 'select' && blocked?.[String(value)] ? fallback : value;
 }
 
 export function renderOptions(init: RenderOptionsInit): OptionsHandle {
@@ -163,7 +193,7 @@ export function renderOptions(init: RenderOptionsInit): OptionsHandle {
 
   for (const [key, def] of entries) {
     const blocked = disabled?.[key];
-    values[key] = usableDefault(def, blocked);
+    values[key] = initialValue(def, blocked, init.presetValues?.[key]);
 
     const row = el('div', 'opt');
     row.dataset.key = key;
@@ -208,7 +238,7 @@ export function renderOptions(init: RenderOptionsInit): OptionsHandle {
         input.max = String(def.max);
         input.step = String(def.step);
         input.inputMode = 'numeric';
-        input.value = String(def.default);
+        input.value = String(values[key]);
         input.addEventListener('input', () => commit(input.value));
         // On blur, snap the visible field to the value actually in use, so the
         // control never disagrees with what will be sent.
@@ -227,8 +257,8 @@ export function renderOptions(init: RenderOptionsInit): OptionsHandle {
         input.min = String(def.min);
         input.max = String(def.max);
         input.step = String(def.step);
-        input.value = String(def.default);
-        const readout = el('output', 'opt__value', String(def.default));
+        input.value = String(values[key]);
+        const readout = el('output', 'opt__value', String(values[key]));
         // HTMLOutputElement.htmlFor is a read-only DOMTokenList — set the attribute.
         readout.setAttribute('for', id);
         input.addEventListener('input', () => {
@@ -244,7 +274,7 @@ export function renderOptions(init: RenderOptionsInit): OptionsHandle {
         const input = el('input', 'switch__input');
         input.type = 'checkbox';
         input.id = id;
-        input.checked = def.default;
+        input.checked = values[key] === true;
         input.addEventListener('change', () => commit(input.checked));
         wrap.append(input, el('span', 'switch__track'));
         control.append(wrap);
@@ -255,12 +285,21 @@ export function renderOptions(init: RenderOptionsInit): OptionsHandle {
         const input = el('input', 'field field--text');
         input.type = 'text';
         input.id = id;
-        input.value = def.default;
+        input.value = String(values[key]);
         if (def.placeholder) input.placeholder = def.placeholder;
         input.addEventListener('input', () => commit(input.value));
         control.append(input);
         break;
       }
+    }
+
+    // Why this value arrived already chosen. `.opt__reason` below says a choice
+    // is UNAVAILABLE; this says a value was PICKED FOR YOU. Different things.
+    const because = init.presetBecause?.[key];
+    if (because) {
+      const note = el('p', 'opt__because', because);
+      note.id = `${id}-because`;
+      row.append(note);
     }
 
     // Every blocked choice states WHY, in the panel, next to the control.
