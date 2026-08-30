@@ -69,6 +69,8 @@ from your browser's address bar if you want it out of a tab.
 | Resize image | By exact dimensions or by percentage, with optional aspect lock |
 | Compress image | Re-encode at a lower quality, same format |
 | Crop image | Draw a crop box on a visual editor, in the image's own pixels |
+| Rotate image | Turn in 90° steps, mirror left-to-right or top-to-bottom |
+| Strip metadata | Remove EXIF, GPS, XMP and comments — without re-encoding |
 | Merge into a sheet | Arrange several images into one contact sheet |
 
 **Data & text**
@@ -76,6 +78,11 @@ from your browser's address bar if you want it out of a tab.
 | --- | --- |
 | Create ZIP | Bundle the dropped files into one archive |
 | Extract ZIP | Unpack every file from a ZIP archive |
+| Create TAR | Bundle into one `.tar`, or a gzipped `.tar.gz` |
+| Extract TAR | Unpack a `.tar` or `.tar.gz`, long names and pax included |
+| Gzip | Compress to `.gz`, or decompress one back to bytes |
+| Split file | Cut any file into fixed-size `.partNNN` pieces |
+| Join file parts | Put the pieces back together, checking the sequence |
 | Hash files | SHA-256, SHA-1, SHA-512, or MD5 |
 | Base64 | Encode files to Base64 text, or decode back to bytes |
 | CSV ⇄ JSON | Convert between CSV and JSON, with quoted-field and CRLF handling |
@@ -102,6 +109,22 @@ from your browser's address bar if you want it out of a tab.
   the needle — and it will never claim a reduction it didn't actually
   achieve: if the re-encoded output would be larger than the original, it
   returns the original unchanged and says so.
+- **Rotating a JPEG re-encodes it.** A quarter turn through canvas decodes
+  the picture to pixels and encodes them again, so it costs a little quality;
+  the tool's quality slider is what that costs you, and PNG output ignores it
+  because PNG is lossless either way. A genuinely lossless 90° JPEG rotate
+  means transposing DCT coefficient blocks (what `jpegtran` does), which needs
+  a JPEG codec omnitool does not carry. Rotating by 0 with no mirror hands
+  back the original bytes rather than re-encoding for nothing.
+- **"Strip metadata" covers JPEG, PNG and WebP, and nothing else.** Those are
+  the containers whose metadata can be cut out without touching a pixel: it
+  removes JPEG APP1/APP3-13/APP15 and COM segments, PNG `tEXt`/`zTXt`/`iTXt`/
+  `eXIf`/`tIME` chunks, and WebP `EXIF`/`XMP ` chunks (clearing the VP8X flag
+  bits that announced them). Anything else — GIF, AVIF, TIFF — is refused by
+  name rather than quietly re-encoded, and the ICC colour profile is kept
+  unless you ask for it too, because dropping it can change how the image
+  looks. Every run writes a `metadata-report.txt` saying what came out of
+  which file.
 - **A batch with a bad file costs a re-run.** The op contract has no channel
   for an op to report "this one input failed, keep going" — its only way to
   signal a failure is to throw, naming the file. So when one input in a
@@ -115,6 +138,10 @@ from your browser's address bar if you want it out of a tab.
   Fixing this properly means letting an op return per-input outcomes instead
   of throwing, which touches every tool and is deliberately deferred to v2
   rather than made as a mid-flight change to a frozen contract.
+- **Splitting a file gives you pieces, not documents.** Part 1 of a PDF is not
+  a PDF; the parts are plain byte slices and only mean something once Join
+  file parts puts them back. Join refuses parts that are out of sequence
+  rather than producing a silently corrupt file.
 - Audio/video conversion, OCR, and Office formats (`.docx`/`.xlsx`/`.pptx`)
   are out of scope — see the design spec's non-goals. Reading a PDF's text
   layer was tried and removed too: it only ever worked on PDFs that already

@@ -66,6 +66,7 @@ const ICONS = {
   expand: `<path d="M2.8 7.6V4.4a1.6 1.6 0 011.6-1.6h3.2M12.4 2.8h3.2a1.6 1.6 0 011.6 1.6v3.2M17.2 12.4v3.2a1.6 1.6 0 01-1.6 1.6h-3.2M7.6 17.2H4.4a1.6 1.6 0 01-1.6-1.6v-3.2" ${STROKE}/>`,
   swap: `<path d="M3.4 7.4h11.2M12.1 4.9l2.5 2.5-2.5 2.5" ${STROKE}/><path d="M16.6 12.6H5.4M7.9 10.1l-2.5 2.5 2.5 2.5" ${STROKE}/>`,
   crop: `<path d="M6 2.8v11.6h11.2" ${STROKE}/><path d="M2.8 5.6H14v11.6" ${STROKE}/>`,
+  rotate: `<path d="M16.2 10a6.2 6.2 0 11-1.9-4.5" ${STROKE}/><path d="M14.3 2.1v3.4h-3.4" ${STROKE}/>`,
   layers: `<path d="M10 2.8l6.6 3.3L10 9.4 3.4 6.1z" ${STROKE}/><path d="M3.4 10l6.6 3.3L16.6 10" ${STROKE}/><path d="M3.4 13.7L10 17l6.6-3.3" ${STROKE}/>`,
   archive: `<rect x="2.8" y="3.6" width="14.4" height="12.8" rx="2" ${STROKE}/><path d="M2.8 7.8h14.4" ${STROKE}/><path d="M8.4 11.4h3.2" ${STROKE}/>`,
   unarchive: `<path d="M17 10.6v4.6a1.8 1.8 0 01-1.8 1.8H4.8A1.8 1.8 0 013 15.2v-4.6" ${STROKE}/><path d="M10 12.6V3.2m0 0L6.9 6.3M10 3.2l3.1 3.1" ${STROKE}/>`,

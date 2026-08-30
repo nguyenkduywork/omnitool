@@ -10,4 +10,6 @@ export const IMAGE_LOADERS: Record<string, () => Promise<{ default: Op }>> = {
   'image-compress': () => import('../../tools/image/compress.op'),
   'image-crop': () => import('../../tools/image/crop.op'),
   'image-merge-sheet': () => import('../../tools/image/merge-sheet.op'),
+  'image-rotate': () => import('../../tools/image/rotate.op'),
+  'image-strip-metadata': () => import('../../tools/image/strip-metadata.op'),
 };

@@ -151,4 +151,52 @@ test.describe('golden flows — production build', () => {
     const names = await page.locator('.results .card__name').allTextContents();
     expect(names.sort()).toEqual(['dir/nested.txt', 'hello.txt']);
   });
+
+  test('drop sample.tar, and the TAR tool is offered and unpacks every entry', async ({ page }) => {
+    await page.locator('input[type="file"]').setInputFiles([fixturePath('sample.tar')]);
+
+    // Getting this far proves the sniffer found the ustar magic 257 bytes
+    // into the file and the registry filtered down to the tools that accept
+    // application/x-tar — selectTool fails if the card never appears.
+    await selectTool(page, 'tar-extract');
+    await page.getByRole('button', { name: 'Run' }).click();
+
+    await expect(page.getByText('hello.txt', { exact: true })).toBeVisible({ timeout: 30_000 });
+    const names = await page.locator('.results .card__name').allTextContents();
+    expect(names).toContain('dir/nested.txt');
+    // Written by GNU tar as a long-name entry, not in the 100-byte field.
+    expect(names.some((name) => name.startsWith('long-long-'))).toBe(true);
+  });
+
+  test('drop a photo with GPS in it, strip the metadata, and the downloaded bytes have none', async ({
+    page,
+  }) => {
+    await page.locator('input[type="file"]').setInputFiles([fixturePath('exif.jpg')]);
+
+    await selectTool(page, 'image-strip-metadata');
+    await page.getByRole('button', { name: 'Run' }).click();
+
+    // Two outputs — the stripped image and metadata-report.txt — so the tray
+    // offers the bundle button rather than a per-card download.
+    const downloadAllButton = page.getByRole('button', { name: /Download all/ });
+    await expect(downloadAllButton).toBeVisible({ timeout: 30_000 });
+
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      downloadAllButton.click(),
+    ]);
+
+    const savePath = path.join(tempDir('omnitool-strip-'), 'bundle.zip');
+    await download.saveAs(savePath);
+    const entries = unzipSync(new Uint8Array(readFileSync(savePath)));
+
+    const stripped = Buffer.from(entries['exif.jpg'] as Uint8Array);
+    expect(stripped.subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8])); // still a JPEG
+    expect(stripped.includes(Buffer.from('Exif\0\0', 'latin1'))).toBe(false);
+    expect(stripped.includes(Buffer.from('Fixture Camera', 'latin1'))).toBe(false);
+    expect(stripped.length).toBeLessThan(readFileSync(fixturePath('exif.jpg')).length);
+
+    const report = Buffer.from(entries['metadata-report.txt'] as Uint8Array).toString('utf8');
+    expect(report).toContain('EXIF (APP1)');
+  });
 });

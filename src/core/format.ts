@@ -30,6 +30,14 @@ const JPEG = [0xff, 0xd8, 0xff];
 const ZIP_LOCAL = [0x50, 0x4b, 0x03, 0x04];
 const ZIP_EMPTY = [0x50, 0x4b, 0x05, 0x06];
 const ZIP_SPANNED = [0x50, 0x4b, 0x07, 0x08];
+const GZIP = [0x1f, 0x8b];
+
+/**
+ * How many leading bytes sniffing reads. Every signature above lives inside
+ * this window; TAR's, at offset 257, is what makes it wider than the handful
+ * of bytes the rest need. Sniffing never reads the whole file.
+ */
+const SNIFF_BYTES = 265;
 
 // Order matters only where signatures could overlap; these do not.
 const SIGNATURES: Signature[] = [
@@ -53,6 +61,14 @@ const SIGNATURES: Signature[] = [
     test: (b) =>
       matchesAt(b, 0, ZIP_LOCAL) || matchesAt(b, 0, ZIP_EMPTY) || matchesAt(b, 0, ZIP_SPANNED),
   },
+  { mime: 'application/gzip', test: (b) => matchesAt(b, 0, GZIP) },
+  {
+    // TAR has no header at all: its signature is the ustar magic 257 bytes
+    // into the first entry's header block. Older v7 tars carry no magic and
+    // are recognised by their .tar extension alone.
+    mime: 'application/x-tar',
+    test: (b) => matchesAt(b, 257, ascii('ustar')),
+  },
 ];
 
 const BY_EXTENSION: Record<string, string> = {
@@ -69,6 +85,9 @@ const BY_EXTENSION: Record<string, string> = {
   svg: 'image/svg+xml',
   ico: 'image/x-icon',
   zip: 'application/zip',
+  gz: 'application/gzip',
+  tgz: 'application/gzip',
+  tar: 'application/x-tar',
   csv: 'text/csv',
   tsv: 'text/tab-separated-values',
   json: 'application/json',
@@ -82,6 +101,8 @@ const BY_EXTENSION: Record<string, string> = {
 const LABELS: Record<string, string> = {
   'application/pdf': 'PDF document',
   'application/zip': 'ZIP archive',
+  'application/gzip': 'Gzip file',
+  'application/x-tar': 'TAR archive',
   'application/json': 'JSON data',
   'application/xml': 'XML document',
   'application/octet-stream': 'Unknown file',
@@ -113,8 +134,7 @@ function extensionOf(filename: string): string {
  * 'application/octet-stream'.
  */
 export function sniffType(buffer: ArrayBuffer, filename: string): string {
-  // 16 bytes covers every signature above; sniffing never reads the whole file.
-  const head = new Uint8Array(buffer, 0, Math.min(buffer.byteLength, 16));
+  const head = new Uint8Array(buffer, 0, Math.min(buffer.byteLength, SNIFF_BYTES));
   for (const signature of SIGNATURES) {
     if (signature.test(head)) return signature.mime;
   }

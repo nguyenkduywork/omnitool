@@ -9,8 +9,10 @@
 //
 // Run with: npm run make-fixtures
 
+import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -229,6 +231,210 @@ function makeTraversalZip() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Metadata-carrying images, for image-strip-metadata. Each one is a real file
+// that genuinely contains the block the tool has to remove — an EXIF record
+// with GPS coordinates, a PNG text chunk, a WebP EXIF/XMP pair — so the test
+// proves removal rather than proving that nothing was there.
+// ---------------------------------------------------------------------------
+
+/** A minimal but structurally valid little-endian TIFF/EXIF payload. */
+function makeExifPayload() {
+  const out = Buffer.alloc(26);
+  out.write('II', 0, 'latin1');
+  out.writeUInt16LE(42, 2);
+  out.writeUInt32LE(8, 4);
+  out.writeUInt16LE(1, 8); // one IFD entry
+  out.writeUInt16LE(0x010e, 10); // ImageDescription
+  out.writeUInt16LE(2, 12); // ASCII
+  out.writeUInt32LE(4, 14); // four bytes, so the value is stored inline
+  out.write('fix\0', 18, 'latin1');
+  out.writeUInt32LE(0, 22); // no next IFD
+  return out;
+}
+
+function makeExifJpg() {
+  return sharp({ create: { width: 8, height: 8, channels: 3, background: { r: 200, g: 100, b: 50 } } })
+    .withExif({
+      IFD0: { Make: 'omnitool', Model: 'Fixture Camera', Software: 'make-fixtures' },
+      // libvips exposes the GPS IFD as IFD3: real coordinates, so a test can
+      // assert that stripping actually removes a location.
+      IFD3: {
+        GPSLatitudeRef: 'N',
+        GPSLatitude: '48/1 51/1 2976/100',
+        GPSLongitudeRef: 'E',
+        GPSLongitude: '2/1 17/1 2712/100',
+      },
+    })
+    .jpeg()
+    .toBuffer();
+}
+
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(bytes) {
+  let c = 0xffffffff;
+  for (const byte of bytes) c = CRC_TABLE[(c ^ byte) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type, data) {
+  const out = Buffer.alloc(12 + data.length);
+  out.writeUInt32BE(data.length, 0);
+  out.write(type, 4, 'latin1');
+  data.copy(out, 8);
+  out.writeUInt32BE(crc32(Buffer.concat([Buffer.from(type, 'latin1'), data])), 8 + data.length);
+  return out;
+}
+
+/** a.png plus a tEXt comment and an eXIf record, inserted before IEND. */
+async function makeMetaPng() {
+  const base = await makePng(4, 4, { r: 120, g: 160, b: 200 });
+  const iendAt = base.length - 12; // length + 'IEND' + CRC
+  const text = pngChunk('tEXt', Buffer.from('Comment\0built by make-fixtures', 'latin1'));
+  const exif = pngChunk('eXIf', makeExifPayload());
+  return Buffer.concat([base.subarray(0, iendAt), text, exif, base.subarray(iendAt)]);
+}
+
+function riffChunk(fourCC, data) {
+  const padded = data.length + (data.length % 2);
+  const out = Buffer.alloc(8 + padded);
+  out.write(fourCC, 0, 'latin1');
+  out.writeUInt32LE(data.length, 4);
+  data.copy(out, 8);
+  return out;
+}
+
+/**
+ * An extended-format (VP8X) WebP carrying EXIF and XMP, wrapped around a real
+ * VP8 bitstream produced by sharp. The VP8X flag bits say the metadata is
+ * there, which is what image-strip-metadata has to clear on the way out.
+ */
+async function makeMetaWebp() {
+  const width = 6;
+  const height = 4;
+  const base = await makeWebp(width, height, { r: 200, g: 90, b: 40 });
+  // Everything after the 12-byte RIFF/WEBP header is the image's own chunk.
+  const imageChunk = base.subarray(12);
+
+  const vp8xData = Buffer.alloc(10);
+  vp8xData[0] = 0x08 | 0x04; // EXIF and XMP present
+  vp8xData.writeUIntLE(width - 1, 4, 3);
+  vp8xData.writeUIntLE(height - 1, 7, 3);
+
+  const body = Buffer.concat([
+    riffChunk('VP8X', vp8xData),
+    imageChunk,
+    riffChunk('EXIF', makeExifPayload()),
+    riffChunk('XMP ', Buffer.from('<x:xmpmeta xmlns:x="adobe:ns:meta/"></x:xmpmeta>', 'utf8')),
+  ]);
+
+  const out = Buffer.alloc(12 + body.length);
+  out.write('RIFF', 0, 'latin1');
+  out.writeUInt32LE(out.length - 8, 4);
+  out.write('WEBP', 8, 'latin1');
+  body.copy(out, 12);
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// TAR archives, for tar-extract. Built by GNU tar itself rather than by the
+// reader's own writer, so the test proves interoperability instead of
+// self-consistency. --mtime/--owner/--group keep the bytes deterministic and
+// free of whoever ran the script.
+// ---------------------------------------------------------------------------
+
+// One path component well past the 100-byte ustar name field, which forces
+// GNU tar into a long-name ('L') entry and bsdtar/pax into a 'path=' record.
+const LONG_NAME = `${'long-'.repeat(24)}name.txt`;
+
+const TAR_FLAGS = ['--mtime=@0', '--owner=0', '--group=0', '--numeric-owner', '--sort=name'];
+
+async function withTarSourceDir(run) {
+  const dir = await mkdtemp(path.join(tmpdir(), 'omnitool-fixtures-'));
+  try {
+    await mkdir(path.join(dir, 'dir'), { recursive: true });
+    await writeFile(path.join(dir, 'hello.txt'), 'hello from omnitool\n');
+    await writeFile(path.join(dir, 'dir', 'nested.txt'), 'nested file contents\n');
+    await writeFile(path.join(dir, LONG_NAME), 'stored under a name too long for a ustar header\n');
+    return await run(dir);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+function tarInto(dir, outFile, extraFlags) {
+  execFileSync('tar', [...extraFlags, ...TAR_FLAGS, '-cf', outFile, '-C', dir, 'hello.txt', 'dir/nested.txt', LONG_NAME]);
+}
+
+function makeSampleTar() {
+  return withTarSourceDir(async (dir) => {
+    const out = path.join(dir, 'out.tar');
+    tarInto(dir, out, ['--format=gnu']);
+    return readFile(out);
+  });
+}
+
+function makeSampleTarGz() {
+  return withTarSourceDir(async (dir) => {
+    const out = path.join(dir, 'out.tar.gz');
+    execFileSync('tar', ['--format=gnu', ...TAR_FLAGS, '-czf', out, '-C', dir, 'hello.txt', 'dir/nested.txt']);
+    return readFile(out);
+  });
+}
+
+function makePaxTar() {
+  return withTarSourceDir(async (dir) => {
+    const out = path.join(dir, 'pax.tar');
+    tarInto(dir, out, ['--format=pax']);
+    return readFile(out);
+  });
+}
+
+/**
+ * A tar with a genuine "../evil.txt" entry. GNU tar refuses to write one (it
+ * strips the leading "../"), so this header is assembled here, independently
+ * of the reader under test — the same reason traversal.zip exists.
+ */
+function makeTraversalTar() {
+  const entries = [
+    { name: 'ok.txt', body: 'this one is fine\n' },
+    { name: '../evil.txt', body: 'if you can read this, traversal succeeded\n' },
+  ];
+
+  const blocks = [];
+  for (const entry of entries) {
+    const data = Buffer.from(entry.body, 'utf8');
+    const header = Buffer.alloc(512);
+    header.write(entry.name, 0, 'latin1');
+    header.write('0000644\0', 100, 'latin1');
+    header.write('0000000\0', 108, 'latin1');
+    header.write('0000000\0', 116, 'latin1');
+    header.write(`${data.length.toString(8).padStart(11, '0')}\0`, 124, 'latin1');
+    header.write('00000000000\0', 136, 'latin1');
+    header.write('        ', 148, 'latin1'); // checksum field, blank while summing
+    header.write('0', 156, 'latin1'); // regular file
+    header.write('ustar\0', 257, 'latin1');
+    header.write('00', 263, 'latin1');
+    let sum = 0;
+    for (const byte of header) sum += byte;
+    header.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148, 'latin1');
+
+    const padding = Buffer.alloc((512 - (data.length % 512)) % 512);
+    blocks.push(header, data, padding);
+  }
+  blocks.push(Buffer.alloc(1024)); // end-of-archive
+  return Buffer.concat(blocks);
+}
+
 function makeSampleCsv() {
   const rows = [
     'name,age,note',
@@ -288,6 +494,52 @@ async function verifyEncryptedPdf(bytes) {
   if (openedWithWrongPassword) throw new Error('encrypted.pdf: opened with the wrong password');
 }
 
+async function verifyExifJpg(bytes) {
+  const meta = await sharp(bytes).metadata();
+  if (!meta.exif || meta.exif.length === 0) throw new Error('exif.jpg: sharp reports no EXIF block');
+  if (!bytes.includes(Buffer.from('Exif\0\0', 'latin1'))) throw new Error('exif.jpg: no APP1 Exif segment');
+  if (!bytes.includes(Buffer.from('Fixture Camera', 'latin1'))) throw new Error('exif.jpg: EXIF does not carry the camera model');
+}
+
+async function verifyMetaPng(bytes) {
+  const meta = await sharp(bytes).metadata();
+  if (meta.width !== 4) throw new Error(`meta.png: expected a 4px-wide PNG, got ${meta.width}`);
+  for (const chunk of ['tEXt', 'eXIf']) {
+    if (!bytes.includes(Buffer.from(chunk, 'latin1'))) throw new Error(`meta.png: no ${chunk} chunk`);
+  }
+}
+
+async function verifyMetaWebp(bytes) {
+  const meta = await sharp(bytes).metadata();
+  if (meta.width !== 6) throw new Error(`meta.webp: expected a 6px-wide WebP, got ${meta.width}`);
+  if (!meta.exif || meta.exif.length === 0) throw new Error('meta.webp: sharp reports no EXIF block');
+  for (const chunk of ['VP8X', 'EXIF', 'XMP ']) {
+    if (!bytes.includes(Buffer.from(chunk, 'latin1'))) throw new Error(`meta.webp: no ${chunk} chunk`);
+  }
+}
+
+/** Lists an archive with the system tar, which must accept what we wrote. */
+function tarList(file) {
+  return execFileSync('tar', ['-tf', file], { encoding: 'utf8' })
+    .split('\n')
+    .filter((line) => line !== '');
+}
+
+function verifyTarWith(expected) {
+  return async (bytes, file) => {
+    const listed = tarList(file);
+    for (const name of expected) {
+      if (!listed.includes(name)) {
+        throw new Error(`${path.basename(file)}: system tar did not list "${name}" (got ${listed.join(', ')})`);
+      }
+    }
+    // Only meaningful for an uncompressed archive; a .tar.gz is deflate output.
+    if (!file.endsWith('.gz') && bytes.length % 512 !== 0) {
+      throw new Error(`${path.basename(file)}: not a whole number of 512-byte blocks`);
+    }
+  };
+}
+
 function verifyTraversalZip(bytes) {
   const entries = unzipSync(new Uint8Array(bytes));
   if (!('../evil.txt' in entries)) {
@@ -311,8 +563,15 @@ async function main() {
     { name: 'c.png', build: () => makePng(8, 6, { r: 40, g: 80, b: 220 }) },
     { name: 'a.jpg', build: () => makeJpg(5, 5, { r: 230, g: 180, b: 20 }) },
     { name: 'a.webp', build: () => makeWebp(6, 4, { r: 30, g: 200, b: 200 }) },
+    { name: 'exif.jpg', build: makeExifJpg, verify: verifyExifJpg },
+    { name: 'meta.png', build: makeMetaPng, verify: verifyMetaPng },
+    { name: 'meta.webp', build: makeMetaWebp, verify: verifyMetaWebp },
     { name: 'sample.zip', build: makeSampleZip },
     { name: 'traversal.zip', build: makeTraversalZip, verify: verifyTraversalZip },
+    { name: 'sample.tar', build: makeSampleTar, verify: verifyTarWith(['hello.txt', 'dir/nested.txt', LONG_NAME]) },
+    { name: 'sample.tar.gz', build: makeSampleTarGz, verify: verifyTarWith(['hello.txt', 'dir/nested.txt']) },
+    { name: 'pax.tar', build: makePaxTar, verify: verifyTarWith(['hello.txt', 'dir/nested.txt', LONG_NAME]) },
+    { name: 'traversal.tar', build: makeTraversalTar, verify: verifyTarWith(['ok.txt', '../evil.txt']) },
     { name: 'sample.csv', build: makeSampleCsv },
   ];
 
@@ -329,9 +588,10 @@ async function main() {
   // Re-read from disk for verification, so we're checking exactly what was
   // committed to the filesystem, not an in-memory buffer.
   for (const fixture of fixtures) {
-    const onDisk = await readFile(path.join(OUT_DIR, fixture.name));
+    const filePath = path.join(OUT_DIR, fixture.name);
+    const onDisk = await readFile(filePath);
     if (onDisk.length === 0) throw new Error(`${fixture.name}: written file is empty`);
-    if (fixture.verify) await fixture.verify(onDisk);
+    if (fixture.verify) await fixture.verify(onDisk, filePath);
   }
 
   const widest = Math.max(...rows.map((r) => r.name.length));

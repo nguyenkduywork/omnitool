@@ -4,16 +4,18 @@
 // fflate's async unzip() API.
 //
 // SECURITY: entry names inside a ZIP are attacker-controlled strings and are
-// never trusted verbatim. sanitizeEntryName() neutralises path traversal
-// (leading "../" or "/" segments) and Windows drive prefixes ("C:\") by
-// dropping every ".."/"."/empty path segment, so the sanitised name can never
-// resolve outside the extraction root. tests/fixtures/traversal.zip contains
-// a real "../evil.txt" entry that must not be able to escape.
+// never trusted verbatim. sanitizeEntryName() (./entry-name.ts, shared with
+// tar-extract) neutralises path traversal (leading "../" or "/" segments)
+// and Windows drive prefixes ("C:\") by dropping every ".."/"."/empty path
+// segment, so the sanitised name can never resolve outside the extraction
+// root. tests/fixtures/traversal.zip contains a real "../evil.txt" entry
+// that must not be able to escape.
 
 import { unzip as fflateUnzip } from 'fflate';
 
 import { OpError } from '../../types.js';
 import type { Op, OpOutput } from '../../types.js';
+import { sanitizeEntryName } from './entry-name.js';
 
 function unzipAsync(bytes: Uint8Array): Promise<Record<string, Uint8Array>> {
   return new Promise((resolve, reject) => {
@@ -22,17 +24,6 @@ function unzipAsync(bytes: Uint8Array): Promise<Record<string, Uint8Array>> {
       else resolve(files);
     });
   });
-}
-
-/**
- * Neutralises a ZIP entry name against path traversal. Returns null when
- * nothing safe remains (e.g. the entry was literally "..", "/", or ".").
- */
-function sanitizeEntryName(rawName: string): string | null {
-  const normalized = rawName.replace(/\\/g, '/').replace(/^[a-zA-Z]:/, '');
-  const segments = normalized.split('/').filter((seg) => seg !== '' && seg !== '.' && seg !== '..');
-  if (segments.length === 0) return null;
-  return segments.join('/');
 }
 
 function isDirectoryEntry(rawName: string): boolean {

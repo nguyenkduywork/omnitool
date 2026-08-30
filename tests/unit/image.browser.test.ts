@@ -21,6 +21,7 @@ import resize from '../../src/tools/image/resize.op';
 import compress from '../../src/tools/image/compress.op';
 import crop from '../../src/tools/image/crop.op';
 import mergeSheet from '../../src/tools/image/merge-sheet.op';
+import rotate from '../../src/tools/image/rotate.op';
 import editor from '../../src/tools/image/crop.editor';
 
 import { IMAGE_TOOLS } from '../../src/core/registry.image';
@@ -116,13 +117,124 @@ async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void
 }
 
 // ---------------------------------------------------------------------------
+// image-rotate
+// ---------------------------------------------------------------------------
+
+/**
+ * A 4x2 PNG with a distinguishable corner: left half red, right half blue,
+ * and a single green pixel at (0, 0). Every fixture on disk is a solid
+ * colour, which cannot tell a rotation from a no-op.
+ */
+async function twoTone(name = 'two-tone.png'): Promise<OpInput> {
+  const canvas = new OffscreenCanvas(4, 2);
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('no 2d context');
+  context.fillStyle = '#ff0000';
+  context.fillRect(0, 0, 2, 2);
+  context.fillStyle = '#0000ff';
+  context.fillRect(2, 0, 2, 2);
+  context.fillStyle = '#00ff00';
+  context.fillRect(0, 0, 1, 1);
+  const blob = await canvas.convertToBlob({ type: 'image/png' });
+  return { name, type: 'image/png', buffer: await blob.arrayBuffer() };
+}
+
+const GREEN: [number, number, number, number] = [0, 255, 0, 255];
+const BLUE: [number, number, number, number] = [0, 0, 255, 255];
+
+describe('image-rotate', () => {
+  it('turns the image a quarter clockwise, swapping its dimensions and moving the corner (happy path)', async () => {
+    const { ctx } = recorder();
+    const outputs = await rotate([await twoTone()], { angle: '90', flip: 'none' }, ctx);
+    const output = outputs[0] as OpOutput;
+
+    // A 4x2 source becomes 2x4 — a rotation that only re-encoded would not.
+    expect(await decodeOutput(output)).toEqual({ width: 2, height: 4 });
+    // Clockwise puts the source's top-left pixel at the top RIGHT.
+    expect(await samplePixel(output, 1, 0)).toEqual(GREEN);
+  });
+
+  it('turns it the other way for 270, and end-over-end for 180', async () => {
+    const { ctx } = recorder();
+    const anticlockwise = await rotate([await twoTone()], { angle: '270' }, ctx);
+    expect(await samplePixel(anticlockwise[0] as OpOutput, 0, 3)).toEqual(GREEN);
+
+    const halfTurn = await rotate([await twoTone()], { angle: '180' }, recorder().ctx);
+    expect(await decodeOutput(halfTurn[0] as OpOutput)).toEqual({ width: 4, height: 2 });
+    expect(await samplePixel(halfTurn[0] as OpOutput, 3, 1)).toEqual(GREEN);
+  });
+
+  it('mirrors left-to-right without rotating', async () => {
+    const { ctx } = recorder();
+    const outputs = await rotate([await twoTone()], { angle: '0', flip: 'horizontal' }, ctx);
+    const output = outputs[0] as OpOutput;
+
+    expect(await decodeOutput(output)).toEqual({ width: 4, height: 2 });
+    expect(await samplePixel(output, 3, 0)).toEqual(GREEN);
+    // The red half is now on the right, so the left edge reads blue.
+    expect(await samplePixel(output, 0, 1)).toEqual(BLUE);
+  });
+
+  it('mirrors first and then rotates, for a combination of the two', async () => {
+    const { ctx } = recorder();
+    const outputs = await rotate([await twoTone()], { angle: '90', flip: 'horizontal' }, ctx);
+    // Mirroring moves the green pixel to the top-right; a quarter turn
+    // clockwise then carries it to the bottom-right.
+    expect(await samplePixel(outputs[0] as OpOutput, 1, 3)).toEqual(GREEN);
+  });
+
+  it('hands back the original bytes for no rotation and no mirror, rather than re-encoding', async () => {
+    const input = await twoTone();
+    const before = new Uint8Array(input.buffer.slice(0));
+    const { ctx } = recorder();
+
+    const outputs = await rotate([input], { angle: '0', flip: 'none' }, ctx);
+
+    expect(new Uint8Array((outputs[0] as OpOutput).buffer)).toEqual(before);
+  });
+
+  it('rejects an angle that is not a quarter turn with InvalidOptions', async () => {
+    const { ctx } = recorder();
+    await expectOpError(rotate([await twoTone()], { angle: '45' }, ctx), 'InvalidOptions');
+    await expectOpError(rotate([await twoTone()], { flip: 'diagonal' }, recorder().ctx), 'InvalidOptions');
+  });
+
+  it('raises UnsupportedFormat naming the file for a non-image input, never crashing', async () => {
+    const input = await opInput('corrupt.pdf', 'application/pdf');
+    const { ctx } = recorder();
+    await expectOpError(rotate([input], { angle: '90' }, ctx), 'UnsupportedFormat', 'corrupt.pdf');
+  });
+
+  it('cancels part-way through via AbortSignal', async () => {
+    const { ctx, controller } = recorder();
+    const promise = rotate([await twoTone(), await twoTone('second.png')], { angle: '90' }, ctx);
+    controller.abort();
+    await expectOpError(promise, 'Cancelled');
+  });
+
+  it('reports monotonic progress ending at exactly 1', async () => {
+    const { ctx, fractions } = recorder();
+    await rotate([await twoTone(), await twoTone('second.png')], { angle: '90' }, ctx);
+    expectMonotonicEndingAtOne(fractions);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Registry wiring
 // ---------------------------------------------------------------------------
 
 describe('image registry entries', () => {
-  const expected = ['image-convert', 'image-resize', 'image-compress', 'image-crop', 'image-merge-sheet'];
+  const expected = [
+    'image-convert',
+    'image-resize',
+    'image-compress',
+    'image-crop',
+    'image-merge-sheet',
+    'image-rotate',
+    'image-strip-metadata',
+  ];
 
-  it('registers all five image tools with matching loader entries', () => {
+  it('registers every image tool with a matching loader entry', () => {
     const ids = IMAGE_TOOLS.map((tool) => tool.id);
     for (const id of expected) {
       expect(ids).toContain(id);
