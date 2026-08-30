@@ -1,12 +1,18 @@
 name: Deploy
 
-# Build and publish dist/ to GitHub Pages on every push to main.
-# vite.config.ts already sets base: './' for relative, host-agnostic asset
-# paths, so no path rewriting is needed here — Pages just serves dist/ as-is.
+# Build and publish dist/ to GitHub Pages, triggered manually from the
+# Actions tab. vite.config.ts already sets base: './' for relative,
+# host-agnostic asset paths, so no path rewriting is needed here — Pages
+# just serves dist/ as-is.
+#
+# Manual rather than on-push: GitHub Pages isn't available for a private
+# repo below GitHub Pro/Team/Enterprise, so triggering on every push to main
+# just fails every time. Run this by hand (Actions -> Deploy -> Run
+# workflow) once Pages is actually reachable — repo made public, or the
+# account's plan supports private Pages.
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
