@@ -5,4 +5,8 @@ dist/
 test-results/
 playwright-report/
 
+# Vitest browser-mode writes a PNG here for every FAILED test. They are
+# failure artifacts, never fixtures — one reached main once already.
+tests/unit/__screenshots__/
+
 # OCR engine assets (worker script, WASM cores, per-language traineddata) —
