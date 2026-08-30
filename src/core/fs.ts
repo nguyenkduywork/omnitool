@@ -71,7 +71,10 @@ function uniqueName(name: string, taken: Set<string>): string {
  * LARGER than storing it, because deflate still writes its framing when it
  * cannot compress; storing took 52 ms. Everything not on this list still
  * deflates, which is where compression earns its keep many times over — the
- * same test on CSV output was 11.45 MB stored against 0.05 MB deflated.
+ * same test on CSV output was 11.45 MB stored against 0.05 MB deflated. PDF is
+ * deliberately NOT on this list: its streams are usually compressed already,
+ * but a PDF also carries uncompressed structure that deflate does shrink, so
+ * it keeps the default rather than trading a real saving for a little time.
  */
 const ALREADY_COMPRESSED = new Set([
   'image/png',

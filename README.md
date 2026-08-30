@@ -264,10 +264,13 @@ Pages.
   which file.
 - **"Clean PDF metadata" is not redaction.** It empties the document's Info
   dictionary — every key, not just the ones we thought to name — and purges the
-  XMP metadata streams from the catalog and from each page, deleting the stream
-  objects themselves rather than merely unlinking them (an unlinked stream is
-  still sitting there in the bytes, which is a trap this tool has a test
-  against). What it does *not* touch is content: text on the page, images
+  XMP metadata streams and `/PieceInfo` trees from the catalog and from each
+  page. Unlinking a key is not removing what it pointed at — an unlinked object
+  is still sitting there in the bytes — so anything it unlinks is swept
+  afterwards, and that sweep follows indirect values and nested structures (an
+  `/Author` stored as an indirect string, a `/PieceInfo` with its payload two
+  levels down) while leaving alone anything the document still points at. The
+  tests grep the output bytes for each payload rather than trusting a getter. What it does *not* touch is content: text on the page, images
   embedded in it and any EXIF inside them, annotations, form-field values,
   attachments and bookmarks all survive. A PDF whose first page has your name
   on it still has your name on it. Every run writes a
@@ -299,8 +302,10 @@ Pages.
   — for that last one, the PDF library undoes the compression but not the
   predictor, and writing those bytes into a PNG would hand you a file that
   opens and looks like garbage. An image with a soft mask comes out opaque, and
-  the report says so for that image. The same picture drawn on forty pages is
-  extracted once, named for the first page it appears on. This is not the same
+  the report says so for that image — and the mask itself is not written out as
+  a file of its own, since it is an alpha channel rather than a picture, and
+  every RGBA image placed in a PDF makes one. The same picture drawn on forty
+  pages is extracted once, named for the first page it appears on. This is not the same
   tool as **PDF to images**, which rasterises whole pages at a DPI you pick.
 - **A batch with a bad file costs a re-run.** The op contract has no channel
   for an op to report "this one input failed, keep going" — its only way to

@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import { OpError, type OpContext, type OpInput } from '../../src/types';
 import toImages from '../../src/tools/pdf/to-images.op';
+import extractImages from '../../src/tools/pdf/extract-images.op';
+
+import { zlibSync } from 'fflate';
+import { PDFDocument, PDFName } from 'pdf-lib';
 
 async function fixture(name: string): Promise<ArrayBuffer> {
   const url = new URL(`../fixtures/${name}`, import.meta.url).href;
@@ -316,5 +320,126 @@ describe('pdf-to-images.op (browser): worker-less pdfjs mechanism proof', () => 
     const blob = await canvas.convertToBlob({ type: 'image/png' });
     expect(blob.type).toBe('image/png');
     await pdf.destroy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pdf-extract-images: the PNG it writes by hand, read by a decoder that is not
+// ours.
+//
+// The Node-side tests in tests/unit/pdf.test.ts check that PNG by walking its
+// IHDR and inflating its IDAT — with this repository's own code. That proves
+// the file matches what we think we wrote, and nothing more. A wrong CRC, a
+// bad chunk length, a missed zlib wrapper: every one of those would sail
+// through, and the first person to find out would be a user whose file will
+// not open. So this suite hands the bytes to Chromium's own image decoder
+// instead, and asks it what colour the pixels are.
+// ---------------------------------------------------------------------------
+
+describe('pdf-extract-images, read back by the browser itself', () => {
+  /** A 4x2 checkerboard: red where (x + y) is even, blue where it is odd. */
+  function checkerboard(): Uint8Array {
+    const pixels = new Uint8Array(4 * 2 * 3);
+    for (let y = 0; y < 2; y++) {
+      for (let x = 0; x < 4; x++) {
+        const at = (y * 4 + x) * 3;
+        const red = (x + y) % 2 === 0;
+        pixels[at] = red ? 255 : 0;
+        pixels[at + 2] = red ? 0 : 255;
+      }
+    }
+    return pixels;
+  }
+
+  it('writes a PNG Chromium decodes, pixel for pixel', async () => {
+    const pixels = checkerboard();
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([100, 100]);
+    page.node.setXObject(
+      PDFName.of('Check'),
+      doc.context.register(
+        doc.context.stream(zlibSync(pixels, { level: 6 }), {
+          Type: 'XObject',
+          Subtype: 'Image',
+          Width: 4,
+          Height: 2,
+          ColorSpace: 'DeviceRGB',
+          BitsPerComponent: 8,
+          Filter: 'FlateDecode',
+        }),
+      ),
+    );
+    const saved = await doc.save();
+    const buffer = new ArrayBuffer(saved.byteLength);
+    new Uint8Array(buffer).set(saved);
+
+    const { ctx } = recorder();
+    const outputs = await extractImages([{ name: 'board.pdf', type: 'application/pdf', buffer }], {}, ctx);
+    const png = outputs.find((o) => o.type === 'image/png');
+    expect(png?.name).toBe('board-p1-1.png');
+
+    // createImageBitmap rejects a malformed PNG outright — a bad CRC, a wrong
+    // chunk length or a missing zlib wrapper never gets past this line.
+    const bitmap = await createImageBitmap(new Blob([png!.buffer], { type: 'image/png' }));
+    expect([bitmap.width, bitmap.height]).toEqual([4, 2]);
+
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('no 2d context');
+    context.drawImage(bitmap, 0, 0);
+    bitmap.close();
+
+    const seen = context.getImageData(0, 0, 4, 2).data;
+    for (let y = 0; y < 2; y++) {
+      for (let x = 0; x < 4; x++) {
+        const at = (y * 4 + x) * 4;
+        const red = (x + y) % 2 === 0;
+        expect([seen[at], seen[at + 1], seen[at + 2], seen[at + 3]]).toEqual(
+          red ? [255, 0, 0, 255] : [0, 0, 255, 255],
+        );
+      }
+    }
+  });
+
+  it('writes a grayscale PNG Chromium reads as the levels that went in', async () => {
+    const levels = new Uint8Array([0, 64, 128, 255]);
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([100, 100]);
+    page.node.setXObject(
+      PDFName.of('Gray'),
+      doc.context.register(
+        doc.context.stream(zlibSync(levels, { level: 6 }), {
+          Type: 'XObject',
+          Subtype: 'Image',
+          Width: 4,
+          Height: 1,
+          ColorSpace: 'DeviceGray',
+          BitsPerComponent: 8,
+          Filter: 'FlateDecode',
+        }),
+      ),
+    );
+    const saved = await doc.save();
+    const buffer = new ArrayBuffer(saved.byteLength);
+    new Uint8Array(buffer).set(saved);
+
+    const { ctx } = recorder();
+    const outputs = await extractImages([{ name: 'gray.pdf', type: 'application/pdf', buffer }], {}, ctx);
+    const png = outputs.find((o) => o.type === 'image/png');
+
+    const bitmap = await createImageBitmap(new Blob([png!.buffer], { type: 'image/png' }));
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('no 2d context');
+    context.drawImage(bitmap, 0, 0);
+    bitmap.close();
+
+    const seen = context.getImageData(0, 0, 4, 1).data;
+    // Grayscale expands to equal R, G and B — the decoder's own reading of the
+    // colour type this op wrote into IHDR.
+    for (let i = 0; i < 4; i++) {
+      const level = levels[i] as number;
+      expect([seen[i * 4], seen[i * 4 + 1], seen[i * 4 + 2], seen[i * 4 + 3]]).toEqual([level, level, level, 255]);
+    }
   });
 });

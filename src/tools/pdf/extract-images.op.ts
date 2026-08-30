@@ -31,6 +31,10 @@
 //
 // SOFT MASKS are not composited: an image with an /SMask comes out opaque, and
 // the report says so for that image rather than leaving you to discover it.
+// The mask itself is NOT written out as a file of its own — it is an 8-bit
+// grayscale image XObject and would otherwise pass every check here, leaving
+// you with twice as many files as the document has pictures, half of them
+// alpha channels.
 //
 // The same XObject drawn on forty pages is extracted ONCE, named for the first
 // page it appears on.
@@ -177,19 +181,52 @@ function encodePng(pixels: Uint8Array, width: number, height: number, channels: 
 // Reading the image XObjects
 // ---------------------------------------------------------------------------
 
-function filterNames(dict: PDFDict): string[] {
-  const filter = dict.get(PDFName.of('Filter'));
+/**
+ * The filters on a stream, in order. An empty array means there genuinely are
+ * none — the contents are raw — while `null` means /Filter is there but is not
+ * something this tool can read. Telling those two apart matters: they lead to
+ * opposite outcomes, and a tool whose selling point is naming its reason must
+ * not name the wrong one.
+ *
+ * Both /Filter itself and the entries of a /Filter array may be indirect
+ * references, which is why every read here goes through `lookup`.
+ */
+function filterNames(dict: PDFDict): string[] | null {
+  const filter = dict.lookup(PDFName.of('Filter'));
+  if (filter === undefined) return [];
   if (filter instanceof PDFName) return [filter.asString()];
   if (filter instanceof PDFArray) {
     const names: string[] = [];
     for (let i = 0; i < filter.size(); i++) {
-      const entry = filter.get(i);
-      if (!(entry instanceof PDFName)) return [];
+      const entry = filter.lookup(i);
+      if (!(entry instanceof PDFName)) return null;
       names.push(entry.asString());
     }
     return names;
   }
-  return [];
+  return null;
+}
+
+/**
+ * The image XObjects that are some other image's soft or stencil mask. They
+ * are 8-bit grayscale images in their own right, so they sail through every
+ * check below — but they are an alpha channel, not a picture, and writing one
+ * out as a file means handing back twice as many images as the document has,
+ * half of them meaningless on their own. Any RGBA PNG placed in a PDF produces
+ * one, so this is the common case rather than an exotic one.
+ */
+function maskRefs(doc: PDFDocument): Set<string> {
+  const masks = new Set<string>();
+  for (const [, object] of doc.context.enumerateIndirectObjects()) {
+    if (!(object instanceof PDFRawStream)) continue;
+    if (String(object.dict.get(PDFName.of('Subtype'))) !== '/Image') continue;
+    for (const key of ['SMask', 'Mask']) {
+      // /Mask can also be an array of colour-key ranges, which is not a ref.
+      const ref = object.dict.get(PDFName.of(key));
+      if (ref instanceof PDFRef) masks.add(ref.toString());
+    }
+  }
+  return masks;
 }
 
 /** How many 8-bit components a colour space has, or null if we cannot tell. */
@@ -239,7 +276,7 @@ function isSkipped(result: Extraction): result is { skipped: string } {
 }
 
 /** Decide what, if anything, can be pulled out of one image XObject. */
-function extract(doc: PDFDocument, stream: PDFRawStream): Extraction | null {
+function extract(doc: PDFDocument, stream: PDFRawStream, minSize: number): Extraction | null {
   const dict = stream.dict;
   if (String(dict.get(PDFName.of('Subtype'))) !== '/Image') return null;
 
@@ -256,16 +293,22 @@ function extract(doc: PDFDocument, stream: PDFRawStream): Extraction | null {
     return { skipped: 'it is a 1-bit stencil mask, not a picture' };
   }
 
-  const filters = filterNames(dict);
-  if (filters.length !== 1) {
-    return {
-      skipped:
-        filters.length === 0
-          ? 'its stream is stored with no filter this tool can read'
-          : `its filters are chained (${filters.join(' + ')})`,
-    };
+  // Before anything expensive: an image under the size filter is not extracted,
+  // so there is no reason to have compressed it first.
+  if (minSize > 0 && (w < minSize || h < minSize)) {
+    return { skipped: `${w}x${h} is under the size filter` };
   }
 
+  const filters = filterNames(dict);
+  if (filters === null) {
+    return { skipped: 'its /Filter entry is not a filter name this tool can read' };
+  }
+  if (filters.length > 1) {
+    return { skipped: `its filters are chained (${filters.join(' + ')})` };
+  }
+
+  // `undefined` here means the stream carries no filter at all, and its
+  // contents are already the raw pixels — the easiest case in the whole op.
   const filter = filters[0];
 
   // The headline case: these bytes already ARE a JPEG file.
@@ -273,7 +316,7 @@ function extract(doc: PDFDocument, stream: PDFRawStream): Extraction | null {
     return { bytes: stream.contents, extension: 'jpg', kind: `JPEG ${w}x${h}` };
   }
 
-  if (filter !== '/FlateDecode') {
+  if (filter !== undefined && filter !== '/FlateDecode') {
     const known: Record<string, string> = {
       '/JPXDecode': 'it is JPEG 2000',
       '/CCITTFaxDecode': 'it is CCITT fax data',
@@ -302,10 +345,16 @@ function extract(doc: PDFDocument, stream: PDFRawStream): Extraction | null {
   }
 
   let pixels: Uint8Array;
-  try {
-    pixels = decodePDFRawStream(stream).decode();
-  } catch (error) {
-    return { skipped: `its stream could not be decompressed (${error instanceof Error ? error.message : String(error)})` };
+  if (filter === undefined) {
+    pixels = stream.contents;
+  } else {
+    try {
+      pixels = decodePDFRawStream(stream).decode();
+    } catch (error) {
+      return {
+        skipped: `its stream could not be decompressed (${error instanceof Error ? error.message : String(error)})`,
+      };
+    }
   }
   const expected = w * h * channels;
   if (pixels.length < expected) {
@@ -388,6 +437,7 @@ const extractImages: Op = async (inputs, options, ctx): Promise<OpOutput[]> => {
     stop(ctx.signal);
 
     const pageOf = pageOfEachImage(doc);
+    const masks = maskRefs(doc);
     const stem = baseName(input.name);
     lines.push(input.name);
 
@@ -396,8 +446,11 @@ const extractImages: Op = async (inputs, options, ctx): Promise<OpOutput[]> => {
     for (const [ref, object] of doc.context.enumerateIndirectObjects()) {
       stop(ctx.signal);
       if (!(object instanceof PDFRawStream)) continue;
+      // Another image's alpha channel is not a picture of its own; the image
+      // that owns it says so on its own line below.
+      if (masks.has(ref.toString())) continue;
 
-      const result = extract(doc, object);
+      const result = extract(doc, object, minSize);
       if (result === null) continue; // not an image XObject at all
 
       counter += 1;
@@ -406,13 +459,6 @@ const extractImages: Op = async (inputs, options, ctx): Promise<OpOutput[]> => {
 
       if (isSkipped(result)) {
         lines.push(`  skipped ${where} — ${result.skipped}`);
-        continue;
-      }
-
-      const width = (object.dict.get(PDFName.of('Width')) as PDFNumber).asNumber();
-      const height = (object.dict.get(PDFName.of('Height')) as PDFNumber).asNumber();
-      if (minSize > 0 && (width < minSize || height < minSize)) {
-        lines.push(`  skipped ${where} — ${width}x${height} is under the size filter`);
         continue;
       }
 

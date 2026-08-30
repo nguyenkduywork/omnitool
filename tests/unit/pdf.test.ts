@@ -14,7 +14,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { unzlibSync, zlibSync } from 'fflate';
-import { PDFDict, PDFDocument, PDFName } from 'pdf-lib';
+import { PDFDict, PDFDocument, PDFName, PDFString } from 'pdf-lib';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import { OpError, type OpContext, type OpInput, type OpOutput } from '../../src/types';
@@ -644,6 +644,13 @@ describe('pdf-from-images', () => {
 // pdf-metadata
 // ---------------------------------------------------------------------------
 
+/** Saved PDF bytes as an OpInput, with a buffer the op is free to consume. */
+async function asInput(bytes: Uint8Array, name: string): Promise<OpInput> {
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  return { name, type: 'application/pdf', buffer };
+}
+
 /** A copy of small.pdf carrying a full Info dictionary, and optionally XMP. */
 async function pdfWithMetadata(xmp?: string): Promise<OpInput> {
   const doc = await PDFDocument.load(await load('small.pdf'), { updateMetadata: false });
@@ -800,6 +807,63 @@ describe('pdf-metadata', () => {
     expect(new Uint8Array(pdf?.buffer as ArrayBuffer)).toEqual(before);
     expect(reportOf(outputs)).toContain('no document metadata found');
     expectMonotonicEndingAtOne(fractions);
+  });
+
+  // Unlinking a key is not removing what it pointed at: pdf-lib writes orphaned
+  // objects back out, so these three assert on the BYTES, not on a getter.
+  it('removes an Info value that is stored as an indirect object', async () => {
+    const doc = await PDFDocument.load(await load('small.pdf'), { updateMetadata: false });
+    const info = doc.context.lookup(doc.context.trailerInfo.Info, PDFDict);
+    info.set(PDFName.of('Author'), doc.context.register(PDFString.of('INDIRECTLEAKNAME')));
+    const source = await asInput(await doc.save(), 'indirect.pdf');
+
+    const { ctx } = recorder();
+    const outputs = await metadata([source], {}, ctx);
+    const pdf = outputs.find((o) => o.type === 'application/pdf');
+
+    expect(await flattened(pdf?.buffer as ArrayBuffer)).not.toContain('indirectleakname');
+    expect(reportOf(outputs)).toContain('removed Author: INDIRECTLEAKNAME');
+  });
+
+  it('removes a nested /PieceInfo tree, not just the entry pointing at it', async () => {
+    const doc = await PDFDocument.load(await load('small.pdf'), { updateMetadata: false });
+    // The shape a real editor leaves behind: catalog -> app dict -> /Private.
+    const priv = doc.context.register(
+      doc.context.stream(new TextEncoder().encode('PIECEINFOSECRETPAYLOAD'), {}),
+    );
+    const app = doc.context.register(
+      doc.context.obj({ Private: priv, LastModified: PDFString.of('D:20260830') }),
+    );
+    doc.catalog.set(PDFName.of('PieceInfo'), doc.context.register(doc.context.obj({ Illustrator: app })));
+    const source = await asInput(await doc.save(), 'piece.pdf');
+
+    const { ctx } = recorder();
+    const outputs = await metadata([source], {}, ctx);
+    const bytes = await flattened(outputs.find((o) => o.type === 'application/pdf')?.buffer as ArrayBuffer);
+
+    expect(bytes).not.toContain('pieceinfosecretpayload');
+    expect(bytes).not.toContain('d:20260830');
+    expect(reportOf(outputs)).toContain('removed application data (PieceInfo)');
+  });
+
+  it('leaves an unlinked object alone when live content still points at it', async () => {
+    // The sweep must delete only what nothing else reaches — deleting a shared
+    // object would corrupt the document it was asked to clean.
+    const doc = await PDFDocument.load(await load('small.pdf'), { updateMetadata: false });
+    const shared = doc.context.register(PDFString.of('SHAREDVALUE'));
+    doc.context.lookup(doc.context.trailerInfo.Info, PDFDict).set(PDFName.of('Author'), shared);
+    doc.catalog.set(PDFName.of('OmnitoolKeepMe'), shared);
+    const source = await asInput(await doc.save(), 'shared.pdf');
+
+    const { ctx } = recorder();
+    const outputs = await metadata([source], {}, ctx);
+    const pdf = outputs.find((o) => o.type === 'application/pdf');
+
+    const cleaned = await PDFDocument.load(pdf?.buffer as ArrayBuffer, { updateMetadata: false });
+    expect(cleaned.getAuthor()).toBeUndefined();
+    expect(cleaned.getPageCount()).toBe(3);
+    // Still reachable from the catalog, so it must still be in the file.
+    expect(String(cleaned.catalog.lookup(PDFName.of('OmnitoolKeepMe')))).toContain('SHAREDVALUE');
   });
 
   it('raises UnsupportedFormat naming the file for a non-PDF', async () => {
@@ -1106,6 +1170,85 @@ describe('pdf-extract-images', () => {
     expect(report).toContain('4 bits per component');
     expect(report).toContain('not grayscale or RGB');
     expect(report).toContain('nothing could be extracted');
+  });
+
+  it('does not write another image\'s soft mask out as a picture of its own', async () => {
+    // Any RGBA PNG placed in a PDF produces this shape: an RGB image plus a
+    // grayscale /SMask that would otherwise pass every check in the op.
+    const { spec, pixels } = rgbImage(2, 2);
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([100, 100]);
+    const mask = doc.context.register(
+      doc.context.stream(zlibSync(new Uint8Array([255, 128, 64, 0]), { level: 6 }), {
+        Type: 'XObject',
+        Subtype: 'Image',
+        Width: 2,
+        Height: 2,
+        ColorSpace: 'DeviceGray',
+        BitsPerComponent: 8,
+        Filter: 'FlateDecode',
+      }),
+    );
+    const image = doc.context.register(
+      doc.context.stream(spec.contents, { Type: 'XObject', Subtype: 'Image', Width: 2, Height: 2, ...spec.dict, SMask: mask }),
+    );
+    page.node.setXObject(PDFName.of('Im0'), image);
+    const source = await asInput(await doc.save(), 'masked.pdf');
+
+    const { ctx } = recorder();
+    const outputs = await extractImages([source], {}, ctx);
+
+    const images = imagesFrom(outputs);
+    expect(images).toHaveLength(1);
+    expect(images[0]?.name).toBe('masked-p1-1.png');
+    expect(readPng(images[0]!.buffer).pixels).toEqual(pixels);
+    // The picture's own line still discloses that its mask was left behind.
+    expect(reportOfExtraction(outputs)).toContain('extracted opaque');
+  });
+
+  it('reads a /Filter that is stored as an indirect reference', async () => {
+    // Reporting "no filter" for a stream that plainly has one is the wrong
+    // reason, which in this tool is the whole defect.
+    const { spec, pixels } = rgbImage(2, 2);
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([100, 100]);
+    const filterRef = doc.context.register(PDFName.of('FlateDecode'));
+    const image = doc.context.register(
+      doc.context.stream(spec.contents, {
+        Type: 'XObject',
+        Subtype: 'Image',
+        Width: 2,
+        Height: 2,
+        ColorSpace: 'DeviceRGB',
+        BitsPerComponent: 8,
+        Filter: filterRef,
+      }),
+    );
+    page.node.setXObject(PDFName.of('Im0'), image);
+
+    const { ctx } = recorder();
+    const outputs = await extractImages([await asInput(await doc.save(), 'indirect.pdf')], {}, ctx);
+
+    const images = imagesFrom(outputs);
+    expect(images).toHaveLength(1);
+    expect(readPng(images[0]!.buffer).pixels).toEqual(pixels);
+  });
+
+  it('extracts a stream with no filter at all, whose contents are already pixels', async () => {
+    const pixels = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    const spec: ImageSpec = {
+      width: 2,
+      height: 2,
+      contents: pixels,
+      dict: { ColorSpace: 'DeviceRGB', BitsPerComponent: 8 },
+    };
+
+    const { ctx } = recorder();
+    const outputs = await extractImages([await pdfWithImages([spec])], {}, ctx);
+
+    const images = imagesFrom(outputs);
+    expect(images).toHaveLength(1);
+    expect(readPng(images[0]!.buffer).pixels).toEqual(pixels);
   });
 
   it('says so, rather than failing, when a PDF holds no images at all', async () => {

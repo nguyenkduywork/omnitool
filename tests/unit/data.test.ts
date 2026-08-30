@@ -690,6 +690,17 @@ describe('text-clean', () => {
     expect(bufferToText(lf[0]!.buffer)).toBe('a\nb\n');
   });
 
+  it('keeps bare CR endings under "keep", instead of quietly making them LF', async () => {
+    // A classic-Mac file has CRs and no LF anywhere. "Keep the file's own" has
+    // to mean keeping those.
+    const kept = await textClean([textInput('a.txt', 'b\ra')], { sort: 'asc' }, makeCtx());
+    expect(bufferToText(kept[0]!.buffer)).toBe('a\rb');
+
+    // Asking for LF still converts them, which is the point of asking.
+    const converted = await textClean([textInput('a.txt', 'b\ra')], { sort: 'asc', endings: 'lf' }, makeCtx());
+    expect(bufferToText(converted[0]!.buffer)).toBe('a\nb');
+  });
+
   it('normalises line endings on request, in both directions', async () => {
     const toLf = await textClean([textInput('a.txt', 'a\r\nb\r\n')], { endings: 'lf' }, makeCtx());
     expect(bufferToText(toLf[0]!.buffer)).toBe('a\nb\n');

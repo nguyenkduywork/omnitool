@@ -84,10 +84,16 @@ export function cleanText(text: string, options: TextCleanOptions): string {
   const hasBom = text.startsWith(BOM);
   const body = hasBom ? text.slice(BOM.length) : text;
 
-  // 'keep' follows the file: any CRLF at all means the file is a CRLF file.
-  const eol = options.endings === 'crlf' || (options.endings === 'keep' && body.includes('\r\n'))
-    ? '\r\n'
-    : '\n';
+  // 'keep' follows the file: any CRLF at all makes it a CRLF file, and a file
+  // with bare CRs and no LF anywhere is a classic-Mac file — which "keep" has
+  // to mean keeping, rather than quietly converting to LF.
+  const keeping = options.endings === 'keep';
+  const eol =
+    options.endings === 'crlf' || (keeping && body.includes('\r\n'))
+      ? '\r\n'
+      : keeping && body.includes('\r') && !body.includes('\n')
+        ? '\r'
+        : '\n';
 
   // A trailing newline is a terminator, not an empty last line — split would
   // turn it into one, and joining would then lose it.

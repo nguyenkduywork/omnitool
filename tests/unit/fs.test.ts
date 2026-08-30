@@ -25,8 +25,9 @@ function textOutput(name: string, body: string): OpOutput {
 function binaryOutput(name: string, type: string, size: number): OpOutput {
   const buffer = new ArrayBuffer(size);
   const bytes = new Uint8Array(buffer);
-  // Incompressible on purpose: this stands in for a PNG or JPEG, whose bytes
-  // are already deflate output.
+  // Incompressible on purpose: this stands in for a PNG (deflate output) or a
+  // JPEG (DCT plus Huffman) — different codecs, but both already compressed,
+  // which is the only property that matters here.
   for (let i = 0; i < size; i++) bytes[i] = (i * 2654435761) & 0xff;
   return { name, type, buffer };
 }

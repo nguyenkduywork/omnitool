@@ -15,12 +15,25 @@
 //   The XMP metadata stream (/Metadata) on the catalog AND on every page, plus
 //     /PieceInfo — the private application data editors leave behind.
 //
-// UNLINKING IS NOT REMOVING. Dropping /Metadata from the catalog leaves the
-// stream in the file as an orphan object, and pdf-lib writes orphans back out:
-// the XMP payload is still sitting in the bytes for anyone who opens the file
-// in a hex editor. Verified, and the reason every removal here also calls
-// `context.delete(ref)` to purge the object itself. A test greps the output
-// bytes for the payload rather than trusting the catalog to be the whole story.
+// UNLINKING IS NOT REMOVING, and this is the part that is easy to get wrong.
+// Dropping a key leaves whatever it pointed at in the file as an orphan object,
+// and pdf-lib writes orphans back out: the payload is still sitting in the
+// bytes for anyone who opens the file in a hex editor, while every getter says
+// it is gone. It bites in three places, because PDF lets ANY value be indirect:
+//
+//   * a /Metadata XMP stream, which is always indirect;
+//   * an Info value — /Author may be an indirect string, not a literal one;
+//   * a /PieceInfo, which is a whole nested tree of application dictionaries
+//     with the private payload two levels down.
+//
+// So removal here is unlink-then-SWEEP: every object the removed values pointed
+// at is remembered, the graph is walked from the catalog and the Info
+// dictionary afterwards, and anything remembered that nothing still reaches is
+// deleted outright. Sweeping only what this op unlinked (rather than every
+// unreachable object in the file) keeps the blast radius to this tool's own
+// edits, and checking reachability first means an object that some other part
+// of the document shares is left alone. The tests grep the output bytes for
+// each payload rather than trusting a getter to be the whole story.
 //
 // WHAT THIS IS NOT: redaction. Metadata is data *about* the document; this
 // removes that and nothing else. Text on the page, images (including any EXIF
@@ -32,7 +45,7 @@
 // file, and a file that carried no metadata at all is handed back as its
 // original bytes rather than re-saved for nothing.
 
-import { PDFDict, PDFDocument, PDFName, PDFRef } from 'pdf-lib';
+import { PDFArray, PDFDict, PDFDocument, PDFName, PDFRef, PDFStream, type PDFObject } from 'pdf-lib';
 
 import { OpError, type Op, type OpInput, type OpOutput } from '../../types';
 
@@ -123,11 +136,76 @@ function ellipsis(text: string, max = 60): string {
 }
 
 /**
- * Delete `key` from `container` AND purge the object it pointed at, so the
- * payload leaves the file instead of surviving as an orphan (see the header).
- * Returns the removed object's size in bytes, or undefined if there was none.
+ * Every indirect object reachable from `value`, added to `into`. Iterative
+ * rather than recursive: a page tree or a deeply nested /PieceInfo is a graph
+ * of unknown depth, and a stack overflow inside a cleanup pass would be a
+ * spectacularly bad way to fail.
  */
-function purge(doc: PDFDocument, container: PDFDict, key: string): number | undefined {
+function collectRefs(doc: PDFDocument, value: PDFObject | undefined, into: Map<string, PDFRef>): void {
+  const stack: (PDFObject | undefined)[] = [value];
+  const visited = new Set<string>();
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (current === undefined) continue;
+
+    if (current instanceof PDFRef) {
+      const id = current.toString();
+      if (visited.has(id)) continue;
+      visited.add(id);
+      into.set(id, current);
+      stack.push(doc.context.lookup(current));
+      continue;
+    }
+    if (current instanceof PDFStream) {
+      stack.push(current.dict);
+      continue;
+    }
+    if (current instanceof PDFDict) {
+      for (const entry of current.values()) stack.push(entry);
+      continue;
+    }
+    if (current instanceof PDFArray) {
+      for (let i = 0; i < current.size(); i++) stack.push(current.get(i));
+    }
+    // Everything else — names, numbers, strings, booleans — has no children.
+  }
+}
+
+/**
+ * Delete the unlinked objects that nothing else in the document still points
+ * at. `candidates` is only ever what this op unlinked, so an object shared with
+ * live content (however unlikely) survives, and nothing else in the file is
+ * touched.
+ */
+function sweep(doc: PDFDocument, candidates: Map<string, PDFRef>): number {
+  if (candidates.size === 0) return 0;
+
+  const live = new Map<string, PDFRef>();
+  collectRefs(doc, doc.catalog, live);
+  const infoRef = doc.context.trailerInfo.Info;
+  if (infoRef !== undefined) collectRefs(doc, infoRef as PDFObject, live);
+
+  let deleted = 0;
+  for (const [id, ref] of candidates) {
+    if (live.has(id)) continue;
+    doc.context.delete(ref);
+    deleted += 1;
+  }
+  return deleted;
+}
+
+/**
+ * Unlink `key` from `container`, remembering everything it pointed at so the
+ * sweep can delete it. Returns the removed value's size in bytes, or undefined
+ * if there was no such key.
+ */
+function unlink(
+  doc: PDFDocument,
+  container: PDFDict,
+  key: string,
+  candidates: Map<string, PDFRef>,
+): number | undefined {
   const name = PDFName.of(key);
   const value = container.get(name);
   if (value === undefined) return undefined;
@@ -140,14 +218,17 @@ function purge(doc: PDFDocument, container: PDFDict, key: string): number | unde
     bytes = undefined;
   }
 
+  collectRefs(doc, value, candidates);
   container.delete(name);
-  if (value instanceof PDFRef) doc.context.delete(value);
   return bytes ?? 0;
 }
 
 /** Strip one loaded document in place. Returns what was taken out of it. */
 function cleanDocument(doc: PDFDocument, keepTitle: boolean, removeXmp: boolean): Removal[] {
   const removed: Removal[] = [];
+  // What this pass unlinks, so the sweep at the end can delete the objects the
+  // removed values pointed at rather than leaving them orphaned in the file.
+  const candidates = new Map<string, PDFRef>();
 
   const named: { key: string; label: string; read: () => string | Date | undefined }[] = [
     { key: 'Title', label: 'Title', read: () => doc.getTitle() },
@@ -178,21 +259,23 @@ function cleanDocument(doc: PDFDocument, keepTitle: boolean, removeXmp: boolean)
       removed.push({
         label: value === undefined ? field.label : `${field.label}: ${ellipsis(value)}`,
       });
-      info.delete(PDFName.of(field.key));
+      // An Info value can itself be an indirect object — unlinking the key is
+      // not enough to get the string out of the file.
+      unlink(doc, info, field.key, candidates);
     }
     // Everything else in the dictionary, whatever a producer decided to call it.
     for (const key of info.keys()) {
       const bare = key.asString().slice(1);
       if (described.has(bare)) continue;
       removed.push({ label: `custom field ${bare}` });
-      info.delete(key);
+      unlink(doc, info, bare, candidates);
     }
   }
 
   if (removeXmp) {
-    const catalogXmp = purge(doc, doc.catalog, 'Metadata');
+    const catalogXmp = unlink(doc, doc.catalog, 'Metadata', candidates);
     if (catalogXmp !== undefined) removed.push({ label: 'XMP metadata stream', bytes: catalogXmp });
-    const catalogPiece = purge(doc, doc.catalog, 'PieceInfo');
+    const catalogPiece = unlink(doc, doc.catalog, 'PieceInfo', candidates);
     if (catalogPiece !== undefined) {
       removed.push({ label: 'application data (PieceInfo)', bytes: catalogPiece });
     }
@@ -201,16 +284,20 @@ function cleanDocument(doc: PDFDocument, keepTitle: boolean, removeXmp: boolean)
     for (let i = 0; i < pages.length; i++) {
       const node = pages[i]?.node;
       if (node === undefined) continue;
-      const pageXmp = purge(doc, node, 'Metadata');
+      const pageXmp = unlink(doc, node, 'Metadata', candidates);
       if (pageXmp !== undefined) {
         removed.push({ label: `XMP metadata on page ${i + 1}`, bytes: pageXmp });
       }
-      const piece = purge(doc, node, 'PieceInfo');
+      const piece = unlink(doc, node, 'PieceInfo', candidates);
       if (piece !== undefined) {
         removed.push({ label: `application data on page ${i + 1}`, bytes: piece });
       }
     }
   }
+
+  // Nothing is actually gone until the objects behind it are, and that has to
+  // happen after every unlink so a value shared by two of them is judged once.
+  sweep(doc, candidates);
 
   return removed;
 }
