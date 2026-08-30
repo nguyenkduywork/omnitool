@@ -33,9 +33,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Vendor OCR assets
-        run: npm run vendor:ocr
-
       - name: Build
         run: npm run build
 

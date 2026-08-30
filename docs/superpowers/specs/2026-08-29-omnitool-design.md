@@ -26,6 +26,7 @@ Explicitly out of scope. Each is a deliberate cut, not an oversight:
 
 - Audio/video conversion (`ffmpeg.wasm` costs ~25–30 MB of WASM; revisit in v2)
 - OCR, and Office formats (`.docx` / `.xlsx` / `.pptx`)
+  (OCR was later built and then removed again — see the note in §5.1.)
 - User accounts, cloud storage, sync, sharing links
 - Server-side processing of any kind
 - i18n, analytics, telemetry
@@ -107,7 +108,7 @@ src/
       pool.ts                 worker pool, transferables, cancellation, crash recovery
       runner.worker.ts        generic op host; imports and executes an op by id
   tools/
-    pdf/     merge, split, organize, shrink, to-images, from-images, extract-text
+    pdf/     merge, split, organize, shrink, to-images, from-images
     image/   convert, resize, compress, crop, merge-sheet
     data/    zip-create, zip-extract, hash, base64, csv-json, json-format, qr
   ui/
@@ -190,7 +191,14 @@ schema-driven panel.
 
 ## 5. Tool inventory (v1)
 
-### 5.1 PDF — `pdf-lib` (write) + `pdfjs-dist` (render/text)
+### 5.1 PDF
+
+**Removed 2026-08-30.** `pdf-extract-text` and the OCR tool that briefly
+succeeded it were both dropped at the user's request as more machinery than the
+project wants. Reading a text layer only ever helped PDFs that already contained
+text; making it useful on scans meant carrying a ~3 MB OCR engine plus per-language
+models. Sections below are left as written, for the record.
+ — `pdf-lib` (write) + `pdfjs-dist` (render/text)
 
 | id | Name | Behaviour |
 |---|---|---|
@@ -200,7 +208,6 @@ schema-driven panel.
 | `pdf-shrink` | Shrink PDF | Re-encode embedded raster images at reduced quality |
 | `pdf-to-images` | PDF to images | Render each page to PNG or JPEG at chosen DPI |
 | `pdf-from-images` | Images to PDF | Build a PDF from images; page size / fit options |
-| `pdf-extract-text` | Extract text | Per-page text to a single `.txt` |
 
 **Honesty note on `pdf-shrink`:** true client-side PDF compression is limited —
 `pdf-lib` cannot resample embedded image streams as well as Ghostscript. The tool
@@ -293,7 +300,7 @@ options inline. Results appear in a tray beneath.
 - **Progress** — a ring driven by real `onProgress` values, plus per-file status.
 - **Results tray** — outputs with size delta, individual download, and
   download-all as ZIP. Outputs whose type is textual (`hash`, `json-format`,
-  `base64`, `pdf-extract-text`) additionally render **inline with a copy button**,
+  `base64`) additionally render **inline with a copy button**,
   since forcing a download to read a checksum would be absurd.
 - **Command palette** — `Cmd/Ctrl-K`, fuzzy tool search, Enter to run.
 

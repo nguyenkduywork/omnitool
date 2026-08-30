@@ -115,14 +115,4 @@ export const PDF_TOOLS: ToolDef[] = [
     },
     load: () => import('../tools/pdf/from-images.op'),
   },
-  {
-    id: 'pdf-extract-text',
-    name: 'Extract text',
-    blurb: "Pull out the PDF's text layer as a .txt file.",
-    group: 'pdf',
-    accepts: ['application/pdf'],
-    minInputs: 1,
-    maxInputs: null,
-    load: () => import('../tools/pdf/extract-text.op'),
-  },
 ];
