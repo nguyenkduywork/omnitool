@@ -70,9 +70,18 @@ function scopeUrl(scope: ServiceWorkerScope, pathname: string): string {
 
 /** Every same-origin build output Vite puts under its asset directory —
  *  every lazily-imported chunk, precached or not. Path-based on purpose:
- *  content-hashed filenames make a wrong hit impossible either way. */
+ *  content-hashed filenames make a wrong hit impossible either way.
+ *
+ *  Also covers `/ocr/` — the OCR engine's worker script, WASM core builds,
+ *  and per-language `.traineddata.gz` files (src/tools/data/ocr.op.ts,
+ *  scripts/vendor-ocr.mjs). Those are NOT part of the Vite module graph (a
+ *  static import would defeat the entire point of fetching them lazily, on
+ *  first actual use), so they never appear in `__PRECACHE__` — this is the
+ *  ONLY thing that lets a language work offline after that first use, and
+ *  the reason README.md's "no network calls" claim is qualified for OCR:
+ *  the first use of a language is a real, same-origin, one-time fetch. */
 function isBuildAsset(pathname: string): boolean {
-  return pathname.includes('/assets/');
+  return pathname.includes('/assets/') || pathname.includes('/ocr/');
 }
 
 async function networkFirst(scope: ServiceWorkerScope, request: Request): Promise<Response> {

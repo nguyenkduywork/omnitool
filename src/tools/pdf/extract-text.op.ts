@@ -162,7 +162,7 @@ const extractText: Op = async (inputs, _options, ctx): Promise<OpOutput[]> => {
       if (emptyPages.length === pageCount) {
         throw new OpError(
           'UnsupportedFormat',
-          `${input.name} has no text layer — every page is an image, so this is a scan or photo of a document rather than a text PDF. Extracting text from it needs OCR, which omnitool does not do. "PDF to images" will give you the page images.`,
+          `${input.name} has no text layer — every page is an image, so this is a scan or photo of a document rather than a text PDF. Use "Scan to text" instead — it runs OCR on exactly this kind of file.`,
           input.name,
         );
       }

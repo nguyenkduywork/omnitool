@@ -4,3 +4,9 @@ dist/
 *.log
 test-results/
 playwright-report/
+
+# OCR engine assets (worker script, WASM cores, per-language traineddata) —
+# ~40 MB of binaries copied from node_modules by scripts/vendor-ocr.mjs.
+# Regenerated on every `npm run dev` / `npm run build` / `npm run test`
+# (see the pre* scripts in package.json); never committed.
+public/ocr/

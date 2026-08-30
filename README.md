@@ -4,12 +4,23 @@ Everyday file tools — merge PDFs, convert and resize images, zip, hash, and
 reformat data — that run entirely inside your browser tab.
 
 **No file you open in omnitool ever leaves your device. There is no server.**
-Every operation — merging, converting, hashing, zipping — runs in a Web
-Worker on your own machine. omnitool makes zero network calls at runtime: no
-uploads, no analytics, no telemetry, no CDN fetches. You could disconnect
-from the internet after the page has loaded and every tool would keep
-working exactly the same. Open your browser's network tab if you want to see
-for yourself — it will stay empty.
+Every operation — merging, converting, hashing, zipping, OCR — runs in a Web
+Worker on your own machine, and none of it is ever sent anywhere: no
+uploads, no analytics, no telemetry, no CDN fetches of anything that touches
+your files.
+
+One honest qualification, and only one: **Scan to text (OCR)** runs on a
+real OCR engine that has to come from somewhere. The first time you use it,
+the engine and the specific language you pick are fetched once, from this
+same site — never a third party — and cached in your browser; every later
+run of OCR, in that language, works offline. That download carries none of
+your data outward, in either direction: fetching a static model uploads
+nothing. Every OTHER tool needs no download, ever, and works from the
+moment the page has first loaded — you could disconnect from the internet
+right now and merge PDFs, convert images, zip, hash, and reformat data with
+it staying that way. Open your browser's network tab if you want to see for
+yourself: it stays empty for everything except that one OCR download, once,
+per language.
 
 Open source, MIT licensed.
 
@@ -47,8 +58,10 @@ you get PDF tools; drop PNGs and you get image tools.
 
 **Installable and offline.** A service worker precaches the app shell and
 caches each tool's code chunk after first use, so a second visit is instant
-and you can reload with the network off and keep working. Install it as an
-app from your browser's address bar if you want it out of a tab.
+and you can reload with the network off and keep working. OCR's engine and
+language packs are cached the same way, the first time each is actually
+used — after that, OCR works offline too. Install it as an app from your
+browser's address bar if you want it out of a tab.
 
 ## The tools
 
@@ -82,6 +95,7 @@ app from your browser's address bar if you want it out of a tab.
 | CSV ⇄ JSON | Convert between CSV and JSON, with quoted-field and CRLF handling |
 | Format JSON | Pretty-print or minify |
 | Generate QR code | Turn text or a URL into a QR code, PNG or SVG |
+| Scan to text (OCR) | Read text from scanned PDFs and photos, in 15 languages |
 
 ## Known limitations (honest, on purpose)
 
@@ -116,8 +130,21 @@ app from your browser's address bar if you want it out of a tab.
   Fixing this properly means letting an op return per-input outcomes instead
   of throwing, which touches every tool and is deliberately deferred to v2
   rather than made as a mid-flight change to a frozen contract.
-- Audio/video conversion, OCR, and Office formats (`.docx`/`.xlsx`/`.pptx`)
-  are out of scope for v1 — see the design spec's non-goals.
+- **OCR reports its own confidence, honestly.** tesseract.js scores every
+  page it recognises from 0-100. Below a threshold, the output is prefixed
+  with a plain-language warning naming the likely cause (usually a low-
+  resolution, skewed, or oddly patterned source) instead of handing back
+  garbled text dressed up as clean output. Accuracy also depends heavily on
+  input resolution — for scanned PDFs, the DPI option controls this
+  directly; a low DPI on a small font is the most common cause of a low
+  score.
+- **OCR is the one tool with a real, one-time network dependency.** The
+  engine and each language are same-origin downloads (§ above), never a
+  third party — but until a language has been fetched once, that language
+  cannot run offline. Every other tool has no such dependency, ever.
+- Audio/video conversion and Office formats (`.docx`/`.xlsx`/`.pptx`) are
+  out of scope for v1 — see the design spec's non-goals. (OCR was originally
+  on that list too; it shipped after all — see `src/tools/data/ocr.op.ts`.)
 
 ## Running it
 

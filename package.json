@@ -8,22 +8,43 @@
     "node": ">=20"
   },
   "scripts": {
+    "predev": "node scripts/vendor-ocr.mjs",
     "dev": "vite",
+    "prebuild": "node scripts/vendor-ocr.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json",
     "lint": "eslint .",
+    "pretest": "node scripts/vendor-ocr.mjs",
     "test": "vitest run",
     "test:e2e": "playwright test",
     "size": "node scripts/size-budget.mjs",
-    "make-fixtures": "node tests/fixtures/make-fixtures.mjs"
+    "make-fixtures": "node tests/fixtures/make-fixtures.mjs",
+    "vendor:ocr": "node scripts/vendor-ocr.mjs"
   },
   "dependencies": {
+    "@tesseract.js-data/ara": "^1.0.0",
+    "@tesseract.js-data/chi_sim": "^1.0.0",
+    "@tesseract.js-data/deu": "^1.0.0",
+    "@tesseract.js-data/eng": "^1.0.0",
+    "@tesseract.js-data/fra": "^1.0.0",
+    "@tesseract.js-data/ita": "^1.0.0",
+    "@tesseract.js-data/jpn": "^1.0.0",
+    "@tesseract.js-data/kor": "^1.0.0",
+    "@tesseract.js-data/nld": "^1.0.0",
+    "@tesseract.js-data/pol": "^1.0.0",
+    "@tesseract.js-data/por": "^1.0.0",
+    "@tesseract.js-data/rus": "^1.0.0",
+    "@tesseract.js-data/spa": "^1.0.0",
+    "@tesseract.js-data/tur": "^1.0.0",
+    "@tesseract.js-data/vie": "^1.0.0",
     "animejs": "^4",
     "fflate": "^0.8",
     "pdf-lib": "^1",
     "pdfjs-dist": "^4",
-    "qrcode": "^1"
+    "qrcode": "^1",
+    "tesseract.js": "^7.0.0",
+    "tesseract.js-core": "^7.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^9",
