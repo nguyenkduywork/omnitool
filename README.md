@@ -194,7 +194,9 @@ don't exist in plain Node; everything else runs fast under Node.
 End-to-end coverage (`tests/e2e/`) drives a real production build with
 Playwright: golden flows for each tool family, the accessibility suite
 (keyboard-only operation, focus visibility, `aria-live` announcements), and
-the bespoke visual editors (PDF page board, image crop, rotate preview).
+the PDF page board's bespoke editor. The image crop and rotate editors are
+instead covered by the headless-Chromium Vitest suite above, which checks
+their previews pixel-for-pixel against the op each one drives.
 
 ## Deployment
 
