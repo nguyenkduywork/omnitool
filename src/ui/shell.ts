@@ -38,40 +38,16 @@ import { createPalette } from './palette';
 import { prefetchModule, prefetchTool } from './prefetch';
 import { createProgressRing } from './progress';
 import { createResults } from './results';
+import { createThemeControl } from './theme';
 import { GROUP_ICON, GROUP_ORDER, GROUP_TITLE, toolIcon } from './toolicons';
 
 export type ShellHandle = { destroy(): void };
-
-const THEME_KEY = 'omnitool:theme';
-type ThemePref = 'system' | 'light' | 'dark';
-const THEME_CYCLE: ThemePref[] = ['system', 'dark', 'light'];
-const THEME_NAME: Record<ThemePref, string> = {
-  system: 'Theme: match the system',
-  dark: 'Theme: dark',
-  light: 'Theme: light',
-};
 
 /** Magic-byte sniffing only needs the head of the file, not all of it. */
 const SNIFF_BYTES = 32;
 
 /** Which modifier this platform actually shows for a shortcut (⌘ vs Ctrl). */
 const MOD = typeof navigator !== 'undefined' && /mac/i.test(navigator.userAgent) ? '⌘' : 'Ctrl';
-
-function readThemePref(): ThemePref {
-  try {
-    const stored = localStorage.getItem(THEME_KEY);
-    if (stored === 'light' || stored === 'dark' || stored === 'system') return stored;
-  } catch {
-    // Storage can be blocked; the system default is a fine answer.
-  }
-  return 'system';
-}
-
-function applyThemePref(pref: ThemePref): void {
-  const root = document.documentElement;
-  if (pref === 'system') delete root.dataset.theme;
-  else root.dataset.theme = pref;
-}
 
 /** Narrow an unknown rejection to something the results tray can render. */
 function asFailure(error: unknown): { code: OpErrorCode; message: string; file?: string } {
@@ -102,9 +78,6 @@ export function mountShell(root: HTMLElement): ShellHandle {
   let gridRevealed = false;
   let lastGridSignature = '';
   let lastFilesSignature = '';
-  let theme = readThemePref();
-
-  applyThemePref(theme);
 
   // ------------------------------------------------------------- chrome
   const live = el('div', 'sr-only');
@@ -124,27 +97,7 @@ export function mountShell(root: HTMLElement): ShellHandle {
   brand.append(brandMark, el('span', 'brand__name', 'omnitool'));
   const claim = el('p', 'brand__claim', 'Your files never leave this tab.');
 
-  const themeButton = el('button', 'btn btn--icon');
-  themeButton.type = 'button';
-  themeButton.append(icon('theme'));
-  function paintThemeButton(): void {
-    themeButton.title = THEME_NAME[theme];
-    themeButton.setAttribute('aria-label', `${THEME_NAME[theme]}. Change.`);
-    themeButton.dataset.theme = theme;
-  }
-  paintThemeButton();
-  themeButton.addEventListener('click', () => {
-    const at = THEME_CYCLE.indexOf(theme);
-    theme = THEME_CYCLE[(at + 1) % THEME_CYCLE.length] ?? 'system';
-    applyThemePref(theme);
-    paintThemeButton();
-    try {
-      localStorage.setItem(THEME_KEY, theme);
-    } catch {
-      // A blocked storage is not an error worth showing anyone.
-    }
-    announce(THEME_NAME[theme]);
-  });
+  const themeControl = createThemeControl(announce);
 
   const paletteButton = el('button', 'btn btn--ghost btn--sm searchbtn');
   paletteButton.type = 'button';
@@ -157,7 +110,7 @@ export function mountShell(root: HTMLElement): ShellHandle {
   paletteButton.addEventListener('click', () => palette.open());
 
   const topbarInner = el('div', 'topbar__inner');
-  topbarInner.append(brand, claim, paletteButton, themeButton);
+  topbarInner.append(brand, claim, paletteButton, themeControl.el);
   topbar.append(topbarInner);
 
   // --------------------------------------------------------------- stage
@@ -706,6 +659,7 @@ export function mountShell(root: HTMLElement): ShellHandle {
       dropzone.destroy();
       document.removeEventListener('keydown', onGlobalKeydown);
       palette.destroy();
+      themeControl.destroy();
       root.replaceChildren();
     },
   };
