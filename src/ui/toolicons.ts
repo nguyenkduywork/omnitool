@@ -30,6 +30,7 @@ const TOOL_ICON: Record<string, IconName> = {
   'pdf-to-images': 'image',
   'pdf-from-images': 'file',
   'pdf-metadata': 'shield',
+  'pdf-extract-images': 'unarchive',
   'image-convert': 'swap',
   'image-resize': 'expand',
   'image-compress': 'shrink',

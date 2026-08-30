@@ -83,6 +83,7 @@ from your browser's address bar if you want it out of a tab.
 | PDF to images | Rasterise every page to PNG or JPEG at a chosen DPI |
 | Images to PDF | One image per page, in file-tray order |
 | Clean PDF metadata | Strip the author, dates, and XMP a PDF carries — without touching a page |
+| Extract images | Pull the pictures embedded in a PDF back out as image files |
 
 **Images**
 | Tool | What it does |
@@ -287,6 +288,20 @@ Pages.
   before letters, exactly like `sort` under `LC_ALL=C`. It also reads UTF-8
   only: anything else is refused by name rather than mangled into replacement
   characters.
+- **"Extract images" gets the pictures out, not every picture.** A
+  `/DCTDecode` stream's bytes already *are* a JPEG file, so those come out
+  byte for byte — a copy, not a decode and re-encode, which is why there is no
+  quality setting to get wrong. Raw pixels (`/FlateDecode`, 8 bits per
+  component, grayscale or RGB, including ICC-wrapped RGB) are wrapped in a PNG,
+  which is lossless too. Everything else is **left alone and named in the
+  report with the reason**: JPEG 2000, CCITT and JBIG2 fax images, indexed
+  palettes, 1-bit stencil masks, filter chains, and anything predictor-encoded
+  — for that last one, the PDF library undoes the compression but not the
+  predictor, and writing those bytes into a PNG would hand you a file that
+  opens and looks like garbage. An image with a soft mask comes out opaque, and
+  the report says so for that image. The same picture drawn on forty pages is
+  extracted once, named for the first page it appears on. This is not the same
+  tool as **PDF to images**, which rasterises whole pages at a DPI you pick.
 - **A batch with a bad file costs a re-run.** The op contract has no channel
   for an op to report "this one input failed, keep going" — its only way to
   signal a failure is to throw, naming the file. So when one input in a

@@ -129,4 +129,17 @@ export const PDF_TOOLS: ToolDef[] = [
     },
     load: () => import('../tools/pdf/metadata.op'),
   },
+  {
+    id: 'pdf-extract-images',
+    name: 'Extract images',
+    blurb: 'Pull the pictures embedded in a PDF back out as image files.',
+    group: 'pdf',
+    accepts: ['application/pdf'],
+    minInputs: 1,
+    maxInputs: null,
+    options: {
+      minSize: { kind: 'number', label: 'Skip images under (px)', min: 0, max: 4096, step: 8, default: 0 },
+    },
+    load: () => import('../tools/pdf/extract-images.op'),
+  },
 ];

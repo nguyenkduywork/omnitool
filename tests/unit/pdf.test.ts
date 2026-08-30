@@ -13,6 +13,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { unzlibSync, zlibSync } from 'fflate';
 import { PDFDict, PDFDocument, PDFName } from 'pdf-lib';
 import { beforeAll, describe, expect, it } from 'vitest';
 
@@ -23,6 +24,7 @@ import shrink, { canReencodeImages } from '../../src/tools/pdf/shrink.op';
 import toImages from '../../src/tools/pdf/to-images.op';
 import fromImages, { imageKind } from '../../src/tools/pdf/from-images.op';
 import metadata from '../../src/tools/pdf/metadata.op';
+import extractImages from '../../src/tools/pdf/extract-images.op';
 import { PDF_TOOLS } from '../../src/core/registry.pdf';
 import { PDF_LOADERS } from '../../src/core/workers/loaders.pdf';
 
@@ -110,6 +112,7 @@ describe('pdf registry entries', () => {
     'pdf-to-images',
     'pdf-from-images',
     'pdf-metadata',
+    'pdf-extract-images',
   ];
 
   it('registers every pdf tool with a matching loader entry', () => {
@@ -188,6 +191,10 @@ describe('pdf registry entries', () => {
     expect(byId.get('pdf-metadata')?.options).toEqual({
       keepTitle: { kind: 'toggle', label: 'Keep the document title', default: false },
       removeXmp: { kind: 'toggle', label: 'Remove XMP and application data', default: true },
+    });
+
+    expect(byId.get('pdf-extract-images')?.options).toEqual({
+      minSize: { kind: 'number', label: 'Skip images under (px)', min: 0, max: 4096, step: 8, default: 0 },
     });
 
     // pdf-organize has no schema — it uses its editor instead.
@@ -846,6 +853,328 @@ describe('pdf-metadata', () => {
   it('reports progress once per file, ending at exactly 1', async () => {
     const { ctx, fractions } = recorder();
     await metadata([await pdfWithMetadata(), await pdfWithMetadata()], {}, ctx);
+    expect(fractions).toEqual([0.5, 1]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pdf-extract-images
+//
+// Every image below is built BY HAND, so the test knows the exact pixels that
+// went into the PDF and can hold the extracted file against them. Nothing here
+// needs a canvas: the op decodes a Flate stream and writes a PNG container
+// itself, so it is testable in plain Node — which is the point of doing the
+// PNG writing by hand rather than through OffscreenCanvas.
+// ---------------------------------------------------------------------------
+
+type ImageSpec = {
+  width: number;
+  height: number;
+  contents: Uint8Array;
+  dict: Record<string, unknown>;
+  pages?: number[];
+};
+
+/** A PDF holding exactly the image XObjects described, on the pages named. */
+async function pdfWithImages(images: ImageSpec[], pageCount = 1): Promise<OpInput> {
+  const doc = await PDFDocument.create();
+  const pages = Array.from({ length: pageCount }, () => doc.addPage([200, 200]));
+
+  images.forEach((image, index) => {
+    const ref = doc.context.register(
+      doc.context.stream(image.contents, {
+        Type: 'XObject',
+        Subtype: 'Image',
+        Width: image.width,
+        Height: image.height,
+        ...image.dict,
+      }),
+    );
+    for (const page of image.pages ?? [1]) {
+      pages[page - 1]?.node.setXObject(PDFName.of(`Im${index}`), ref);
+    }
+  });
+
+  const bytes = await doc.save();
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  return { name: 'images.pdf', type: 'application/pdf', buffer };
+}
+
+/** A Flate-compressed RGB image, and the pixels it was built from. */
+function rgbImage(width: number, height: number, extra: Record<string, unknown> = {}): { spec: ImageSpec; pixels: Uint8Array } {
+  const pixels = new Uint8Array(width * height * 3);
+  for (let i = 0; i < pixels.length; i++) pixels[i] = (i * 37 + 11) & 0xff;
+  return {
+    pixels,
+    spec: {
+      width,
+      height,
+      contents: zlibSync(pixels, { level: 6 }),
+      dict: { ColorSpace: 'DeviceRGB', BitsPerComponent: 8, Filter: 'FlateDecode', ...extra },
+    },
+  };
+}
+
+function reportOfExtraction(outputs: OpOutput[]): string {
+  return new TextDecoder().decode(outputs.find((o) => o.name === 'extract-images-report.txt')?.buffer);
+}
+
+function imagesFrom(outputs: OpOutput[]): OpOutput[] {
+  return outputs.filter((o) => o.name !== 'extract-images-report.txt');
+}
+
+/** Read a PNG back: header fields, and the pixels its IDAT actually carries. */
+function readPng(buffer: ArrayBuffer): { width: number; height: number; depth: number; colourType: number; pixels: Uint8Array } {
+  const bytes = new Uint8Array(buffer);
+  expect(Array.from(bytes.subarray(0, 8))).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+  const view = new DataView(buffer);
+  const chunks = new Map<string, Uint8Array>();
+  let at = 8;
+  while (at + 12 <= bytes.length) {
+    const length = view.getUint32(at);
+    const type = new TextDecoder().decode(bytes.subarray(at + 4, at + 8));
+    chunks.set(type, bytes.subarray(at + 8, at + 8 + length));
+    at += 12 + length;
+  }
+
+  const header = chunks.get('IHDR');
+  expect(header).toBeDefined();
+  expect(chunks.has('IEND')).toBe(true);
+  const headerView = new DataView((header as Uint8Array).buffer, (header as Uint8Array).byteOffset, 13);
+  const width = headerView.getUint32(0);
+  const height = headerView.getUint32(4);
+  const depth = (header as Uint8Array)[8] as number;
+  const colourType = (header as Uint8Array)[9] as number;
+
+  // Undo the per-scanline filter byte (the op writes filter 0, "stored").
+  const raw = unzlibSync(chunks.get('IDAT') as Uint8Array);
+  const channels = colourType === 0 ? 1 : 3;
+  const stride = width * channels;
+  const pixels = new Uint8Array(stride * height);
+  for (let y = 0; y < height; y++) {
+    expect(raw[y * (stride + 1)]).toBe(0);
+    pixels.set(raw.subarray(y * (stride + 1) + 1, y * (stride + 1) + 1 + stride), y * stride);
+  }
+  return { width, height, depth, colourType, pixels };
+}
+
+describe('pdf-extract-images', () => {
+  it('hands back an embedded JPEG byte for byte, never re-encoded (happy path)', async () => {
+    const jpeg = await load('a.jpg');
+    const doc = await PDFDocument.create();
+    const embedded = await doc.embedJpg(jpeg);
+    doc.addPage([200, 200]).drawImage(embedded, { x: 0, y: 0, width: 50, height: 50 });
+    const saved = await doc.save();
+    const buffer = new ArrayBuffer(saved.byteLength);
+    new Uint8Array(buffer).set(saved);
+
+    const { ctx, fractions } = recorder();
+    const outputs = await extractImages([{ name: 'photo.pdf', type: 'application/pdf', buffer }], {}, ctx);
+
+    const images = imagesFrom(outputs);
+    expect(images).toHaveLength(1);
+    expect(images[0]?.name).toBe('photo-p1-1.jpg');
+    expect(images[0]?.type).toBe('image/jpeg');
+    // The claim in the file header, asserted: these are the original bytes.
+    expect(new Uint8Array(images[0]!.buffer)).toEqual(jpeg);
+    expect(reportOfExtraction(outputs)).toContain('JPEG 5x5');
+
+    expectMonotonicEndingAtOne(fractions);
+  });
+
+  it('wraps raw Flate pixels in a PNG that carries exactly those pixels', async () => {
+    const { spec, pixels } = rgbImage(4, 3);
+    const { ctx } = recorder();
+    const outputs = await extractImages([await pdfWithImages([spec])], {}, ctx);
+
+    const images = imagesFrom(outputs);
+    expect(images).toHaveLength(1);
+    expect(images[0]?.name).toBe('images-p1-1.png');
+    expect(images[0]?.type).toBe('image/png');
+
+    const png = readPng(images[0]!.buffer);
+    expect(png).toMatchObject({ width: 4, height: 3, depth: 8, colourType: 2 });
+    // Lossless is a claim about bytes, so compare bytes.
+    expect(png.pixels).toEqual(pixels);
+  });
+
+  it('writes grayscale as a grayscale PNG, not a padded RGB one', async () => {
+    const pixels = new Uint8Array([0, 64, 128, 255, 32, 96]);
+    const spec: ImageSpec = {
+      width: 3,
+      height: 2,
+      contents: zlibSync(pixels, { level: 6 }),
+      dict: { ColorSpace: 'DeviceGray', BitsPerComponent: 8, Filter: 'FlateDecode' },
+    };
+    const { ctx } = recorder();
+    const outputs = await extractImages([await pdfWithImages([spec])], {}, ctx);
+
+    const png = readPng(imagesFrom(outputs)[0]!.buffer);
+    expect(png).toMatchObject({ width: 3, height: 2, colourType: 0 });
+    expect(png.pixels).toEqual(pixels);
+  });
+
+  it('reads an ICCBased colour space through to its component count', async () => {
+    // Real PDFs wrap DeviceRGB in an ICC profile constantly; refusing those
+    // would gut the Flate path.
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([200, 200]);
+    const profile = doc.context.register(doc.context.stream(new Uint8Array([0, 1, 2]), { N: 3 }));
+    const pixels = new Uint8Array([1, 2, 3, 4, 5, 6]);
+    const ref = doc.context.register(
+      doc.context.stream(zlibSync(pixels, { level: 6 }), {
+        Type: 'XObject',
+        Subtype: 'Image',
+        Width: 2,
+        Height: 1,
+        BitsPerComponent: 8,
+        Filter: 'FlateDecode',
+        ColorSpace: doc.context.obj(['ICCBased', profile]),
+      }),
+    );
+    page.node.setXObject(PDFName.of('Im0'), ref);
+    const saved = await doc.save();
+    const buffer = new ArrayBuffer(saved.byteLength);
+    new Uint8Array(buffer).set(saved);
+
+    const { ctx } = recorder();
+    const outputs = await extractImages([{ name: 'icc.pdf', type: 'application/pdf', buffer }], {}, ctx);
+
+    const png = readPng(imagesFrom(outputs)[0]!.buffer);
+    expect(png).toMatchObject({ width: 2, height: 1, colourType: 2 });
+    expect(png.pixels).toEqual(pixels);
+  });
+
+  it('extracts a shared image once, named for the first page it appears on', async () => {
+    const { spec } = rgbImage(4, 4);
+    const input = await pdfWithImages([{ ...spec, pages: [2, 3] }], 3);
+    const { ctx } = recorder();
+    const outputs = await extractImages([input], {}, ctx);
+
+    const images = imagesFrom(outputs);
+    expect(images).toHaveLength(1);
+    expect(images[0]?.name).toBe('images-p2-1.png');
+  });
+
+  it('refuses what it cannot honestly extract, and says why for each', async () => {
+    const { spec: rgb } = rgbImage(4, 4);
+    const input = await pdfWithImages([
+      { width: 4, height: 4, contents: new Uint8Array([1, 2, 3]), dict: { Filter: 'JPXDecode' } },
+      { width: 4, height: 4, contents: new Uint8Array([1, 2, 3]), dict: { Filter: 'CCITTFaxDecode' } },
+      { width: 4, height: 4, contents: new Uint8Array([1, 2, 3]), dict: { Filter: 'JBIG2Decode' } },
+      {
+        width: 4,
+        height: 4,
+        contents: new Uint8Array([1, 2, 3]),
+        dict: { Filter: 'FlateDecode', ImageMask: true, BitsPerComponent: 1 },
+      },
+      {
+        // Predictor-encoded: pdf-lib undoes the filter but not the predictor,
+        // so writing these bytes into a PNG would produce visible garbage.
+        ...rgb,
+        dict: {
+          ...rgb.dict,
+          DecodeParms: { Predictor: 15, Colors: 3, BitsPerComponent: 8, Columns: 4 },
+        },
+      },
+      {
+        width: 4,
+        height: 4,
+        contents: new Uint8Array([1, 2, 3]),
+        dict: { Filter: 'FlateDecode', BitsPerComponent: 4, ColorSpace: 'DeviceRGB' },
+      },
+      {
+        width: 4,
+        height: 4,
+        contents: new Uint8Array([1, 2, 3]),
+        dict: { Filter: 'FlateDecode', BitsPerComponent: 8, ColorSpace: 'DeviceCMYK' },
+      },
+    ]);
+
+    const { ctx } = recorder();
+    const outputs = await extractImages([input], {}, ctx);
+
+    expect(imagesFrom(outputs)).toHaveLength(0);
+    const report = reportOfExtraction(outputs);
+    expect(report).toContain('it is JPEG 2000');
+    expect(report).toContain('it is CCITT fax data');
+    expect(report).toContain('it is JBIG2 data');
+    expect(report).toContain('1-bit stencil mask');
+    expect(report).toContain('predictor-encoded');
+    expect(report).toContain('4 bits per component');
+    expect(report).toContain('not grayscale or RGB');
+    expect(report).toContain('nothing could be extracted');
+  });
+
+  it('says so, rather than failing, when a PDF holds no images at all', async () => {
+    const { ctx, fractions } = recorder();
+    const outputs = await extractImages([await input('small.pdf')], {}, ctx);
+
+    expect(imagesFrom(outputs)).toHaveLength(0);
+    expect(reportOfExtraction(outputs)).toContain('no embedded images found');
+    expectMonotonicEndingAtOne(fractions);
+  });
+
+  it('applies the size filter, and records what it dropped', async () => {
+    const { spec: small } = rgbImage(8, 8);
+    const { spec: big } = rgbImage(64, 64);
+    const { ctx } = recorder();
+    const outputs = await extractImages([await pdfWithImages([small, big])], { minSize: 32 }, ctx);
+
+    const images = imagesFrom(outputs);
+    expect(images).toHaveLength(1);
+    const png = readPng(images[0]!.buffer);
+    expect(png.width).toBe(64);
+    expect(reportOfExtraction(outputs)).toContain('8x8 is under the size filter');
+  });
+
+  it('raises UnsupportedFormat naming the file for a non-PDF', async () => {
+    const { ctx } = recorder();
+    await expectOpError(
+      extractImages([await input('sample.csv', 'text/csv')], {}, ctx),
+      'UnsupportedFormat',
+      'sample.csv',
+    );
+  });
+
+  it('raises CorruptFile naming the file for corrupt.pdf and encrypted.pdf', async () => {
+    await expectOpError(extractImages([await input('corrupt.pdf')], {}, recorder().ctx), 'CorruptFile', 'corrupt.pdf');
+    await expectOpError(
+      extractImages([await input('encrypted.pdf')], {}, recorder().ctx),
+      'CorruptFile',
+      'encrypted.pdf',
+    );
+  });
+
+  it.each([[{ minSize: -1 }], [{ minSize: 9000 }], [{ minSize: '64' }]])(
+    'raises InvalidOptions for %j',
+    async (options) => {
+      await expectOpError(extractImages([await input('small.pdf')], options, recorder().ctx), 'InvalidOptions');
+    },
+  );
+
+  it('raises InvalidOptions when given no files at all', async () => {
+    await expectOpError(extractImages([], {}, recorder().ctx), 'InvalidOptions');
+  });
+
+  it('rejects with Cancelled when aborted mid-run', async () => {
+    const { ctx, fractions } = recorder((fraction, controller) => {
+      if (fraction > 0) controller.abort();
+    });
+    const { spec } = rgbImage(4, 4);
+    await expectOpError(
+      extractImages([await pdfWithImages([spec]), await pdfWithImages([spec])], {}, ctx),
+      'Cancelled',
+    );
+    expect(fractions.at(-1)).not.toBe(1);
+  });
+
+  it('reports progress once per file, ending at exactly 1', async () => {
+    const { spec } = rgbImage(4, 4);
+    const { ctx, fractions } = recorder();
+    await extractImages([await pdfWithImages([spec]), await pdfWithImages([spec])], {}, ctx);
     expect(fractions).toEqual([0.5, 1]);
   });
 });

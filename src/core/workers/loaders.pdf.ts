@@ -12,4 +12,5 @@ export const PDF_LOADERS: Record<string, () => Promise<{ default: Op }>> = {
   'pdf-to-images': () => import('../../tools/pdf/to-images.op'),
   'pdf-from-images': () => import('../../tools/pdf/from-images.op'),
   'pdf-metadata': () => import('../../tools/pdf/metadata.op'),
+  'pdf-extract-images': () => import('../../tools/pdf/extract-images.op'),
 };
