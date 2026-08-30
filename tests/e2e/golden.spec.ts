@@ -182,9 +182,20 @@ test.describe('golden flows — production build', () => {
     // The generator is nowhere in a file-driven grid.
     await expect(page.locator('[data-tool="qr-generate"]')).toHaveCount(0);
     // A tool blocked only on count is explained, not vanished.
-    await expect(page.locator('.toolcard--blocked[data-tool="pdf-organize"]')).toContainText(
-      'Needs exactly 1 file',
-    );
+    const blocked = page.locator('.toolcard--blocked[data-tool="pdf-organize"]');
+    await expect(blocked).toContainText('Needs exactly 1 file');
+
+    // Adding files REBUILDS the blocked tier, it does not append to it. The
+    // grid holding these cards is a separate node from the main one, so it
+    // needs its own clear — miss that and pdf-organize is rendered twice here,
+    // three times after the next drop, and nothing else in the app notices.
+    await page
+      .locator('input[type=file]')
+      .setInputFiles([fixturePath('small.pdf'), fixturePath('small.pdf')]);
+    // Wait for the rebuild to land before counting: otherwise the count is read
+    // off the first render and passes without ever exercising the second.
+    await expect(blocked.first()).toContainText('you have 4');
+    await expect(blocked).toHaveCount(1);
   });
 
   test('drop a photo with GPS in it, strip the metadata, and the downloaded bytes have none', async ({

@@ -1823,6 +1823,13 @@ html.is-dragging .hero__drop {
 }
 .toolcard--blocked:hover::before { opacity: 0; }
 
+/* The `box-shadow: none` above and the global :focus-visible ring have equal
+ * specificity, so source order decides — and this rule comes later. Today the
+ * card is `disabled` and unfocusable so nothing shows it, but the day that
+ * becomes `aria-disabled` (so a keyboard user can reach the explanation the
+ * card exists to give) the ring would vanish silently. State it. */
+.toolcard--blocked:focus-visible { box-shadow: var(--ring); }
+
 .toolcard__reason {
   display: block;
   margin-top: var(--s-2);

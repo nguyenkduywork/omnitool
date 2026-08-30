@@ -43,6 +43,7 @@ const PAIRS = [
   ),
   ['--accent', '--bg', 'accent text on the page'],
   ['--accent', '--bg-1', 'accent text on a panel'],
+  ['--accent', '--bg-2', 'selected utility pill'],
   ['--accent', '--accent-quiet', 'selected tool card, hero eyebrow'],
   ['--accent-ink', '--accent', 'the label on a primary button'],
   ['--fam-pdf', '--bg', 'family label'],

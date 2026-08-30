@@ -300,6 +300,14 @@ export function renderOptions(init: RenderOptionsInit): OptionsHandle {
       const note = el('p', 'opt__because', because);
       note.id = `${id}-because`;
       row.append(note);
+
+      // The note is the entire point of a preset, and a caption nobody hears is
+      // no explanation at all: without this, a screen reader announces "Archive
+      // name, edit text, small" and never says where "small" came from. Composed
+      // onto any existing description rather than replacing it.
+      const field = control.querySelector<HTMLElement>('input, select, textarea');
+      const described = field?.getAttribute('aria-describedby');
+      field?.setAttribute('aria-describedby', described ? `${described} ${note.id}` : note.id);
     }
 
     // Every blocked choice states WHY, in the panel, next to the control.

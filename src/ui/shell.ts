@@ -211,7 +211,7 @@ export function mountShell(root: HTMLElement): ShellHandle {
 
   // A tool whose TYPE fits but whose COUNT does not is shown, disabled, with the
   // count it wants — silently omitting it reads as "this app cannot do that".
-  const blockedGrid = el('div', 'toolgroup__grid toolgroup__grid--blocked');
+  const blockedGrid = el('div', 'toolgroup__grid');
   blockedGrid.hidden = true;
 
   // The any-bytes tier. Always applicable, never the reason anyone came, so it

@@ -243,6 +243,26 @@ describe('presets', () => {
     expect(handle.el.querySelectorAll('.opt__reason').length).toBe(0);
     expect(handle.el.querySelectorAll('.opt__because').length).toBe(1);
   });
+
+  it('describes the control with the note, so the reason is not sighted-only', () => {
+    const { handle } = mount({}, { presetBecause: { format: 'from the file extension' } });
+
+    const note = handle.el.querySelector('[data-key="format"] .opt__because');
+    const select = field<HTMLSelectElement>(handle.el, 'format', 'select');
+    expect(note?.id).toBeTruthy();
+    expect(select.getAttribute('aria-describedby')?.split(/\s+/)).toContain(note!.id);
+
+    // The description has to RESOLVE — an id pointing at nothing announces
+    // nothing, which is the state this assertion exists to prevent.
+    expect(document.getElementById(note!.id)?.textContent).toBe('from the file extension');
+  });
+
+  it('leaves a control undescribed when nothing was preset for it', () => {
+    const { handle } = mount({}, { presetBecause: { format: 'from the file extension' } });
+    expect(
+      field<HTMLInputElement>(handle.el, 'dpi', 'input').getAttribute('aria-describedby'),
+    ).toBeNull();
+  });
 });
 
 describe('the editor escape hatch', () => {

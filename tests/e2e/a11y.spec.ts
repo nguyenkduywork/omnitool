@@ -245,9 +245,18 @@ test.describe('keyboard-only operation', () => {
 
 /**
  * The WCAG contrast of one element's text against what is ACTUALLY behind it on
- * screen: the first ancestor that paints a background, and the opacity of every
- * ancestor between them composited in. Returns the ratio, so a failure reports
- * the number rather than just "not readable".
+ * screen. Returns the ratio, so a failure reports the number rather than just
+ * "not readable".
+ *
+ * The surface is the nearest ancestor that paints a background, over the page's
+ * own ground. `opacity` is composited the way the engine does it, which is not
+ * a single product: an element with `opacity` renders its whole subtree into a
+ * group and composites THAT over what is behind it, so the same opacity dims
+ * the surface and the ink on it together, and the ink is laid over its own
+ * undimmed surface first. Both sides therefore carry the painting element's
+ * opacity, and only opacity BELOW it (between the surface and the text) dims
+ * the ink alone. Getting this symmetric is the difference between reporting a
+ * dimmed card honestly and reporting ink dimmed over a surface that was not.
  */
 function textContrast(page: Page, selector: string): Promise<number> {
   return page.evaluate((sel) => {
@@ -265,7 +274,7 @@ function textContrast(page: Page, selector: string): Promise<number> {
       for (let el = from; el; el = el.parentElement) alpha *= Number(getComputedStyle(el).opacity);
       return alpha;
     };
-    const over = (fg: Rgba, bg: number[], alpha: number): number[] =>
+    const over = (fg: number[], bg: number[], alpha: number): number[] =>
       [0, 1, 2].map((i) => fg[i]! * alpha + bg[i]! * (1 - alpha));
     const luminance = (rgb: number[]): number => {
       const [r, g, b] = rgb.map((v) => {
@@ -277,17 +286,29 @@ function textContrast(page: Page, selector: string): Promise<number> {
 
     // The page's own ground is the only surface guaranteed to be opaque.
     const ground = parse(getComputedStyle(document.body).backgroundColor);
-    let surface: number[] = [ground[0], ground[1], ground[2]];
+    const groundRgb = [ground[0], ground[1], ground[2]];
+
+    // The nearest ancestor that paints, and the opacity its group carries.
+    let paint: Rgba = [0, 0, 0, 0];
+    let groupAlpha = 1;
     for (let el: HTMLElement | null = node; el; el = el.parentElement) {
-      const paint = parse(getComputedStyle(el).backgroundColor);
-      if (paint[3] > 0) {
-        surface = over(paint, surface, paint[3] * stackAlpha(el.parentElement));
+      const background = parse(getComputedStyle(el).backgroundColor);
+      if (background[3] > 0) {
+        paint = background;
+        groupAlpha = stackAlpha(el);
         break;
       }
     }
 
+    // Inside the group the ink lies over its own undimmed surface, carrying
+    // only the opacity between the two; the group is then composited once.
+    const inside = paint[3] > 0 ? over(paint, groundRgb, paint[3]) : groundRgb;
     const ink = parse(getComputedStyle(node).color);
-    const text = over(ink, surface, ink[3] * stackAlpha(node));
+    const inkAlpha = groupAlpha === 0 ? 0 : stackAlpha(node) / groupAlpha;
+
+    const surface = over(paint, groundRgb, paint[3] * groupAlpha);
+    const text = over(over(ink, inside, ink[3] * inkAlpha), groundRgb, groupAlpha);
+
     const [a, b] = [luminance(text), luminance(surface)];
     return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
   }, selector);
@@ -300,38 +321,33 @@ test.describe('legibility the token check cannot see', () => {
       .locator('input[type="file"]')
       .setInputFiles([fixturePath('small.pdf'), fixturePath('small.pdf')]);
 
-    const reason = page.locator('.toolcard--blocked[data-tool="pdf-organize"] .toolcard__reason');
-    await expect(reason).toBeVisible({ timeout: 15_000 });
+    const card = '.toolcard--blocked[data-tool="pdf-organize"]';
+    await expect(page.locator(`${card} .toolcard__reason`)).toBeVisible({ timeout: 15_000 });
+
+    // Switching the theme starts a `background-color` transition on the card,
+    // and a style sampled before it settles reports the OLD surface under the
+    // NEW ink. Killing transitions outright makes every reading below a settled
+    // one; polling would only assert that SOME sample cleared the bar.
+    await page.addStyleTag({ content: '*, *::before, *::after { transition: none !important; }' });
 
     // BOTH themes: Playwright renders light by default, and the blocked card
     // swaps surface as well as ink, so one theme proves nothing about the other.
-    //
-    // Polled, not read once: switching the theme starts a `background-color`
-    // transition on the card, and a computed style sampled before it settles
-    // reports the OLD surface under the NEW ink. Reduced motion (beforeEach)
-    // makes that a 1ms window, and polling closes it.
     for (const colorScheme of ['light', 'dark'] as const) {
       await page.emulateMedia({ colorScheme });
 
       // The reason IS the card — a card carrying an explanation nobody can read
       // has failed at the only job it has. Dimming the card is fine; dimming the
       // sentence is not, which is why this is a composited measurement.
-      await expect
-        .poll(() => textContrast(page, '.toolcard--blocked .toolcard__reason'), {
-          message: `reason text in the ${colorScheme} theme`,
-        })
-        .toBeGreaterThanOrEqual(4.5);
+      const explanation = await textContrast(page, `${card} .toolcard__reason`);
+      expect(explanation, `reason text in the ${colorScheme} theme`).toBeGreaterThanOrEqual(4.5);
 
       // Its name is de-emphasised too, but by ink, not by an `opacity` trick.
-      await expect
-        .poll(() => textContrast(page, '.toolcard--blocked .toolcard__name'), {
-          message: `tool name in the ${colorScheme} theme`,
-        })
-        .toBeGreaterThanOrEqual(4.5);
+      const name = await textContrast(page, `${card} .toolcard__name`);
+      expect(name, `tool name in the ${colorScheme} theme`).toBeGreaterThanOrEqual(4.5);
     }
   });
 
-  test('puts a preset note under the control it explains, spanning the row', async ({ page }) => {
+  test('seeds the control from the preset and explains it under the control', async ({ page }) => {
     await page.locator('input[type="file"]').setInputFiles([fixturePath('small.pdf')]);
 
     // Create ZIP presets its archive name from the first file's basename.
@@ -341,15 +357,26 @@ test.describe('legibility the token check cannot see', () => {
     await expect(page.getByRole('button', { name: 'Run' })).toBeFocused({ timeout: 15_000 });
 
     const row = '.opt[data-key="name"]';
+    const field = page.locator(`${row} input`);
     const note = page.locator(`${row} .opt__because`);
+
+    // THE VALUE, not just the caption. A note reading "from the first file" over
+    // a field still showing the schema's "archive" is the exact failure this
+    // whole preset path exists to prevent, and only the rendered value proves
+    // the preset reached the control the op will read.
+    await expect(field).toHaveValue('small');
     await expect(note).toHaveText('from the first file');
+
+    // And it has to be ANNOUNCED, or the explanation is sighted-only: without a
+    // description a screen reader says "Archive name, edit text, small" and
+    // never says where "small" came from.
+    await expect(field).toHaveAccessibleDescription('from the first file');
+
+    await page.addStyleTag({ content: '*, *::before, *::after { transition: none !important; }' });
     for (const colorScheme of ['light', 'dark'] as const) {
       await page.emulateMedia({ colorScheme });
-      await expect
-        .poll(() => textContrast(page, `${row} .opt__because`), {
-          message: `preset note in the ${colorScheme} theme`,
-        })
-        .toBeGreaterThanOrEqual(4.5);
+      const ratio = await textContrast(page, `${row} .opt__because`);
+      expect(ratio, `preset note in the ${colorScheme} theme`).toBeGreaterThanOrEqual(4.5);
     }
 
     // It has to span BOTH grid columns. Left in the 11rem label column it would
