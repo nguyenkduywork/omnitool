@@ -22,6 +22,34 @@ it in a worker, off the main thread. Results come back as real bytes you can
 download individually or as a zip. Nothing about this shape depends on a
 network round trip, which is exactly the point.
 
+## Getting around
+
+**Drop first, choose second.** Most tools of this kind make you pick an
+operation and *then* hand over a file. omnitool inverts that: drop your files
+and the tool grid narrows to what can actually run on them. Drop two PDFs and
+you get PDF tools; drop PNGs and you get image tools.
+
+- **Drag, paste, or pick.** Drop files anywhere in the window, paste with
+  `Ctrl/Cmd+V`, or use the Choose files button.
+- **Order matters for merging**, so the file tray is reorderable — drag a row,
+  use its arrow buttons, or focus a row and press the arrow keys (`Home`/`End`
+  jump to the ends, `Delete` removes). The buttons exist because drag needs a
+  mouse and arrow keys need a keyboard, and a phone has neither.
+- **`Ctrl/Cmd+K`** opens a command palette: type a few letters, press Enter,
+  and the tool runs. If a tool can't apply to the files you have, the palette
+  says why instead of failing silently.
+- **Fully keyboard operable**, with visible focus rings, `aria-live`
+  announcements for reordering and job progress, and WCAG AA contrast in both
+  light and dark themes. This is covered by tests
+  (`tests/e2e/a11y.spec.ts`), not just intent.
+- **Respects `prefers-reduced-motion`** — every animation becomes an instant
+  state change, and nothing functional depends on an animation finishing.
+
+**Installable and offline.** A service worker precaches the app shell and
+caches each tool's code chunk after first use, so a second visit is instant
+and you can reload with the network off and keep working. Install it as an
+app from your browser's address bar if you want it out of a tab.
+
 ## The tools
 
 **PDF**
