@@ -27,6 +27,8 @@
 
 import { OpError, type Op, type OpInput, type OpOutput } from '../../types';
 
+import { parsePageRanges } from './page-range';
+
 type PdfjsModule = typeof import('pdfjs-dist');
 
 /** Worker-safe replacement for pdfjs's DOMCanvasFactory. */
@@ -123,8 +125,21 @@ const toImages: Op = async (inputs, options, ctx): Promise<OpOutput[]> => {
     throw new OpError('InvalidOptions', `format must be "png" or "jpeg", got ${JSON.stringify(format)}`);
   }
   const dpi = options['dpi'] === undefined ? 150 : options['dpi'];
-  if (typeof dpi !== 'number' || !Number.isFinite(dpi) || dpi < 72 || dpi > 300) {
-    throw new OpError('InvalidOptions', `dpi must be a number from 72 to 300, got ${JSON.stringify(dpi)}`);
+  if (typeof dpi !== 'number' || !Number.isFinite(dpi) || dpi < 72 || dpi > 600) {
+    throw new OpError('InvalidOptions', `dpi must be a number from 72 to 600, got ${JSON.stringify(dpi)}`);
+  }
+
+  // JPEG only. Ignored for PNG, which is lossless — offering a quality slider
+  // for PNG would imply a knob that does nothing.
+  const qualityRaw = options['quality'] === undefined ? 85 : options['quality'];
+  if (typeof qualityRaw !== 'number' || !Number.isFinite(qualityRaw) || qualityRaw < 10 || qualityRaw > 100) {
+    throw new OpError('InvalidOptions', `quality must be a number from 10 to 100, got ${JSON.stringify(qualityRaw)}`);
+  }
+
+  // Empty means every page — the common case, and it must not require typing.
+  const pagesSpec = options['pages'] === undefined ? '' : options['pages'];
+  if (typeof pagesSpec !== 'string') {
+    throw new OpError('InvalidOptions', `pages must be a string like "1-3,7", got ${JSON.stringify(pagesSpec)}`);
   }
 
   if (typeof OffscreenCanvas !== 'function') {
@@ -173,7 +188,29 @@ const toImages: Op = async (inputs, options, ctx): Promise<OpOutput[]> => {
     try {
       const stem = baseName(input.name);
       const pageCount = doc.numPages;
-      for (let p = 1; p <= pageCount; p++) {
+
+      // Which pages, in ascending order and de-duplicated: "3,1-2,2" renders
+      // pages 1, 2, 3 once each. parsePageRanges validates and raises
+      // InvalidOptions for anything malformed or out of range.
+      const wanted =
+        pagesSpec.trim() === ''
+          ? Array.from({ length: pageCount }, (_unused, i) => i + 1)
+          : [
+              ...new Set(
+                parsePageRanges(pagesSpec, pageCount).flatMap((group) =>
+                  group.pages.map((zeroBased) => zeroBased + 1),
+                ),
+              ),
+            ].sort((a, b) => a - b);
+
+      // Zero-padded to the width of the LAST SELECTED page so the files sort
+      // correctly everywhere. Unpadded, ten pages sort p1, p10, p2, … in every
+      // file manager and in the download-all zip.
+      const pad = String(wanted[wanted.length - 1] ?? pageCount).length;
+
+      for (let i = 0; i < wanted.length; i++) {
+        const p = wanted[i];
+        if (p === undefined) continue;
         throwIfAborted(ctx.signal);
         const page = await doc.getPage(p);
         const viewport = page.getViewport({ scale });
@@ -194,18 +231,20 @@ const toImages: Op = async (inputs, options, ctx): Promise<OpOutput[]> => {
         }).promise;
         page.cleanup();
 
-        const blob = await canvas.convertToBlob({ type: mime, quality: 0.92 });
+        const blob = await canvas.convertToBlob({ type: mime, quality: qualityRaw / 100 });
         // Browsers silently substitute PNG instead of failing; refuse rather than
         // hand back a file whose bytes contradict its name.
         if (blob.type !== mime) {
           throw new OpError('EncoderUnavailable', `This browser cannot encode ${mime} (it produced ${blob.type || 'nothing'})`, input.name);
         }
         outputs.push({
-          name: `${stem}-p${p}.${ext}`,
+          name: `${stem}-p${String(p).padStart(pad, '0')}.${ext}`,
           type: mime,
           buffer: await blob.arrayBuffer(),
         });
-        ctx.onProgress((f + p / pageCount) / fileCount);
+        // Progress tracks pages RENDERED, not page numbers: rendering only
+        // page 40 of 40 must not sit at 2% and then jump to done.
+        ctx.onProgress((f + (i + 1) / wanted.length) / fileCount);
       }
     } finally {
       await doc.destroy();

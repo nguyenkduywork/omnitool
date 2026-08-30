@@ -143,14 +143,37 @@ describe('pdf registry entries', () => {
       step: 5,
       default: 70,
     });
+    // Widened to 600 when pdf-to-images gained its bespoke editor: 300 DPI is
+    // the print floor, not the ceiling, and the editor now shows the resulting
+    // pixel size and estimated total so a high DPI is an informed choice.
     expect(byId.get('pdf-to-images')?.options?.['dpi']).toEqual({
       kind: 'number',
       label: 'Resolution (DPI)',
       min: 72,
-      max: 300,
+      max: 600,
       step: 1,
       default: 150,
     });
+    // JPEG quality and page selection came with the editor. They stay in the
+    // schema so the op's defaults have a declared home and the generic panel
+    // remains a working fallback.
+    expect(byId.get('pdf-to-images')?.options?.['quality']).toEqual({
+      kind: 'range',
+      label: 'JPEG quality',
+      min: 10,
+      max: 100,
+      step: 5,
+      default: 85,
+    });
+    expect(byId.get('pdf-to-images')?.options?.['pages']).toEqual({
+      kind: 'text',
+      label: 'Pages',
+      placeholder: 'all pages',
+      default: '',
+    });
+    // The editor must be wired up, or all of the above silently reverts to the
+    // flat schema panel this tool outgrew.
+    expect(typeof byId.get('pdf-to-images')?.editor).toBe('function');
     expect(byId.get('pdf-to-images')?.options?.['format']).toMatchObject({ kind: 'select', default: 'png' });
     expect(byId.get('pdf-from-images')?.options?.['pageSize']).toMatchObject({ kind: 'select', default: 'fit' });
     expect(byId.get('pdf-from-images')?.options?.['margin']).toEqual({

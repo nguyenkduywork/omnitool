@@ -64,11 +64,17 @@ export const PDF_TOOLS: ToolDef[] = [
   {
     id: 'pdf-to-images',
     name: 'PDF to images',
-    blurb: 'Rasterise every page to a PNG or JPEG.',
+    blurb: 'Turn pages into PNG or JPEG images.',
     group: 'pdf',
     accepts: ['application/pdf'],
     minInputs: 1,
     maxInputs: null,
+    // `options` is kept as the declarative fallback and as the source of the
+    // op's defaults. The `editor` below supersedes it in the UI because three
+    // things here cannot be expressed as a flat schema: the pixel-size and
+    // output-count readout has to be computed from the actual document, the
+    // JPEG quality control must appear only for JPEG, and a page range needs
+    // validating against the real page count.
     options: {
       format: {
         kind: 'select',
@@ -79,8 +85,11 @@ export const PDF_TOOLS: ToolDef[] = [
         ],
         default: 'png',
       },
-      dpi: { kind: 'number', label: 'Resolution (DPI)', min: 72, max: 300, step: 1, default: 150 },
+      dpi: { kind: 'number', label: 'Resolution (DPI)', min: 72, max: 600, step: 1, default: 150 },
+      quality: { kind: 'range', label: 'JPEG quality', min: 10, max: 100, step: 5, default: 85 },
+      pages: { kind: 'text', label: 'Pages', placeholder: 'all pages', default: '' },
     },
+    editor: () => import('../tools/pdf/to-images.editor'),
     load: () => import('../tools/pdf/to-images.op'),
   },
   {
