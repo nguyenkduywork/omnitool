@@ -12,6 +12,13 @@
     <meta name="color-scheme" content="dark light" />
     <meta name="theme-color" content="#0a0b0d" media="(prefers-color-scheme: dark)" />
     <meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)" />
+
+    <!-- PWA: installable, with real locally-generated icons (Task 7). -->
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png" />
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+
     <script>
       // Apply the stored theme override BEFORE first paint, so a light-theme
       // visitor never sees a dark flash (and vice versa). Deliberately inline
@@ -21,6 +28,22 @@
         if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
       } catch (e) {
         /* storage blocked: the system preference stands */
+      }
+    </script>
+
+    <script type="module">
+      // Service worker, PRODUCTION ONLY (Task 7). `import.meta.env.PROD` is
+      // Vite's own build-time flag — Vite transforms inline module scripts
+      // in index.html same as any other module, so this needs no separate
+      // file. Registering unconditionally would 404 against `npm run dev`
+      // (there is no dist/sw.js to serve), so dev stays untouched.
+      if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('sw.js').catch(() => {
+            // Offline support is a bonus, not a requirement (§9): the app
+            // must keep working online even if registration fails.
+          });
+        });
       }
     </script>
   </head>

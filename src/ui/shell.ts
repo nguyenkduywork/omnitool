@@ -18,7 +18,7 @@
 // keeps the entry chunk inside the §1 budget.
 
 import { label, sniffType } from '../core/format';
-import { getTool, toolsFor } from '../core/registry';
+import { TOOLS, getTool, toolsFor } from '../core/registry';
 import type { Job, JobResult, OpErrorCode, ToolDef, ToolGroup } from '../types';
 import { el, icon } from './dom';
 import { createDropzone } from './dropzone';
@@ -26,6 +26,7 @@ import { disabledFormatChoices } from './encoder';
 import { createFileTray, type FileTrayHandle, type TrayEntry } from './filetray';
 import { morphToTray, revealTools } from './motion';
 import { defaultOptions, renderOptions, type OptionsHandle } from './optionspanel';
+import { createPalette } from './palette';
 import { prefetchModule, prefetchTool } from './prefetch';
 import { createProgressRing } from './progress';
 import { createResults } from './results';
@@ -51,6 +52,9 @@ const THEME_NAME: Record<ThemePref, string> = {
 
 /** Magic-byte sniffing only needs the head of the file, not all of it. */
 const SNIFF_BYTES = 32;
+
+/** Which modifier this platform actually shows for a shortcut (⌘ vs Ctrl). */
+const MOD = typeof navigator !== 'undefined' && /mac/i.test(navigator.userAgent) ? '⌘' : 'Ctrl';
 
 function readThemePref(): ThemePref {
   try {
@@ -141,7 +145,13 @@ export function mountShell(root: HTMLElement): ShellHandle {
     announce(THEME_NAME[theme]);
   });
 
-  topbar.append(brand, claim, themeButton);
+  const paletteButton = el('button', 'btn btn--ghost btn--sm', 'Search tools');
+  paletteButton.type = 'button';
+  paletteButton.append(el('kbd', undefined, `${MOD} K`));
+  paletteButton.setAttribute('aria-label', `Search tools (${MOD} K)`);
+  paletteButton.addEventListener('click', () => palette.open());
+
+  topbar.append(brand, claim, paletteButton, themeButton);
 
   // --------------------------------------------------------------- stage
   const stage = el('main', 'stage');
@@ -455,10 +465,17 @@ export function mountShell(root: HTMLElement): ShellHandle {
   // ---------------------------------------------------------------- run
   function setRunning(on: boolean): void {
     running = on;
+    // Disabling the focused element blurs it (moves focus to <body>) in every
+    // browser — a keyboard user who just activated Run or Remove-all must not
+    // be dropped onto nothing. Cancel is about to become the one live,
+    // meaningful control, so focus follows there instead.
+    const stranded =
+      on && (document.activeElement === runButton || document.activeElement === clearButton);
     runButton.disabled = on;
     cancelButton.hidden = !on;
     progressWrap.hidden = !on;
     clearButton.disabled = on;
+    if (stranded) cancelButton.focus();
   }
 
   async function start(): Promise<void> {
@@ -528,12 +545,64 @@ export function mountShell(root: HTMLElement): ShellHandle {
     announce('Cancelling…');
   });
 
+  // -------------------------------------------------------------- palette
+  /** Why `tool` can't run right now, or `null` when it can (Task 7). */
+  function unavailableReason(tool: ToolDef): string | null {
+    if (entries.length === 0) return 'Drop files first — nothing is loaded yet.';
+    if (!toolsFor(mimes()).some((candidate) => candidate.id === tool.id)) {
+      return `${tool.name} doesn’t work with these files.`;
+    }
+    return null;
+  }
+
+  /**
+   * The palette has already confirmed `tool` fits (via `unavailableReason`)
+   * and has closed itself. Select it exactly like clicking its card would —
+   * unless it already IS the selection, in which case calling `select` again
+   * would TOGGLE it off (that codepath exists for the card's click-to-
+   * deselect behaviour, which the palette must not trigger).
+   *
+   * A tool with a bespoke `editor` (crop, organize) cannot be run blind: its
+   * options only mean something once the user has interacted with the board.
+   * For those, the palette selects and stops — the same state a card click
+   * leaves it in.
+   */
+  async function runFromPalette(tool: ToolDef): Promise<void> {
+    if (running) return;
+    if (selected?.id !== tool.id) {
+      await select(tool.id);
+    } else {
+      runPanel.hidden = false;
+    }
+    if (selected?.id === tool.id && !tool.editor) {
+      await start();
+    }
+  }
+
+  const palette = createPalette({
+    tools: TOOLS,
+    unavailableReason,
+    announce,
+    onRun: (tool) => void runFromPalette(tool),
+  });
+  document.body.append(palette.el);
+
+  function onGlobalKeydown(event: KeyboardEvent): void {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+      event.preventDefault();
+      palette.open();
+    }
+  }
+  document.addEventListener('keydown', onGlobalKeydown);
+
   return {
     destroy(): void {
       job?.cancel();
       panel?.destroy();
       tray.destroy();
       dropzone.destroy();
+      document.removeEventListener('keydown', onGlobalKeydown);
+      palette.destroy();
       root.replaceChildren();
     },
   };
