@@ -160,13 +160,79 @@ function patternMatches(pattern: string, mime: string): boolean {
   return false;
 }
 
+/** True when EVERY mime matches one of `tool.accepts`. The count is ignored. */
+export function typesMatch(tool: ToolDef, mimes: string[]): boolean {
+  return mimes.every((mime) => tool.accepts.some((pattern) => patternMatches(pattern, mime)));
+}
+
+/**
+ * Why `count` inputs is the wrong number for `tool`, or null when it is fine.
+ *
+ * Type-agnostic on purpose: a selection can be valid and still mixed (a PNG
+ * and a JPEG both match `image/*`), so there is no single type name to use.
+ */
+export function countReason(tool: ToolDef, count: number): string | null {
+  const { minInputs, maxInputs } = tool;
+  if (count >= minInputs && (maxInputs === null || count <= maxInputs)) return null;
+
+  const have = `you have ${count === 0 ? 'none' : count}`;
+  const files = (n: number): string => (n === 1 ? 'file' : 'files');
+
+  if (maxInputs !== null && minInputs === maxInputs) {
+    return `Needs exactly ${minInputs} ${files(minInputs)} — ${have}.`;
+  }
+  if (count < minInputs) {
+    return `Needs at least ${minInputs} ${files(minInputs)} — ${have}.`;
+  }
+  return `Takes at most ${maxInputs} ${files(maxInputs as number)} — ${have}.`;
+}
+
 /**
  * True when `tool` can run against exactly this selection: the count is within
  * [minInputs, maxInputs] and EVERY mime matches one of `tool.accepts`
  * (supporting the 'image/*' and '*' wildcards).
  */
 export function accepts(tool: ToolDef, mimes: string[]): boolean {
-  if (mimes.length < tool.minInputs) return false;
-  if (tool.maxInputs !== null && mimes.length > tool.maxInputs) return false;
-  return mimes.every((mime) => tool.accepts.some((pattern) => patternMatches(pattern, mime)));
+  return countReason(tool, mimes.length) === null && typesMatch(tool, mimes);
+}
+
+export type BlockedTool = { tool: ToolDef; reason: string };
+
+/** The tool grid's three tiers. Anything in none of them is not rendered. */
+export type Applicability = {
+  /** Format-aware tools that fit. Prominent cards. */
+  primary: ToolDef[];
+  /** Format-aware tools whose TYPE fits but whose COUNT does not. Explained. */
+  blocked: BlockedTool[];
+  /** Any-bytes tools that fit. Quiet row. */
+  utility: ToolDef[];
+};
+
+/**
+ * Bucket `tools` against this selection.
+ *
+ * Buckets key off `kind`, never off re-inspecting `accepts` patterns — that is
+ * what `kind` is for, and it removes the question of whether 'image/*' counts
+ * as "concrete". Generators are structurally excluded: they read no file, so
+ * no file-driven grid can describe them.
+ */
+export function applicabilityFor(tools: readonly ToolDef[], mimes: string[]): Applicability {
+  const result: Applicability = { primary: [], blocked: [], utility: [] };
+  if (mimes.length === 0) return result;
+
+  for (const tool of tools) {
+    if (tool.kind === 'generate') continue;
+    if (!typesMatch(tool, mimes)) continue;
+
+    const reason = countReason(tool, mimes.length);
+    if (tool.kind === 'utility') {
+      // A utility that merely has the wrong count stays absent. Showing it
+      // blocked would nag on every unrelated file set, since '*' always matches.
+      if (reason === null) result.utility.push(tool);
+      continue;
+    }
+    if (reason === null) result.primary.push(tool);
+    else result.blocked.push({ tool, reason });
+  }
+  return result;
 }
