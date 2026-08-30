@@ -1902,7 +1902,7 @@ Update the hint copy under the buttons:
 
 - [ ] **Step 2: One stage, three zones**
 
-In `shell.ts`, delete `showHero`, `showWorkbench`, `morphToTray`, the `stageswitch` wrapper and `workbench.hidden` handling. The stage is always the same three zones; the hero is the `browsing` presentation of them:
+In `shell.ts`, delete `showHero`, `showWorkbench`, the `stageswitch` wrapper and the `workbench.hidden` handling. The stage is always the same three zones; the hero is the `browsing` presentation of them:
 
 ```ts
   const stageEl = el('div', 'workbench');
@@ -1910,12 +1910,42 @@ In `shell.ts`, delete `showHero`, `showWorkbench`, `morphToTray`, the `stageswit
   stage.append(dropzone.hero, stageEl);
 ```
 
-and in the subscriber, toggle one attribute rather than swapping subtrees:
+**Keep `morphToTray`.** It is still the right transition — the browsing screen
+handing over to the workbench — and it already carries the reduced-motion
+handling and the two tests in `motion.browser.test.ts`. It is now driven by the
+phase leaving `browsing` rather than by the old subtree swap. In the subscriber:
 
 ```ts
+  let wasCold = true;
+
+  state.subscribe((next) => {
+    snap = next;
     stage.dataset.phase = snap.phase;
-    dropzone.hero.hidden = snap.entries.length > 0 || snap.selected !== null;
+    filesZone.render(snap);
+    catalogue.render(snap);
+    workZone.render(snap);
+    syncEditor();
+
+    const cold = snap.entries.length === 0 && snap.selected === null;
+    if (wasCold && !cold) {
+      // The one transition worth animating: the landing screen giving way.
+      dropzone.hero.classList.add('is-exiting');
+      void morphToTray(dropzone.hero, stageEl).then(() => {
+        dropzone.hero.hidden = true;
+      });
+    } else if (!wasCold && cold) {
+      dropzone.hero.classList.remove('is-exiting');
+      dropzone.hero.style.opacity = '';
+      dropzone.hero.style.transform = '';
+      dropzone.hero.hidden = false;
+    }
+    wasCold = cold;
+  });
 ```
+
+The subscriber stays synchronous — `morphToTray` is fired and awaited off to the
+side, so a render is never blocked on an animation, and nothing functional
+depends on it finishing (spec §7.5's reduced-motion promise).
 
 - [ ] **Step 3: The layout CSS**
 
