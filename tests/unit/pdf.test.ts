@@ -664,6 +664,58 @@ describe('pdf-extract-text', () => {
     expectMonotonicEndingAtOne(fractions);
   });
 
+  it('refuses a scan outright instead of "succeeding" with an empty file', async () => {
+    // A page holding only an image is what a scanner or a phone photo produces.
+    // The old behaviour wrote a 49-byte file reading "(no text layer on this
+    // page)" and reported success, which the results tray then decorated with a
+    // green "100% smaller". The job plainly failed; it must say so.
+    const { PDFDocument } = await import('pdf-lib');
+    const doc = await PDFDocument.create();
+    // A 2x2 PNG is enough: the point is a page with image content and no text.
+    const png = await doc.embedPng(
+      Uint8Array.from(
+        atob(
+          'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFUlEQVR4nGP8z/CfgQmEGGEEAwMDAA5+Av7x6vGxAAAAAElFTkSuQmCC',
+        ),
+        (c) => c.charCodeAt(0),
+      ),
+    );
+    const page = doc.addPage([200, 200]);
+    page.drawImage(png, { x: 0, y: 0, width: 200, height: 200 });
+    const buffer = (await doc.save()).slice().buffer as ArrayBuffer;
+
+    const { ctx } = recorder();
+    const err = await expectOpError(
+      extractText([{ name: 'scan.pdf', type: 'application/pdf', buffer }], {}, ctx),
+      'UnsupportedFormat',
+      'scan.pdf',
+    );
+    // The message has to be actionable, not just negative: say it is a scan,
+    // say OCR is what would be needed, and point at a tool that does help.
+    expect(err.message).toMatch(/no text layer/i);
+    expect(err.message).toMatch(/OCR/);
+    expect(err.message).toMatch(/PDF to images/i);
+  });
+
+  it('still delivers a mixed PDF, but flags the pages that had no text', async () => {
+    const { PDFDocument, StandardFonts } = await import('pdf-lib');
+    const doc = await PDFDocument.create();
+    const font = await doc.embedFont(StandardFonts.Helvetica);
+    doc.addPage([200, 200]).drawText('real words here', { x: 20, y: 100, size: 12, font });
+    doc.addPage([200, 200]); // deliberately blank — no text layer
+    const buffer = (await doc.save()).slice().buffer as ArrayBuffer;
+
+    const { ctx } = recorder();
+    const outputs = await extractText([{ name: 'mixed.pdf', type: 'application/pdf', buffer }], {}, ctx);
+    const text = new TextDecoder().decode((outputs[0] as OpOutput).buffer);
+
+    expect(text).toContain('real words here');
+    // The warning belongs at the TOP, where it will be read — not only buried
+    // inline next to the page that was empty.
+    expect(text.slice(0, 200)).toMatch(/NOTE: 1 of 2 pages have no text layer/);
+    expect(text.slice(0, 200)).toMatch(/page 2/);
+  });
+
   it('raises CorruptFile naming the file for corrupt.pdf', async () => {
     const { ctx } = recorder();
     await expectOpError(extractText([await input('corrupt.pdf')], {}, ctx), 'CorruptFile', 'corrupt.pdf');

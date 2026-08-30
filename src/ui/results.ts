@@ -22,7 +22,8 @@ import { label } from '../core/format';
 import { el, formatBytes, icon } from './dom';
 import { flyToResults } from './motion';
 
-export type ResultInput = { name: string; size: number };
+/** `type` is the magic-byte sniffed mime, needed by comparable() below. */
+export type ResultInput = { name: string; size: number; type: string };
 
 export type ResultsView = {
   toolName: string;
@@ -40,8 +41,14 @@ export type ResultsHandle = {
 
 /** What to do next, per error code. Every message must be actionable (§9). */
 const NEXT_STEP: Record<OpErrorCode, string> = {
+  // Covers BOTH halves of this code: a file that lies about its type, and a
+  // valid file whose particular variant a tool cannot handle (a scanned PDF
+  // has no text layer to extract, yet is a perfectly well-formed PDF). The
+  // earlier wording only described the first half, so it told people to
+  // re-export a file that was never malformed — contradicting the specific
+  // reason printed directly above it.
   UnsupportedFormat:
-    'The file is not the format its contents claim. Re-export or re-save it, then try again.',
+    'Either the file is not the format its contents claim, or this tool cannot handle this particular variant of it. The reason above says which.',
   CorruptFile:
     'The file could not be parsed — it may be damaged or password-protected. Open it in its own app, re-save a copy, and retry with that.',
   TooLarge: 'This file is beyond what the browser can hold in memory. Split it up and retry.',
@@ -93,6 +100,15 @@ function sourceOf(output: OpOutput, inputs: ResultInput[]): ResultInput | undefi
  * and arithmetically meaningless, since the 357 kB was never that page's
  * "before". So count the fan-out first and suppress the delta when it is > 1.
  */
+/**
+ * Total bytes produced. Shown on the summary line so the tools whose per-card
+ * delta is now (correctly) suppressed still report a real number — for zipping
+ * or rasterising, "how much did this make?" is the useful question.
+ */
+function totalBytes(outputs: OpOutput[]): number {
+  return outputs.reduce((sum, output) => sum + output.buffer.byteLength, 0);
+}
+
 function fanOut(outputs: OpOutput[], inputs: ResultInput[]): Map<string, number> {
   const counts = new Map<string, number>();
   for (const output of outputs) {
@@ -103,6 +119,20 @@ function fanOut(outputs: OpOutput[], inputs: ResultInput[]): Map<string, number>
   return counts;
 }
 
+/**
+ * Is comparing these two sizes meaningful at all?
+ *
+ * Only when the output is the same KIND of thing as the input. Shrinking a PDF
+ * or re-encoding an image to another image is a size story — that is the whole
+ * point of those tools. Extracting a PDF's text layer is not: "100% smaller ·
+ * 1.3 MB → 4 kB" invites you to read a category error as a compression win.
+ * The tool did not shrink anything; it produced a different kind of artefact.
+ */
+function comparable(output: OpOutput, source: ResultInput): boolean {
+  if (output.type === source.type) return true;
+  return output.type.startsWith('image/') && source.type.startsWith('image/');
+}
+
 function deltaChip(
   output: OpOutput,
   source: ResultInput | undefined,
@@ -110,6 +140,7 @@ function deltaChip(
 ): HTMLElement | null {
   // One input, many outputs — see fanOut(). Fall through to a plain size.
   if (!source || source.size === 0 || siblings > 1) return null;
+  if (!comparable(output, source)) return null;
   const after = output.buffer.byteLength;
   const ratio = after / source.size;
   const change = Math.round(Math.abs(1 - ratio) * 100);
@@ -314,7 +345,7 @@ export function createResults(): ResultsHandle {
         summary.textContent = `${view.toolName} could not finish.`;
       } else if (view.result?.partial) {
         const ok = view.result.results.length - failures.length;
-        summary.textContent = `${view.toolName}: ${outputs.length} ${outputs.length === 1 ? 'file' : 'files'} ready.`;
+        summary.textContent = `${view.toolName}: ${outputs.length} ${outputs.length === 1 ? 'file' : 'files'} ready · ${formatBytes(totalBytes(outputs))}.`;
         banner.hidden = false;
         banner.className = 'banner banner--warn';
         banner.append(
@@ -326,7 +357,7 @@ export function createResults(): ResultsHandle {
           ),
         );
       } else {
-        summary.textContent = `${view.toolName}: ${outputs.length} ${outputs.length === 1 ? 'file' : 'files'} ready.`;
+        summary.textContent = `${view.toolName}: ${outputs.length} ${outputs.length === 1 ? 'file' : 'files'} ready · ${formatBytes(totalBytes(outputs))}.`;
       }
 
       if (outputs.length > 1) {

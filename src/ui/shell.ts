@@ -483,7 +483,15 @@ export function mountShell(root: HTMLElement): ShellHandle {
     if (!tool || running) return;
 
     const files = entries.map((entry) => entry.file);
-    const inputs = files.map((file) => ({ name: file.name, size: file.size }));
+    // The sniffed type comes along so the results tray can tell whether an
+    // input and an output are even the same kind of thing before it offers a
+    // size comparison. entry.type is the magic-byte result, not the browser's
+    // guess from the extension.
+    const inputs = entries.map((entry) => ({
+      name: entry.file.name,
+      size: entry.file.size,
+      type: entry.type,
+    }));
 
     setRunning(true);
     progress.reset();

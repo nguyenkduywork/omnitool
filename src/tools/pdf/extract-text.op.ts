@@ -139,6 +139,7 @@ const extractText: Op = async (inputs, _options, ctx): Promise<OpOutput[]> => {
     try {
       const pageCount = doc.numPages;
       const parts: string[] = [];
+      const emptyPages: number[] = [];
       for (let p = 1; p <= pageCount; p++) {
         throwIfAborted(ctx.signal);
         const page = await doc.getPage(p);
@@ -146,14 +147,39 @@ const extractText: Op = async (inputs, _options, ctx): Promise<OpOutput[]> => {
         // content.items mixes TextItem with TextMarkedContent; only the former has `str`.
         const items = content.items.flatMap((item) => ('str' in item ? [{ str: item.str, hasEOL: item.hasEOL }] : []));
         const text = joinTextItems(items);
+        if (text === '') emptyPages.push(p);
         parts.push(`--- Page ${p} of ${pageCount} ---\n${text === '' ? '(no text layer on this page)' : text}\n`);
         page.cleanup();
         ctx.onProgress((f + p / pageCount) / fileCount);
       }
+
+      // A PDF with NO text anywhere is a scan: pages are images of words, not
+      // words. Writing a "successful" file whose entire content is
+      // "(no text layer on this page)" is the wrong answer twice over — the
+      // job plainly failed, and the UI then reports a green "100% smaller"
+      // for having produced nothing. Say what is actually wrong, and what to
+      // do about it, instead.
+      if (emptyPages.length === pageCount) {
+        throw new OpError(
+          'UnsupportedFormat',
+          `${input.name} has no text layer — every page is an image, so this is a scan or photo of a document rather than a text PDF. Extracting text from it needs OCR, which omnitool does not do. "PDF to images" will give you the page images.`,
+          input.name,
+        );
+      }
+
+      // Some pages have text and some do not. That IS worth delivering, but the
+      // gaps belong at the top where they will be seen, not only buried inline.
+      const header =
+        emptyPages.length === 0
+          ? ''
+          : `NOTE: ${emptyPages.length} of ${pageCount} pages have no text layer ` +
+            `(page${emptyPages.length === 1 ? '' : 's'} ${emptyPages.join(', ')}). ` +
+            `Those pages are probably scanned images; extracting their text would need OCR.\n\n`;
+
       outputs.push({
         name: `${baseName(input.name)}.txt`,
         type: 'text/plain',
-        buffer: toArrayBuffer(new TextEncoder().encode(parts.join('\n'))),
+        buffer: toArrayBuffer(new TextEncoder().encode(header + parts.join('\n'))),
       });
     } finally {
       await doc.destroy();
