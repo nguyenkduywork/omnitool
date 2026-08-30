@@ -296,11 +296,15 @@ export function createResults(): ResultsHandle {
   root.setAttribute('aria-labelledby', 'results-heading');
 
   const head = el('div', 'results__head');
+  const glyph = el('span', 'results__glyph');
+  glyph.append(icon('check'));
+  const titles = el('div', 'results__titles');
   const heading = el('h2', 'panel__title', 'Results');
   heading.id = 'results-heading';
   const summary = el('p', 'results__summary');
+  titles.append(heading, summary);
   const actions = el('div', 'results__actions');
-  head.append(heading, summary, actions);
+  head.append(glyph, titles, actions);
 
   const banner = el('div', 'banner');
   banner.hidden = true;
@@ -341,6 +345,12 @@ export function createResults(): ResultsHandle {
       root.hidden = false;
 
       // ---- honest headline -------------------------------------------
+      // The glyph says the same thing as the words. A green tick over a run
+      // that failed would be a lie told in a colour, which is worse than one
+      // told in a sentence because nobody reads it consciously.
+      root.dataset.state = view.error ? 'error' : view.result?.partial ? 'partial' : 'ok';
+      glyph.replaceChildren(icon(view.error || view.result?.partial ? 'alert' : 'check'));
+
       if (view.error) {
         summary.textContent = `${view.toolName} could not finish.`;
       } else if (view.result?.partial) {

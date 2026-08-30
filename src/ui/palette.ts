@@ -18,8 +18,9 @@
 // already use for the rest of the shell's chrome.
 
 import type { ToolDef } from '../types';
-import { el, iconButton } from './dom';
+import { el, icon, iconButton } from './dom';
 import { openPalette } from './motion';
+import { GROUP_TITLE, toolIcon } from './toolicons';
 
 // ---------------------------------------------------------------------------
 // 1. The fuzzy matcher — pure, DOM-free.
@@ -244,10 +245,22 @@ export function createPalette(init: PaletteInit): PaletteHandle {
         row.setAttribute('aria-description', reason);
       }
 
+      // The same glyph and family tint the tool wears in the grid, so a
+      // search result and a card are recognisably the same object.
+      row.dataset.kind = tool.group;
+      const glyph = el('span', 'palette__icon');
+      glyph.append(icon(toolIcon(tool)));
+
       const top = el('div', 'palette__rowtop');
       top.append(el('span', 'palette__name', tool.name));
       if (reason) top.append(el('span', 'palette__tag', 'Not for these files'));
-      row.append(top, el('span', 'palette__blurb', tool.blurb));
+
+      const body = el('div', 'palette__rowbody');
+      body.append(
+        top,
+        el('span', 'palette__blurb', `${GROUP_TITLE[tool.group]} · ${tool.blurb}`),
+      );
+      row.append(glyph, body);
 
       row.addEventListener('pointerenter', () => setActive(index));
       // mousedown (not click), and prevented: a click would first blur the

@@ -8,10 +8,10 @@
 // This module owns both intake surfaces because they share one hidden <input>
 // and one set of document-level listeners.
 
-import { el, icon } from './dom';
+import { el, icon, type IconName } from './dom';
 
 export type DropzoneHandle = {
-  /** The big first-run surface. */
+  /** The big first-run surface: drop panel, proof points and the tool preview. */
   readonly hero: HTMLElement;
   /** The slim "add more files" bar shown once the workbench is up. */
   readonly addbar: HTMLElement;
@@ -33,7 +33,58 @@ function carriesFiles(transfer: DataTransfer | null): boolean {
 
 const MOD = typeof navigator !== 'undefined' && /mac/i.test(navigator.userAgent) ? '⌘' : 'Ctrl';
 
-export function createDropzone(init: { onFiles: (files: File[]) => void }): DropzoneHandle {
+/**
+ * The three claims on the landing screen. They are the product, not decoration:
+ * every one of them is a statement a visitor can check for themselves, which is
+ * why they are phrased as facts rather than adjectives.
+ */
+const FACTS: { icon: IconName; title: string; body: string }[] = [
+  {
+    icon: 'shield',
+    title: 'Nothing is uploaded',
+    body: 'There is no server to upload to. Open your network tab and watch it stay empty.',
+  },
+  {
+    icon: 'bolt',
+    title: 'Runs in a worker',
+    body: 'Every job runs off the main thread, on your own machine, at local-disk speed.',
+  },
+  {
+    icon: 'offline',
+    title: 'Works offline',
+    body: 'Install it, pull the plug, keep working. The tools are already on your device.',
+  },
+];
+
+/** What is waiting behind the drop, so the empty screen still says what this is. */
+const FAMILIES: { icon: IconName; kind: string; title: string; body: string }[] = [
+  {
+    icon: 'file',
+    kind: 'pdf',
+    title: 'PDF',
+    body: 'Merge, split, organise pages, shrink, and convert to or from images.',
+  },
+  {
+    icon: 'image',
+    kind: 'image',
+    title: 'Images',
+    body: 'Convert, resize, compress, crop, and arrange into one contact sheet.',
+  },
+  {
+    icon: 'braces',
+    kind: 'data',
+    title: 'Data & text',
+    body: 'Zip and unzip, hash, Base64, CSV ⇄ JSON, format JSON, make a QR code.',
+  },
+];
+
+export function createDropzone(init: {
+  onFiles: (files: File[]) => void;
+  /** Opens the command palette, so the tools are browsable before any file is in. */
+  onBrowse: () => void;
+  /** How many tools exist, counted from the registry rather than written down. */
+  toolCount: number;
+}): DropzoneHandle {
   const picker = el('input', 'sr-only');
   picker.type = 'file';
   picker.multiple = true;
@@ -56,25 +107,44 @@ export function createDropzone(init: { onFiles: (files: File[]) => void }): Drop
   }
 
   // ---- hero -------------------------------------------------------------
+  // The landing screen has one job — get files in — but an empty screen that
+  // only says "drop files" tells a first-time visitor nothing about what they
+  // are dropping them into. So the drop panel is the loud part, and beneath it
+  // sit the claims and the tool families: readable in one scroll-free glance,
+  // gone the instant a file arrives.
   const hero = el('section', 'hero');
   hero.setAttribute('aria-labelledby', 'hero-title');
 
-  const panel = el('div', 'hero__panel');
-  const mark = el('div', 'hero__mark');
-  mark.append(icon('spark'));
+  const drop = el('div', 'hero__drop');
 
-  const title = el('h1', 'hero__title', 'Drop files. Pick a tool.');
+  const panel = el('div', 'hero__panel');
+
+  const eyebrow = el('p', 'hero__eyebrow');
+  eyebrow.append(el('span', 'hero__pip'), el('span', undefined, 'No upload · no server · no account'));
+
+  const title = el('h1', 'hero__title');
   title.id = 'hero-title';
+  title.append(
+    el('span', 'hero__line', 'Drop files.'),
+    el('span', 'hero__line hero__line--accent', 'Pick a tool.'),
+  );
 
   const sub = el(
     'p',
     'hero__sub',
-    'Merge, convert, shrink, hash, zip. Everything runs in this tab — nothing is uploaded, there is no server and no account.',
+    'Merge, convert, shrink, hash, zip. Everything happens inside this tab — the files never travel anywhere, because there is nowhere for them to go.',
   );
 
+  const actions = el('div', 'hero__actions');
   const pickButton = el('button', 'btn btn--primary btn--lg', 'Choose files');
   pickButton.type = 'button';
   pickButton.addEventListener('click', pick);
+
+  const browseButton = el('button', 'btn btn--ghost btn--lg', 'Browse the tools');
+  browseButton.type = 'button';
+  browseButton.append(el('kbd', undefined, `${MOD} K`));
+  browseButton.addEventListener('click', () => init.onBrowse());
+  actions.append(pickButton, browseButton);
 
   const hint = el('p', 'hero__hint');
   hint.append(
@@ -84,8 +154,45 @@ export function createDropzone(init: { onFiles: (files: File[]) => void }): Drop
     el('kbd', undefined, 'V'),
   );
 
-  panel.append(mark, title, sub, pickButton, hint);
-  hero.append(panel, picker);
+  panel.append(eyebrow, title, sub, actions, hint);
+  drop.append(panel);
+
+  const facts = el('ul', 'facts');
+  for (const fact of FACTS) {
+    const item = el('li', 'fact');
+    const glyph = el('span', 'fact__icon');
+    glyph.append(icon(fact.icon));
+    const body = el('div', 'fact__body');
+    body.append(el('h2', 'fact__title', fact.title), el('p', 'fact__text', fact.body));
+    item.append(glyph, body);
+    facts.append(item);
+  }
+
+  const families = el('div', 'families');
+  families.append(
+    el('h2', 'families__title', `${init.toolCount} tools, in three families`),
+  );
+  const familyList = el('ul', 'families__list');
+  for (const family of FAMILIES) {
+    const item = el('li', 'family');
+    item.dataset.kind = family.kind;
+    const glyph = el('span', 'family__icon');
+    glyph.append(icon(family.icon));
+    const body = el('div', 'family__body');
+    body.append(el('h3', 'family__name', family.title), el('p', 'family__text', family.body));
+    item.append(glyph, body);
+    familyList.append(item);
+  }
+  families.append(familyList);
+  families.append(
+    el(
+      'p',
+      'families__note',
+      'Drop a file and this list narrows to the tools that can actually run on it.',
+    ),
+  );
+
+  hero.append(drop, facts, families, picker);
 
   // ---- compact add-bar --------------------------------------------------
   const addbar = el('div', 'addbar');
