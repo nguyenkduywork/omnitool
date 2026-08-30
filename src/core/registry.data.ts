@@ -1,4 +1,17 @@
-import type { ToolDef } from '../types.js';
+import type { Preset, SniffedFile, ToolDef } from '../types.js';
+
+/** `holiday.tar.gz` -> `holiday.tar`. One extension, so `.tar.gz` keeps `.tar`. */
+function basename(name: string): string {
+  const dot = name.lastIndexOf('.');
+  return dot <= 0 ? name : name.slice(0, dot);
+}
+
+/** Both archive tools name their output after the first file dropped. */
+function archiveNamePreset(files: readonly SniffedFile[]): Preset {
+  const first = files[0];
+  if (!first) return { values: { name: 'archive' }, because: {} };
+  return { values: { name: basename(first.name) }, because: { name: 'from the first file' } };
+}
 
 /**
  * Tool manifest for the 'data' group. Metadata, plus pure predicates over file METADATA (name, size, sniffed
@@ -19,6 +32,7 @@ export const DATA_TOOLS: ToolDef[] = [
       name: { kind: 'text', label: 'Archive name', default: 'archive' },
       level: { kind: 'range', label: 'Compression level', min: 0, max: 9, step: 1, default: 6 },
     },
+    preset: archiveNamePreset,
     load: () => import('../tools/data/zip-create.op.js'),
   },
   {
@@ -53,6 +67,10 @@ export const DATA_TOOLS: ToolDef[] = [
       },
       level: { kind: 'range', label: 'Compression level', min: 0, max: 9, step: 1, default: 6 },
     },
+    preset: (files): Preset =>
+      files.some((f) => f.type === 'application/gzip')
+        ? { values: { direction: 'decode' }, because: { direction: "from the file's gzip signature" } }
+        : { values: { direction: 'encode' }, because: {} },
     load: () => import('../tools/data/gzip.op.js'),
   },
   {
@@ -69,6 +87,7 @@ export const DATA_TOOLS: ToolDef[] = [
       gzip: { kind: 'toggle', label: 'Compress with gzip (.tar.gz)', default: false },
       level: { kind: 'range', label: 'Compression level', min: 0, max: 9, step: 1, default: 6 },
     },
+    preset: archiveNamePreset,
     load: () => import('../tools/data/tar-create.op.js'),
   },
   {
@@ -160,6 +179,10 @@ export const DATA_TOOLS: ToolDef[] = [
         default: 'encode',
       },
     },
+    preset: (files): Preset =>
+      files.some((f) => /\.(b64|base64)$/i.test(f.name))
+        ? { values: { direction: 'decode' }, because: { direction: 'from the file extension' } }
+        : { values: { direction: 'encode' }, because: {} },
     load: () => import('../tools/data/base64.op.js'),
   },
   {
@@ -193,6 +216,16 @@ export const DATA_TOOLS: ToolDef[] = [
         default: 'auto',
       },
       header: { kind: 'toggle', label: 'First row is header', default: true },
+    },
+    preset: (files) => {
+      if (files.some((f) => f.type === 'text/csv')) {
+        return { values: { direction: 'csv-to-json' }, because: { direction: 'from the .csv file' } };
+      }
+      if (files.some((f) => f.type === 'application/json')) {
+        return { values: { direction: 'json-to-csv' }, because: { direction: 'from the .json file' } };
+      }
+      // text/plain carries no signal. Saying so beats guessing wrong.
+      return { values: {}, because: { direction: "couldn't tell from the file — pick a direction" } };
     },
     load: () => import('../tools/data/csv-json.op.js'),
   },
