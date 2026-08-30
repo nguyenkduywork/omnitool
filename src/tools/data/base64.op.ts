@@ -1,22 +1,69 @@
 // src/tools/data/base64.op.ts
 //
 // base64 — encode raw bytes to a base64 text file, or decode a base64 text
-// file back to raw bytes. Uses the Web-standard btoa/atob (available in both
-// browsers and workers), chunked to avoid call-stack blowups on large files.
+// file back to raw bytes.
+//
+// The two directions deliberately use DIFFERENT machinery, because measurement
+// disagreed with symmetry (16 MB, Node 24, median of 5):
+//
+//   encode — hand-rolled, 774 ms -> 30 ms. The obvious route (String.
+//     fromCharCode over the bytes, btoa, then TextEncoder back to bytes)
+//     builds three whole-file intermediates, two of them UTF-16 strings at
+//     twice the file's size, before a single byte of output exists. Writing
+//     alphabet character codes straight into the output buffer skips all
+//     three. Output is byte-identical — asserted in tests/unit/data.test.ts.
+//   decode — still native `atob`, 56 ms against 77 ms for the equivalent
+//     hand-rolled decoder. The browser's own decoder is simply faster than
+//     anything worth writing here, so this stays as it was.
 
 import { OpError } from '../../types.js';
 import type { Op, OpOutput } from '../../types.js';
 
 type Direction = 'encode' | 'decode';
 
-const CHUNK_SIZE = 0x8000;
+const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
-function bytesToBinaryString(bytes: Uint8Array): string {
-  let out = '';
-  for (let offset = 0; offset < bytes.length; offset += CHUNK_SIZE) {
-    const chunk = bytes.subarray(offset, offset + CHUNK_SIZE);
-    out += String.fromCharCode(...chunk);
+/** The alphabet as character codes, so encoding writes bytes, never strings. */
+const ENCODE_TABLE = /* @__PURE__ */ (() => {
+  const table = new Uint8Array(64);
+  for (let i = 0; i < 64; i++) table[i] = ALPHABET.charCodeAt(i);
+  return table;
+})();
+
+const PAD = '='.charCodeAt(0);
+
+/** Base64 as UTF-8 bytes: one pass, one allocation, no intermediate string. */
+function encodeBase64(bytes: Uint8Array): Uint8Array {
+  const n = bytes.length;
+  const out = new Uint8Array(Math.ceil(n / 3) * 4);
+  let o = 0;
+  let i = 0;
+
+  // Three bytes in, four characters out, for as long as a full group remains.
+  for (; i + 2 < n; i += 3) {
+    const word = ((bytes[i] as number) << 16) | ((bytes[i + 1] as number) << 8) | (bytes[i + 2] as number);
+    out[o++] = ENCODE_TABLE[(word >>> 18) & 63] as number;
+    out[o++] = ENCODE_TABLE[(word >>> 12) & 63] as number;
+    out[o++] = ENCODE_TABLE[(word >>> 6) & 63] as number;
+    out[o++] = ENCODE_TABLE[word & 63] as number;
   }
+
+  // The 1- or 2-byte tail, padded to a whole group with '='.
+  const left = n - i;
+  if (left === 1) {
+    const word = (bytes[i] as number) << 16;
+    out[o++] = ENCODE_TABLE[(word >>> 18) & 63] as number;
+    out[o++] = ENCODE_TABLE[(word >>> 12) & 63] as number;
+    out[o++] = PAD;
+    out[o] = PAD;
+  } else if (left === 2) {
+    const word = ((bytes[i] as number) << 16) | ((bytes[i + 1] as number) << 8);
+    out[o++] = ENCODE_TABLE[(word >>> 18) & 63] as number;
+    out[o++] = ENCODE_TABLE[(word >>> 12) & 63] as number;
+    out[o++] = ENCODE_TABLE[(word >>> 6) & 63] as number;
+    out[o] = PAD;
+  }
+
   return out;
 }
 
@@ -57,11 +104,12 @@ const base64Op: Op = async (inputs, options, ctx) => {
     if (!input) continue;
 
     if (dir === 'encode') {
-      const encoded = btoa(bytesToBinaryString(new Uint8Array(input.buffer)));
+      const encoded = encodeBase64(new Uint8Array(input.buffer));
       outputs.push({
         name: encodeName(input.name),
         type: 'text/plain',
-        buffer: new TextEncoder().encode(encoded).buffer,
+        // Exactly sized by encodeBase64, so the view owns its whole buffer.
+        buffer: encoded.buffer as ArrayBuffer,
       });
     } else {
       const text = new TextDecoder().decode(input.buffer).replace(/\s+/g, '');

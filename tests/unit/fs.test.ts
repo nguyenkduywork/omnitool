@@ -22,6 +22,33 @@ function textOutput(name: string, body: string): OpOutput {
   return { name, type: 'text/plain', buffer };
 }
 
+function binaryOutput(name: string, type: string, size: number): OpOutput {
+  const buffer = new ArrayBuffer(size);
+  const bytes = new Uint8Array(buffer);
+  // Incompressible on purpose: this stands in for a PNG or JPEG, whose bytes
+  // are already deflate output.
+  for (let i = 0; i < size; i++) bytes[i] = (i * 2654435761) & 0xff;
+  return { name, type, buffer };
+}
+
+/**
+ * The compression method each entry was written with, read out of the zip's
+ * local file headers: 0 = stored, 8 = deflated.
+ * Layout per PK\x03\x04 record: method at +8, name length at +26, extra at +28.
+ */
+function compressionMethods(zipBytes: Uint8Array): Record<string, number> {
+  const view = new DataView(zipBytes.buffer, zipBytes.byteOffset, zipBytes.byteLength);
+  const found: Record<string, number> = {};
+  for (let at = 0; at + 30 <= zipBytes.length; at++) {
+    if (view.getUint32(at, true) !== 0x04034b50) continue;
+    const method = view.getUint16(at + 8, true);
+    const nameLength = view.getUint16(at + 26, true);
+    const name = new TextDecoder().decode(zipBytes.subarray(at + 30, at + 30 + nameLength));
+    found[name] = method;
+  }
+  return found;
+}
+
 /** Minimal stand-in for the two DOM touchpoints download() uses. */
 function stubDom() {
   const clicked: { href: string; download: string }[] = [];
@@ -141,6 +168,39 @@ describe('downloadBundle', () => {
     const entries = unzipSync(new Uint8Array(await (blob as Blob).arrayBuffer()));
     expect(Object.keys(entries).sort()).toEqual(['a.txt', 'b.txt']);
     expect(new TextDecoder().decode(entries['a.txt'])).toBe('AAA');
+  });
+
+  it('stores already-compressed outputs and deflates the rest', async () => {
+    const dom = stubDom();
+    const compressible = 'id,name\n1,alpha\n'.repeat(500);
+
+    await downloadBundle(
+      [
+        binaryOutput('shot.png', 'image/png', 64 * 1024),
+        binaryOutput('photo.jpg', 'image/jpeg', 64 * 1024),
+        binaryOutput('inner.zip', 'application/zip', 64 * 1024),
+        textOutput('rows.csv', compressible),
+        binaryOutput('doc.pdf', 'application/pdf', 64 * 1024),
+      ],
+      'mixed',
+    );
+
+    const blob = dom.blobs.get(dom.clicked[0]?.href ?? '');
+    const zipBytes = new Uint8Array(await (blob as Blob).arrayBuffer());
+    const methods = compressionMethods(zipBytes);
+
+    // Deflating these again costs time and gains nothing — see fs.ts.
+    expect(methods['shot.png']).toBe(0);
+    expect(methods['photo.jpg']).toBe(0);
+    expect(methods['inner.zip']).toBe(0);
+    // ...while these are exactly where deflate pays for itself.
+    expect(methods['rows.csv']).toBe(8);
+    expect(methods['doc.pdf']).toBe(8);
+
+    // Whatever the method, every entry must still come back byte-for-byte.
+    const entries = unzipSync(zipBytes);
+    expect(new TextDecoder().decode(entries['rows.csv'])).toBe(compressible);
+    expect(entries['shot.png']?.length).toBe(64 * 1024);
   });
 
   it('does not double up the .zip suffix', async () => {

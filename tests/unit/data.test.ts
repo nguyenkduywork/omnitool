@@ -261,6 +261,52 @@ describe('base64', () => {
     expect(bufferToText(outputs[0]!.buffer)).toBe('hello world');
   });
 
+  // The encoder is hand-written for speed (see the note at the top of
+  // base64.op.ts), so these pin it to the standard rather than to itself.
+  it.each([
+    ['', ''],
+    ['f', 'Zg=='],
+    ['fo', 'Zm8='],
+    ['foo', 'Zm9v'],
+    ['foob', 'Zm9vYg=='],
+    ['fooba', 'Zm9vYmE='],
+    ['foobar', 'Zm9vYmFy'],
+  ])('encodes %j to %j (RFC 4648 vectors, padding included)', async (plain, encoded) => {
+    const outputs = await base64([textInput('a.txt', plain)], { direction: 'encode' }, makeCtx());
+    expect(bufferToText(outputs[0]!.buffer)).toBe(encoded);
+  });
+
+  it('agrees with the platform btoa over 64 KB of arbitrary bytes', async () => {
+    const bytes = new Uint8Array(64 * 1024);
+    // Deterministic, and covers every byte value including the high ones that
+    // a naive String.fromCharCode round trip would mangle.
+    for (let i = 0; i < bytes.length; i++) bytes[i] = (i * 31 + (i >> 8)) & 0xff;
+    const buffer = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(buffer).set(bytes);
+
+    const outputs = await base64([{ name: 'a.bin', type: 'application/octet-stream', buffer }], { direction: 'encode' }, makeCtx());
+
+    let binary = '';
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    expect(bufferToText(outputs[0]!.buffer)).toBe(btoa(binary));
+  });
+
+  it('round-trips arbitrary bytes through encode then decode', async () => {
+    const bytes = new Uint8Array(5000);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = (i * 7 + 13) & 0xff;
+    const buffer = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(buffer).set(bytes);
+
+    const encoded = await base64([{ name: 'a.bin', type: 'application/octet-stream', buffer }], { direction: 'encode' }, makeCtx());
+    const decoded = await base64(
+      [{ name: 'a.bin.base64.txt', type: 'text/plain', buffer: encoded[0]!.buffer }],
+      { direction: 'decode' },
+      makeCtx(),
+    );
+
+    expect(new Uint8Array(decoded[0]!.buffer)).toEqual(bytes);
+  });
+
   it('raises CorruptFile when decoding invalid base64', async () => {
     const err = await expectOpError(
       base64([textInput('bad.txt', 'not-valid-base64!!! ***')], { direction: 'decode' }, makeCtx()),
@@ -344,6 +390,36 @@ describe('csv-json', () => {
       makeCtx(),
     );
     expect(JSON.parse(bufferToText(tab[0]!.buffer))).toEqual([{ a: '1', b: '2', c: '3' }]);
+  });
+
+  // The parser scans runs rather than single characters (see parseCsv's note).
+  // These are the places where a run has to STOP, and the cases a fuzz run
+  // flagged as the easy ones to get wrong.
+  it('preserves the grammar at every place a run has to stop', async () => {
+    const cases: [string, unknown][] = [
+      // A bare CR ends a row, and swallows a following LF.
+      ['a,b\rc,d', [['a', 'b'], ['c', 'd']]],
+      // A quote that is not at the start of a field is literal content.
+      ['ab"cd,e', [['ab"cd', 'e']]],
+      // ...including a doubled one, which is NOT an escape outside quotes.
+      ['ab""cd', [['ab""cd']]],
+      // A quoted field may hold the delimiter, a newline, and escaped quotes.
+      ['"a,b","c\nd","e""f"', [['a,b', 'c\nd', 'e"f']]],
+      // Content after a closing quote joins the same field.
+      ['"ab"cd', [['abcd']]],
+      // An empty quoted field is empty, and an empty input has no rows at all.
+      ['"",x', [['', 'x']]],
+      ['', []],
+    ];
+
+    for (const [csv, expected] of cases) {
+      const outputs = await csvJson(
+        [textInput('t.csv', csv, 'text/csv')],
+        { direction: 'csv-to-json', delimiter: ',', header: false },
+        makeCtx(),
+      );
+      expect(JSON.parse(bufferToText(outputs[0]!.buffer))).toEqual(expected);
+    }
   });
 
   it('raises CorruptFile for malformed CSV (unterminated quote)', async () => {
