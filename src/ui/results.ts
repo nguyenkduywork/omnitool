@@ -84,8 +84,32 @@ function sourceOf(output: OpOutput, inputs: ResultInput[]): ResultInput | undefi
   return inputs.length === 1 ? inputs[0] : undefined;
 }
 
-function deltaChip(output: OpOutput, source: ResultInput | undefined): HTMLElement | null {
-  if (!source || source.size === 0) return null;
+/**
+ * How many outputs came from the same source input.
+ *
+ * A size delta only means something ONE-TO-ONE. When a single PDF becomes 40
+ * PNGs, comparing each PNG against the whole PDF is a category error: every
+ * card ends up reading "357 kB → 2.5 MB, 603% LARGER", which is both alarming
+ * and arithmetically meaningless, since the 357 kB was never that page's
+ * "before". So count the fan-out first and suppress the delta when it is > 1.
+ */
+function fanOut(outputs: OpOutput[], inputs: ResultInput[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const output of outputs) {
+    const source = sourceOf(output, inputs);
+    if (!source) continue;
+    counts.set(source.name, (counts.get(source.name) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function deltaChip(
+  output: OpOutput,
+  source: ResultInput | undefined,
+  siblings: number,
+): HTMLElement | null {
+  // One input, many outputs — see fanOut(). Fall through to a plain size.
+  if (!source || source.size === 0 || siblings > 1) return null;
   const after = output.buffer.byteLength;
   const ratio = after / source.size;
   const change = Math.round(Math.abs(1 - ratio) * 100);
@@ -94,10 +118,13 @@ function deltaChip(output: OpOutput, source: ResultInput | undefined): HTMLEleme
     return el('span', 'chip chip--flat', `same size · ${formatBytes(source.size)}`);
   }
   const smaller = after < source.size;
+  // "larger" not "LARGER": growth is the expected, correct outcome for plenty
+  // of conversions (PNG from JPEG, rasterising vectors). It is information,
+  // not a warning, and shouting it makes a good result look like a failure.
   return el(
     'span',
     smaller ? 'chip chip--good' : 'chip chip--up',
-    `${change}% ${smaller ? 'smaller' : 'LARGER'} · ${formatBytes(source.size)} → ${formatBytes(after)}`,
+    `${change}% ${smaller ? 'smaller' : 'larger'} · ${formatBytes(source.size)} → ${formatBytes(after)}`,
   );
 }
 
@@ -139,7 +166,12 @@ function copyButton(getText: () => string): HTMLButtonElement {
   return button;
 }
 
-function outputCard(output: OpOutput, inputs: ResultInput[]): HTMLElement {
+function outputCard(
+  output: OpOutput,
+  inputs: ResultInput[],
+  siblings: number,
+  urls: string[],
+): HTMLElement {
   const card = el('article', 'card card--output');
 
   const head = el('div', 'card__head');
@@ -157,11 +189,31 @@ function outputCard(output: OpOutput, inputs: ResultInput[]): HTMLElement {
 
   const meta = el('div', 'card__meta');
   meta.append(el('span', 'card__type', label(output.type)));
-  const chip = deltaChip(output, sourceOf(output, inputs));
+  const chip = deltaChip(output, sourceOf(output, inputs), siblings);
   if (chip) meta.append(chip);
   else meta.append(el('span', 'chip chip--flat', formatBytes(output.buffer.byteLength)));
 
   card.append(head, meta);
+
+  // A tool whose entire output is an image should SHOW the image. Otherwise
+  // the only way to find out whether a render came out right is to download
+  // it and open it in something else. SVG is excluded on purpose: it lands in
+  // the textual branch below, where its source is more useful than a preview.
+  if (output.type.startsWith('image/') && output.type !== 'image/svg+xml') {
+    const url = URL.createObjectURL(new Blob([output.buffer], { type: output.type }));
+    // Caller owns revocation — held until the tray is cleared or replaced, so
+    // the URL stays valid for as long as the card is on screen.
+    urls.push(url);
+
+    const figure = el('div', 'card__thumb');
+    const img = el('img');
+    img.src = url;
+    img.alt = `Preview of ${output.name}`;
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    figure.append(img);
+    card.append(figure);
+  }
 
   if (isTextual(output.type)) {
     const preview = decode(output.buffer, TEXT_PREVIEW_LIMIT);
@@ -225,12 +277,21 @@ export function createResults(): ResultsHandle {
   const grid = el('div', 'results__grid');
   root.append(head, banner, grid);
 
+  /** Object URLs backing image previews, revoked whenever the tray is reset. */
+  let previewUrls: string[] = [];
+
+  function revokePreviews(): void {
+    for (const url of previewUrls) URL.revokeObjectURL(url);
+    previewUrls = [];
+  }
+
   return {
     el: root,
 
     clear(): void {
       root.hidden = true;
       banner.hidden = true;
+      revokePreviews();
       grid.replaceChildren();
       actions.replaceChildren();
       summary.textContent = '';
@@ -289,8 +350,16 @@ export function createResults(): ResultsHandle {
       }
 
       // ---- cards ------------------------------------------------------
+      // A previous run's previews are dead the moment we rebuild the grid.
+      revokePreviews();
+      const siblings = fanOut(outputs, view.inputs);
+
       const cards: HTMLElement[] = [];
-      for (const output of outputs) cards.push(outputCard(output, view.inputs));
+      for (const output of outputs) {
+        const source = sourceOf(output, view.inputs);
+        const count = source ? (siblings.get(source.name) ?? 1) : 1;
+        cards.push(outputCard(output, view.inputs, count, previewUrls));
+      }
       for (const failure of failures) {
         cards.push(failureCard(failure.name, failure.code, failure.message));
       }

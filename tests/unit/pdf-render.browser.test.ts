@@ -90,6 +90,102 @@ describe('pdf-to-images.op (browser)', () => {
     expectMonotonicEndingAtOne(fractions);
   });
 
+  it('converts only the selected pages, and rejects a malformed range', async () => {
+    const { ctx, fractions } = recorder();
+    const outputs = await toImages(
+      [await smallPdfInput()],
+      { format: 'png', dpi: 72, pages: '1,3' },
+      ctx,
+    );
+
+    expect(outputs.map((o) => o.name)).toEqual(['small-p1.png', 'small-p3.png']);
+    // Progress must track pages RENDERED, not page numbers: selecting only the
+    // last page of three must not report 33% and then jump straight to done.
+    expectMonotonicEndingAtOne(fractions);
+
+    // Duplicates and unordered input collapse to one ascending pass.
+    const dedup = await toImages(
+      [await smallPdfInput()],
+      { format: 'png', dpi: 72, pages: '3,1-2,2' },
+      recorder().ctx,
+    );
+    expect(dedup.map((o) => o.name)).toEqual(['small-p1.png', 'small-p2.png', 'small-p3.png']);
+
+    await expect(
+      toImages([await smallPdfInput()], { format: 'png', dpi: 72, pages: '9-4' }, recorder().ctx),
+    ).rejects.toBeInstanceOf(OpError);
+    await expect(
+      toImages([await smallPdfInput()], { format: 'png', dpi: 72, pages: '99' }, recorder().ctx),
+    ).rejects.toMatchObject({ code: 'InvalidOptions' });
+  });
+
+  it('zero-pads page numbers so more than nine pages sort correctly', async () => {
+    // Built here rather than committed as a fixture: the ONLY thing under test
+    // is the filename width, and that needs a document with 10+ pages.
+    const { PDFDocument } = await import('pdf-lib');
+    const doc = await PDFDocument.create();
+    for (let i = 0; i < 12; i++) doc.addPage([120, 160]);
+    const buffer = (await doc.save()).slice().buffer as ArrayBuffer;
+
+    const outputs = await toImages(
+      [{ name: 'long.pdf', type: 'application/pdf', buffer }],
+      { format: 'png', dpi: 72 },
+      recorder().ctx,
+    );
+
+    expect(outputs).toHaveLength(12);
+    expect(outputs[0]?.name).toBe('long-p01.png');
+    expect(outputs[11]?.name).toBe('long-p12.png');
+    // The actual point: lexicographic order must equal page order. Unpadded,
+    // this sorts p1, p10, p11, p12, p2, … in every file manager and zip.
+    const names = outputs.map((o) => o.name);
+    expect([...names].sort()).toEqual(names);
+  });
+
+  it('honours JPEG quality, and rejects a quality outside the schema', async () => {
+    // A DETAILED page is required here. small.pdf's pages are blank white, and
+    // a blank JPEG is the same size at quality 20 and 95 — there is nothing for
+    // the encoder to throw away, so the fixture cannot tell the two apart.
+    // This builds high-frequency content from a seeded LCG so the test is
+    // deterministic but genuinely incompressible.
+    const { PDFDocument, rgb } = await import('pdf-lib');
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([240, 240]);
+    let seed = 12345;
+    const next = (): number => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return (seed >>> 8) / 0x7fffff;
+    };
+    for (let x = 0; x < 40; x++) {
+      for (let y = 0; y < 40; y++) {
+        page.drawRectangle({
+          x: x * 6,
+          y: y * 6,
+          width: 6,
+          height: 6,
+          color: rgb(next(), next(), next()),
+        });
+      }
+    }
+    const bytes = (await doc.save()).slice().buffer as ArrayBuffer;
+    const mk = (): OpInput => ({
+      name: 'detail.pdf',
+      type: 'application/pdf',
+      buffer: bytes.slice(0),
+    });
+
+    const low = await toImages([mk()], { format: 'jpeg', dpi: 150, quality: 20 }, recorder().ctx);
+    const high = await toImages([mk()], { format: 'jpeg', dpi: 150, quality: 95 }, recorder().ctx);
+
+    const total = (outs: { buffer: ArrayBuffer }[]): number =>
+      outs.reduce((sum, o) => sum + o.buffer.byteLength, 0);
+    expect(total(low)).toBeLessThan(total(high));
+
+    await expect(
+      toImages([mk()], { format: 'jpeg', dpi: 72, quality: 5 }, recorder().ctx),
+    ).rejects.toMatchObject({ code: 'InvalidOptions' });
+  });
+
   it('encodes real JPEG bytes when format is "jpeg"', async () => {
     const { ctx } = recorder();
     const outputs = await toImages([await smallPdfInput()], { format: 'jpeg', dpi: 150 }, ctx);
