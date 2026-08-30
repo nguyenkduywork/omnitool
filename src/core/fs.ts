@@ -86,6 +86,15 @@ const ALREADY_COMPRESSED = new Set([
   'application/gzip',
 ]);
 
+/**
+ * The deflate level an output of this type goes into the bundle with: 0 stores
+ * it, 6 compresses it. Exported so `scripts/bench/bundle.mjs` measures the real
+ * policy rather than a restatement of it.
+ */
+export function zipLevelFor(type: string): 0 | 6 {
+  return ALREADY_COMPRESSED.has(type) ? 0 : 6;
+}
+
 /** Zip every output and save the archive as `zipName`. */
 export async function downloadBundle(outputs: OpOutput[], zipName: string): Promise<void> {
   if (outputs.length === 0) {
@@ -95,7 +104,7 @@ export async function downloadBundle(outputs: OpOutput[], zipName: string): Prom
   const taken = new Set<string>();
   const entries: Record<string, [Uint8Array, { level: 0 | 6 }]> = {};
   for (const output of outputs) {
-    const level = ALREADY_COMPRESSED.has(output.type) ? 0 : 6;
+    const level = zipLevelFor(output.type);
     entries[uniqueName(output.name, taken)] = [new Uint8Array(output.buffer), { level }];
   }
 

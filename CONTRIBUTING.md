@@ -86,6 +86,26 @@ a reviewer's judgement call — is what stops it. Run `npm run build && npm
 run size` locally before opening a PR that touches anything outside
 `src/tools/**`.
 
+## 4. Performance claims come with a harness
+
+A comment or a commit message that says a change made something faster needs a
+runnable harness in `scripts/bench/` to go with it — one that imports the real
+module from `src/` (never a pasted copy) and, where the change was a rewrite,
+checks the new code against a frozen copy of the old one. `npm run bench`.
+
+This is not ceremony. An unverifiable number ages into folklore: nobody can tell
+whether it still holds, so nobody dares touch the code it justifies. It also
+keeps *negative* results — `scripts/bench/md5.mjs` is an optimisation that was
+measured, rejected, and kept checkable so the next person does not have to
+rediscover it.
+
+**This is the one rule on this page a human has to enforce**, and it is worth
+being straight about that: timings on a shared CI runner are noise, so `npm run
+bench` is deliberately not part of the suite. What CI *does* enforce is the
+correctness half — the seeded differential fuzz in `tests/unit/data.test.ts`
+holds the CSV parser against the frozen copy of the parser it replaced, and
+that one fails the build.
+
 ## Everything else
 
 - TypeScript strict mode is on; no `any` in committed code, and no

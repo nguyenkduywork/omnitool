@@ -27,6 +27,9 @@ import jsonFormat from '../../src/tools/data/json-format.op';
 import qrGenerate from '../../src/tools/data/qr.op';
 import textClean from '../../src/tools/data/text-clean.op';
 
+import { parseCsv } from '../../src/tools/data/csv-json.op';
+import { parseCsv as parseCsvBefore } from '../../scripts/bench/reference/csv-parser-97aaa82.mjs';
+
 import { DATA_TOOLS } from '../../src/core/registry.data';
 import { DATA_LOADERS } from '../../src/core/workers/loaders.data';
 
@@ -570,6 +573,81 @@ describe('qr-generate', () => {
     const ctx = makeCtx();
     await qrGenerate([], { text: 'hello', format: 'svg', size: 256 }, ctx);
     assertMonotonicEndingAtOne(ctx.progress);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseCsv, against the parser it replaced
+//
+// The scanning rewrite is only defensible if it is the SAME parser. The full
+// 200,000-case fuzz lives in scripts/bench/csv.mjs; this is a seeded slice of
+// it, small enough to belong in CI, holding the current parser against the
+// frozen pre-rewrite copy in scripts/bench/reference/.
+// ---------------------------------------------------------------------------
+
+describe('parseCsv against the pre-rewrite reference', () => {
+  /** Fragments that land on every decision the scanner makes. */
+  const FRAGMENTS = [
+    'a', 'bb', '', '"', '""', ',', ';', '\t', '\n', '\r', '\r\n', ' ', '  ',
+    'x,y', '"q"', '"a,b"', '"a""b"', '"\n"', '"\r\n"', 'a"b', '""""', 'é', '\u{1D4B3}',
+  ];
+
+  /** Deterministic, so a failure names a case anyone can reproduce. */
+  function seeded(seed: number): () => number {
+    let state = seed >>> 0;
+    return () => {
+      state = (Math.imul(state, 1103515245) + 12345) & 0x7fffffff;
+      return state / 0x7fffffff;
+    };
+  }
+
+  function outcome(parse: (text: string, delimiter: string) => string[][], text: string, delimiter: string): string {
+    try {
+      return JSON.stringify(parse(text, delimiter));
+    } catch (error) {
+      return `threw: ${(error as Error).message}`;
+    }
+  }
+
+  it('answers identically on 5,000 generated inputs, errors included', () => {
+    const next = seeded(12_345);
+    const mismatches: string[] = [];
+
+    for (let i = 0; i < 5_000; i++) {
+      let text = '';
+      const pieces = 1 + Math.floor(next() * 24);
+      for (let piece = 0; piece < pieces; piece++) {
+        text += FRAGMENTS[Math.floor(next() * FRAGMENTS.length)] as string;
+      }
+      const delimiter = i % 3 === 0 ? ';' : i % 3 === 1 ? '\t' : ',';
+
+      if (outcome(parseCsv, text, delimiter) !== outcome(parseCsvBefore, text, delimiter)) {
+        mismatches.push(`${JSON.stringify(text)} (delimiter ${JSON.stringify(delimiter)})`);
+      }
+    }
+
+    expect(mismatches).toEqual([]);
+  });
+
+  it('agrees on the cases that are easiest to get wrong', () => {
+    // Named explicitly, so a regression here reads as a sentence rather than
+    // as "case 3,417 of the fuzz".
+    const cases: [string, string][] = [
+      ['a,b\rc,d', ','],
+      ['ab"cd,e', ','],
+      ['ab""cd', ','],
+      ['"a,b","c\nd","e""f"', ','],
+      ['"ab"cd', ','],
+      ['"",x', ','],
+      ['', ','],
+      ['\r\n', ','],
+      ['a;b\tc', ';'],
+      ['"unterminated', ','],
+    ];
+
+    for (const [text, delimiter] of cases) {
+      expect(outcome(parseCsv, text, delimiter)).toBe(outcome(parseCsvBefore, text, delimiter));
+    }
   });
 });
 

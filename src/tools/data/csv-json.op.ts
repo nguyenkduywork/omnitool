@@ -37,8 +37,12 @@ const LF = 10;
  * 3.6x the speed. The two were differentially fuzzed over 200,000 generated
  * inputs (quotes, escapes, bare CRs, mixed delimiters) and agree on every one,
  * error messages included.
+ *
+ * Exported for the same reason `parsePageRanges` is: it is a pure function,
+ * and `scripts/bench/csv.mjs` re-runs that fuzz against THIS parser rather
+ * than a copy of it, which is the only version of the claim worth having.
  */
-function parseCsv(text: string, delimiter: string): string[][] {
+export function parseCsv(text: string, delimiter: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
   let field = '';

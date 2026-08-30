@@ -18,6 +18,7 @@
     "test:e2e": "playwright test",
     "size": "node scripts/size-budget.mjs",
     "contrast": "node scripts/contrast-check.mjs",
+    "bench": "node scripts/bench/index.mjs",
     "make-fixtures": "node tests/fixtures/make-fixtures.mjs"
   },
   "dependencies": {

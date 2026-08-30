@@ -32,8 +32,12 @@ const ENCODE_TABLE = /* @__PURE__ */ (() => {
 
 const PAD = '='.charCodeAt(0);
 
-/** Base64 as UTF-8 bytes: one pass, one allocation, no intermediate string. */
-function encodeBase64(bytes: Uint8Array): Uint8Array {
+/**
+ * Base64 as UTF-8 bytes: one pass, one allocation, no intermediate string.
+ * Exported so `scripts/bench/base64.mjs` can measure and differentially check
+ * the real encoder rather than a copy that would quietly rot.
+ */
+export function encodeBase64(bytes: Uint8Array): Uint8Array {
   const n = bytes.length;
   const out = new Uint8Array(Math.ceil(n / 3) * 4);
   let o = 0;

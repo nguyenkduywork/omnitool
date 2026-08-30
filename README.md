@@ -153,6 +153,7 @@ API keys, and no backend to stand up — the dev server is the entire stack.
 | `npm run contrast` | Recomputes every ink/surface colour pairing in `src/styles/tokens.css` against WCAG AA, in both themes |
 | `npm run size` | Verifies the CI-enforced initial-load size budget (see [CONTRIBUTING.md](./CONTRIBUTING.md)) |
 | `npm run make-fixtures` | Regenerates the committed binary test fixtures in `tests/fixtures/` |
+| `npm run bench` | Re-runs the performance claims and their correctness checks (see [scripts/bench](./scripts/bench/README.md)) |
 
 Before opening a PR, run the same gate CI runs:
 
