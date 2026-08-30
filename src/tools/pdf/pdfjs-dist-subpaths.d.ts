@@ -14,7 +14,7 @@
 // A separate, otherwise-empty .d.ts file sidesteps that restriction, the
 // same way src/tools/data/qrcode.d.ts does for `qrcode`.
 //
-// extract-text.op.ts, organize.editor.ts and to-images.op.ts each import the
+// organize.editor.ts and to-images.op.ts each import the
 // worker subpath too (their own copy of the same loadPdfjs() helper); this
 // shim is what types that import for them now, in place of a per-file
 // `@ts-expect-error` comment.

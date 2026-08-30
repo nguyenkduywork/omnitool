@@ -12,5 +12,4 @@ export const DATA_LOADERS: Record<string, () => Promise<{ default: Op }>> = {
   'csv-json': () => import('../../tools/data/csv-json.op.js'),
   'json-format': () => import('../../tools/data/json-format.op.js'),
   'qr-generate': () => import('../../tools/data/qr.op.js'),
-  ocr: () => import('../../tools/data/ocr.op.js'),
 };

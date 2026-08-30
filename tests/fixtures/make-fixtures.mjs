@@ -202,21 +202,6 @@ async function makeJpg(width, height, color) {
   return sharp({ create: { width, height, channels: 3, background: color } }).jpeg().toBuffer();
 }
 
-/**
- * A crisp, high-contrast, known-text image for tests/e2e/ocr.spec.ts (and
- * anything else that wants a real OCR fixture rather than building one on
- * the fly). Bold and large deliberately: the point is reliable recognition,
- * not testing OCR's tolerance for small or thin text. Rendered via sharp's
- * SVG support so the exact text is data, not a screenshot.
- */
-function makeOcrTextPng() {
-  const svg = `<svg width="1100" height="220" xmlns="http://www.w3.org/2000/svg">
-    <rect width="100%" height="100%" fill="white"/>
-    <text x="30" y="145" font-family="sans-serif" font-weight="bold" font-size="90" fill="black">OMNITOOL OCR TEST</text>
-  </svg>`;
-  return sharp(Buffer.from(svg)).png().toBuffer();
-}
-
 async function makeWebp(width, height, color) {
   return sharp({ create: { width, height, channels: 4, background: { ...color, alpha: 1 } } })
     .webp()
@@ -326,7 +311,6 @@ async function main() {
     { name: 'c.png', build: () => makePng(8, 6, { r: 40, g: 80, b: 220 }) },
     { name: 'a.jpg', build: () => makeJpg(5, 5, { r: 230, g: 180, b: 20 }) },
     { name: 'a.webp', build: () => makeWebp(6, 4, { r: 30, g: 200, b: 200 }) },
-    { name: 'ocr-text.png', build: makeOcrTextPng },
     { name: 'sample.zip', build: makeSampleZip },
     { name: 'traversal.zip', build: makeTraversalZip, verify: verifyTraversalZip },
     { name: 'sample.csv', build: makeSampleCsv },
