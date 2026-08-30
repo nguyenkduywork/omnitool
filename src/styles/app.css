@@ -1795,15 +1795,45 @@ html.is-dragging .hero__drop {
 .utilitypill:hover { border-color: var(--line-2); color: var(--ink); }
 .utilitypill.is-selected { border-color: var(--accent); color: var(--accent); }
 
-/* A tool whose TYPE fits but whose COUNT does not: explained, not vanished. */
-.toolcard--blocked { opacity: 0.55; cursor: not-allowed; }
+/* A tool whose TYPE fits but whose COUNT does not: explained, not vanished.
+ *
+ * De-emphasised by SURFACE and INK, never by `opacity`. Opacity composites the
+ * whole subtree, and the reason line is the only thing this card exists to say —
+ * taking it down to ~3:1 along with the rest would fail the card at its one job.
+ * So the card recedes to the page's own ground behind a dashed edge (an unfilled
+ * slot, not a raised object) and every ink on it stays a real token. */
+.toolcard--blocked {
+  background: var(--bg);
+  border-style: dashed;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+.toolcard--blocked .toolcard__icon {
+  background: var(--bg-2);
+  color: var(--ink-3);
+}
+.toolcard--blocked .toolcard__name { color: var(--ink-3); }
+
+/* :hover still matches a DISABLED button, so the lift has to be undone or the
+ * card promises a click it will not accept. */
+.toolcard--blocked:hover {
+  transform: none;
+  border-color: var(--line);
+  box-shadow: none;
+}
+.toolcard--blocked:hover::before { opacity: 0; }
+
 .toolcard__reason {
   display: block;
   margin-top: var(--s-2);
   font-size: var(--fs-xs);
   color: var(--ink-2);
 }
+
+/* Spans the row, like .opt__reason: the note explains the CONTROL, and the
+ * label column is 11rem wide, which would wrap it under the wrong thing. */
 .opt__because {
+  grid-column: 1 / -1;
   margin: var(--s-1) 0 0;
   font-size: var(--fs-xs);
   color: var(--ink-2);

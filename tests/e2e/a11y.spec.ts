@@ -1,5 +1,11 @@
-// tests/e2e/a11y.spec.ts — keyboard-only accessibility, against the real
-// production build (see playwright.config.ts's `webServer`).
+// tests/e2e/a11y.spec.ts — accessibility that only a real browser can prove,
+// against the real production build (see playwright.config.ts's `webServer`).
+//
+// Two things live here. Most of the file is keyboard-only operation. The last
+// describe is about LEGIBILITY, and it is here for the same reason: `npm run
+// contrast` reads token pairs straight out of tokens.css, so it can prove
+// `--ink-2` on `--bg` and cannot see an `opacity` on an ancestor compositing
+// that same pair down to 3:1. Only a rendered page knows the difference.
 //
 // WHY THIS EXISTS AS AN E2E TEST RATHER THAN A MANUAL CHECK
 //
@@ -234,5 +240,127 @@ test.describe('keyboard-only operation', () => {
       if (bad) invisible.push(bad);
     }
     expect(invisible).toEqual([]);
+  });
+});
+
+/**
+ * The WCAG contrast of one element's text against what is ACTUALLY behind it on
+ * screen: the first ancestor that paints a background, and the opacity of every
+ * ancestor between them composited in. Returns the ratio, so a failure reports
+ * the number rather than just "not readable".
+ */
+function textContrast(page: Page, selector: string): Promise<number> {
+  return page.evaluate((sel) => {
+    const node = document.querySelector(sel);
+    if (!(node instanceof HTMLElement)) throw new Error(`nothing matched ${sel}`);
+
+    type Rgba = [number, number, number, number];
+    const parse = (value: string): Rgba => {
+      const parts = (value.match(/[\d.]+/g) ?? []).map(Number);
+      return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0, parts[3] ?? 1];
+    };
+    /** Opacity accumulated from `from` up to the root — what dims a subtree. */
+    const stackAlpha = (from: HTMLElement | null): number => {
+      let alpha = 1;
+      for (let el = from; el; el = el.parentElement) alpha *= Number(getComputedStyle(el).opacity);
+      return alpha;
+    };
+    const over = (fg: Rgba, bg: number[], alpha: number): number[] =>
+      [0, 1, 2].map((i) => fg[i]! * alpha + bg[i]! * (1 - alpha));
+    const luminance = (rgb: number[]): number => {
+      const [r, g, b] = rgb.map((v) => {
+        const s = v / 255;
+        return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+      }) as [number, number, number];
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+
+    // The page's own ground is the only surface guaranteed to be opaque.
+    const ground = parse(getComputedStyle(document.body).backgroundColor);
+    let surface: number[] = [ground[0], ground[1], ground[2]];
+    for (let el: HTMLElement | null = node; el; el = el.parentElement) {
+      const paint = parse(getComputedStyle(el).backgroundColor);
+      if (paint[3] > 0) {
+        surface = over(paint, surface, paint[3] * stackAlpha(el.parentElement));
+        break;
+      }
+    }
+
+    const ink = parse(getComputedStyle(node).color);
+    const text = over(ink, surface, ink[3] * stackAlpha(node));
+    const [a, b] = [luminance(text), luminance(surface)];
+    return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+  }, selector);
+}
+
+test.describe('legibility the token check cannot see', () => {
+  test('states why a blocked tool cannot run at readable contrast', async ({ page }) => {
+    // Two PDFs: pdf-organize accepts the type but wants exactly one file.
+    await page
+      .locator('input[type="file"]')
+      .setInputFiles([fixturePath('small.pdf'), fixturePath('small.pdf')]);
+
+    const reason = page.locator('.toolcard--blocked[data-tool="pdf-organize"] .toolcard__reason');
+    await expect(reason).toBeVisible({ timeout: 15_000 });
+
+    // BOTH themes: Playwright renders light by default, and the blocked card
+    // swaps surface as well as ink, so one theme proves nothing about the other.
+    //
+    // Polled, not read once: switching the theme starts a `background-color`
+    // transition on the card, and a computed style sampled before it settles
+    // reports the OLD surface under the NEW ink. Reduced motion (beforeEach)
+    // makes that a 1ms window, and polling closes it.
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme });
+
+      // The reason IS the card — a card carrying an explanation nobody can read
+      // has failed at the only job it has. Dimming the card is fine; dimming the
+      // sentence is not, which is why this is a composited measurement.
+      await expect
+        .poll(() => textContrast(page, '.toolcard--blocked .toolcard__reason'), {
+          message: `reason text in the ${colorScheme} theme`,
+        })
+        .toBeGreaterThanOrEqual(4.5);
+
+      // Its name is de-emphasised too, but by ink, not by an `opacity` trick.
+      await expect
+        .poll(() => textContrast(page, '.toolcard--blocked .toolcard__name'), {
+          message: `tool name in the ${colorScheme} theme`,
+        })
+        .toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  test('puts a preset note under the control it explains, spanning the row', async ({ page }) => {
+    await page.locator('input[type="file"]').setInputFiles([fixturePath('small.pdf')]);
+
+    // Create ZIP presets its archive name from the first file's basename.
+    const pill = page.locator('.utilitypill[data-tool="zip-create"]');
+    await expect(pill).toBeVisible({ timeout: 15_000 });
+    await pill.click();
+    await expect(page.getByRole('button', { name: 'Run' })).toBeFocused({ timeout: 15_000 });
+
+    const row = '.opt[data-key="name"]';
+    const note = page.locator(`${row} .opt__because`);
+    await expect(note).toHaveText('from the first file');
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme });
+      await expect
+        .poll(() => textContrast(page, `${row} .opt__because`), {
+          message: `preset note in the ${colorScheme} theme`,
+        })
+        .toBeGreaterThanOrEqual(4.5);
+    }
+
+    // It has to span BOTH grid columns. Left in the 11rem label column it would
+    // annotate the label instead of the control, and wrap three times doing it.
+    const [box, label, control] = await Promise.all([
+      note.boundingBox(),
+      page.locator(`${row} .opt__label`).boundingBox(),
+      page.locator(`${row} .opt__control`).boundingBox(),
+    ]);
+    expect(box && label && control).toBeTruthy();
+    expect(box!.x).toBeLessThanOrEqual(label!.x + 1);
+    expect(box!.x + box!.width).toBeGreaterThanOrEqual(control!.x + control!.width - 1);
   });
 });
