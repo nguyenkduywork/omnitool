@@ -57,6 +57,17 @@ function badgeFor(entry: TrayEntry): string {
   return subtype.slice(0, 4).toUpperCase();
 }
 
+/**
+ * Which tool family a file belongs to, for the row's identity tint only. It
+ * deliberately mirrors the three groups in the tool grid so a dropped PDF and
+ * the PDF section read as the same colour; nothing behavioural hangs off it.
+ */
+function kindOf(type: string): 'pdf' | 'image' | 'data' {
+  if (type === 'application/pdf') return 'pdf';
+  if (type.startsWith('image/')) return 'image';
+  return 'data';
+}
+
 function isThumbnailable(type: string): boolean {
   // Formats a browser can paint in an <img> without help. AVIF/WebP decode
   // support is near-universal now; a failed decode just leaves the badge.
@@ -174,6 +185,7 @@ export function createFileTray(init: FileTrayInit): FileTrayHandle {
     const node = el('li', 'tray__item');
     node.tabIndex = 0;
     node.draggable = true;
+    node.dataset.kind = kindOf(entry.type);
     node.setAttribute('aria-describedby', 'tray-hint');
 
     const thumb = el('span', 'tray__thumb');
