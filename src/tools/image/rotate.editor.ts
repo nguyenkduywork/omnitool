@@ -36,6 +36,7 @@
 // never a bare `document` global.
 
 import type { ToolEditor } from '../../types';
+import { LOSSLESS_MIMES, outputMimeFor } from './mime';
 
 import './rotate.editor.css';
 
@@ -68,17 +69,6 @@ const FLIPS: readonly { value: Flip; label: string; short: string }[] = [
  */
 const PREVIEW_MAX = 640;
 
-/** Formats rotate.op.ts hands straight to the canvas encoder. */
-const KNOWN_MIMES = ['image/png', 'image/jpeg', 'image/webp', 'image/avif'];
-
-/** The single format that ignores `quality`, because it is lossless. */
-const LOSSLESS_MIMES = ['image/png'];
-
-/** The output mime rotate.op.ts will choose for a file — same rule, same result. */
-function outputMimeFor(file: File): string {
-  return file.type && KNOWN_MIMES.includes(file.type) ? file.type : 'image/png';
-}
-
 function shortMime(mime: string): string {
   return (mime.split('/')[1] ?? mime).toUpperCase();
 }
@@ -100,6 +90,18 @@ const editor: ToolEditor = (mount, inputs, onChange) => {
   const root = doc.createElement('div');
   root.className = 'rot';
 
+  /** Listeners registered via `on()`, detached in teardown. */
+  const cleanupFns: (() => void)[] = [];
+
+  function on<K extends keyof HTMLElementEventMap>(
+    el: HTMLElement,
+    type: K,
+    handler: (ev: HTMLElementEventMap[K]) => void,
+  ): void {
+    el.addEventListener(type, handler);
+    cleanupFns.push(() => el.removeEventListener(type, handler));
+  }
+
   // ------------------------------------------------------------- controls
 
   function row(labelText: string): { row: HTMLElement; controls: HTMLElement } {
@@ -119,12 +121,14 @@ const editor: ToolEditor = (mount, inputs, onChange) => {
    * refreshSegs() keeps it authoritative on every redraw; the visible fill is
    * driven off that same attribute in CSS rather than a second class.
    */
+  type SegmentedControl = { element: HTMLElement; current: () => string };
+
   function segmented<T extends string>(
     items: readonly { value: T; label: string; short: string }[],
     current: () => T,
     pick: (value: T) => void,
     groupLabel: string,
-  ): HTMLElement {
+  ): SegmentedControl {
     const group = doc.createElement('div');
     group.className = 'rot__seg';
     group.setAttribute('role', 'group');
@@ -138,14 +142,13 @@ const editor: ToolEditor = (mount, inputs, onChange) => {
       button.title = item.label;
       button.setAttribute('aria-label', item.label);
       button.dataset['value'] = item.value;
-      button.addEventListener('click', () => {
+      on(button, 'click', () => {
         pick(item.value);
         sync();
       });
       group.append(button);
     }
-    (group as HTMLElement & { __current?: () => string }).__current = current;
-    return group;
+    return { element: group, current };
   }
 
   const angleRow = row('Rotate');
@@ -157,7 +160,7 @@ const editor: ToolEditor = (mount, inputs, onChange) => {
     },
     'Rotation',
   );
-  angleRow.controls.append(angleSeg);
+  angleRow.controls.append(angleSeg.element);
 
   const flipRow = row('Mirror');
   const flipSeg = segmented(
@@ -168,7 +171,7 @@ const editor: ToolEditor = (mount, inputs, onChange) => {
     },
     'Mirror',
   );
-  flipRow.controls.append(flipSeg);
+  flipRow.controls.append(flipSeg.element);
 
   const qualityRow = row('Re-encode quality');
   const qualityInput = doc.createElement('input');
@@ -183,7 +186,7 @@ const editor: ToolEditor = (mount, inputs, onChange) => {
   qualityValue.className = 'rot__value';
   qualityValue.textContent = `${quality}%`;
   qualityRow.controls.append(qualityInput, qualityValue);
-  qualityInput.addEventListener('input', () => {
+  on(qualityInput, 'input', () => {
     quality = Number(qualityInput.value);
     sync();
   });
@@ -230,9 +233,9 @@ const editor: ToolEditor = (mount, inputs, onChange) => {
   }
 
   function refreshSegs(): void {
-    for (const group of [angleSeg, flipSeg]) {
-      const current = (group as HTMLElement & { __current?: () => string }).__current?.();
-      for (const button of group.querySelectorAll('button')) {
+    for (const seg of [angleSeg, flipSeg]) {
+      const current = seg.current();
+      for (const button of seg.element.querySelectorAll('button')) {
         button.setAttribute('aria-pressed', String(button.dataset['value'] === current));
       }
     }
@@ -253,12 +256,13 @@ const editor: ToolEditor = (mount, inputs, onChange) => {
     const width = quarterTurn ? preview.height : preview.width;
     const height = quarterTurn ? preview.width : preview.height;
 
+    // Assigning width/height always resets and clears the bitmap, even to an
+    // unchanged value, so there is nothing left over for a clearRect to do.
     canvas.width = width;
     canvas.height = height;
     const context = canvas.getContext('2d');
     if (!context) return;
 
-    context.clearRect(0, 0, width, height);
     context.save();
     context.translate(width / 2, height / 2);
     if (angle !== '0') context.rotate((Number(angle) * Math.PI) / 180);
@@ -398,6 +402,7 @@ const editor: ToolEditor = (mount, inputs, onChange) => {
     disposed = true;
     preview?.close();
     preview = null;
+    for (const cleanup of cleanupFns) cleanup();
     mount.replaceChildren();
   };
 };

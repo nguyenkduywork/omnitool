@@ -14,18 +14,15 @@
 // Order of operations: the image is mirrored first, then rotated — so
 // `angle: 90, flip: horizontal` means "mirror it, then turn it".
 
-import { OpError, type Op, type OpInput, type OpOutput } from '../../types';
+import { OpError, type Op, type OpOutput } from '../../types';
 import { decodeImage, encodeCanvas } from './convert.op';
+import { LOSSLESS_MIMES, outputMimeFor } from './mime';
 
 type Angle = 0 | 90 | 180 | 270;
 type Flip = 'none' | 'horizontal' | 'vertical';
 
 const ANGLES: Angle[] = [0, 90, 180, 270];
 const FLIPS: Flip[] = ['none', 'horizontal', 'vertical'];
-
-/** Formats whose mime we can hand straight back to the canvas encoder. */
-const KNOWN_MIMES = ['image/png', 'image/jpeg', 'image/webp', 'image/avif'];
-const LOSSLESS_MIMES = ['image/png'];
 
 function stop(signal: AbortSignal): void {
   if (signal.aborted) throw new OpError('Cancelled', 'Cancelled');
@@ -60,10 +57,6 @@ function validateQuality(raw: unknown): number {
     throw new OpError('InvalidOptions', `quality must be a number between 10 and 100, got ${JSON.stringify(raw)}`);
   }
   return value;
-}
-
-function outputMimeFor(input: OpInput): string {
-  return input.type && KNOWN_MIMES.includes(input.type) ? input.type : 'image/png';
 }
 
 const rotate: Op = async (inputs, options, ctx): Promise<OpOutput[]> => {

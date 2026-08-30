@@ -925,6 +925,29 @@ describe('rotate.editor', () => {
     }
   });
 
+  it('drives its own no-op selection through the real op as a byte-identical passthrough', async () => {
+    const input = await twoTone();
+    const file = new File([input.buffer.slice(0)], input.name, { type: input.type });
+    const { mount, events, teardown } = await mountRotateEditor([file]);
+
+    try {
+      // The default flip is already 'none'; clicking it anyway makes the
+      // no-op selection explicit rather than relying on the initial state.
+      segButton(mount, 'No rotation').click();
+      segButton(mount, 'No mirror').click();
+      const last = events[events.length - 1] as Record<string, unknown>;
+
+      const outputs = await rotate([input], last, recorder().ctx);
+      const output = outputs[0] as OpOutput;
+      // Not just "no rejection" — the editor's OWN emitted no-op selection
+      // must reach the op's passthrough branch, byte for byte.
+      expect(new Uint8Array(output.buffer)).toEqual(new Uint8Array(input.buffer));
+    } finally {
+      teardown();
+      mount.remove();
+    }
+  });
+
   it('shows the quality slider only when the run re-encodes something lossy', async () => {
     const jpeg = new File([await fixtureBuffer('a.jpg')], 'a.jpg', { type: 'image/jpeg' });
     const { mount, teardown } = await mountRotateEditor([jpeg]);
