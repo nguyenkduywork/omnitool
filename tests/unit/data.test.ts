@@ -25,6 +25,10 @@ import base64 from '../../src/tools/data/base64.op';
 import csvJson from '../../src/tools/data/csv-json.op';
 import jsonFormat from '../../src/tools/data/json-format.op';
 import qrGenerate from '../../src/tools/data/qr.op';
+import textClean from '../../src/tools/data/text-clean.op';
+
+import { DATA_TOOLS } from '../../src/core/registry.data';
+import { DATA_LOADERS } from '../../src/core/workers/loaders.data';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = path.join(__dirname, '..', 'fixtures');
@@ -489,6 +493,198 @@ describe('qr-generate', () => {
   it('reports monotonic progress ending at 1', async () => {
     const ctx = makeCtx();
     await qrGenerate([], { text: 'hello', format: 'svg', size: 256 }, ctx);
+    assertMonotonicEndingAtOne(ctx.progress);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// text-clean
+// ---------------------------------------------------------------------------
+
+describe('text-clean', () => {
+  /** U+FEFF, spelled out because the character itself is invisible here. */
+  const BOM = String.fromCharCode(0xfeff);
+
+  it('is registered with a matching loader entry and the documented schema', () => {
+    const tool = DATA_TOOLS.find((t) => t.id === 'text-clean');
+    expect(tool).toBeDefined();
+    expect(DATA_LOADERS['text-clean']).toBeTypeOf('function');
+    expect(tool?.accepts).toEqual([
+      'text/plain',
+      'text/markdown',
+      'text/csv',
+      'text/tab-separated-values',
+    ]);
+    expect(tool?.minInputs).toBe(1);
+    expect(tool?.options?.['sort']).toMatchObject({ kind: 'select', default: 'none' });
+    expect(tool?.options?.['trim']).toEqual({
+      kind: 'toggle',
+      label: 'Trim trailing whitespace',
+      default: true,
+    });
+    expect(tool?.options?.['dedupe']).toMatchObject({ kind: 'toggle', default: false });
+    expect(tool?.options?.['dropBlank']).toMatchObject({ kind: 'toggle', default: false });
+    expect(tool?.options?.['endings']).toMatchObject({ kind: 'select', default: 'keep' });
+  });
+
+  it('trims, drops blanks, deduplicates and sorts — in that order (happy path)', async () => {
+    // 'b  ' only equals 'b' after trimming, and the blank line is only blank
+    // after it too: the fixed order is what makes both come out right.
+    const outputs = await textClean(
+      [textInput('list.txt', 'b  \n   \nb\na\n')],
+      { trim: true, dropBlank: true, dedupe: true, sort: 'asc' },
+      makeCtx(),
+    );
+
+    expect(outputs).toHaveLength(1);
+    expect(outputs[0]?.name).toBe('list.txt');
+    expect(bufferToText(outputs[0]!.buffer)).toBe('a\nb\n');
+  });
+
+  it('sorts in code-unit order, not locale order', async () => {
+    // Locale collation would put 'apple' first; LC_ALL=C order does not.
+    const outputs = await textClean(
+      [textInput('a.txt', 'apple\nZebra\nBanana')],
+      { sort: 'asc' },
+      makeCtx(),
+    );
+    expect(bufferToText(outputs[0]!.buffer)).toBe('Banana\nZebra\napple');
+  });
+
+  it('sorts descending when asked', async () => {
+    const outputs = await textClean([textInput('a.txt', 'a\nc\nb')], { sort: 'desc' }, makeCtx());
+    expect(bufferToText(outputs[0]!.buffer)).toBe('c\nb\na');
+  });
+
+  it('keeps the FIRST of each duplicate, in place, when not sorting', async () => {
+    const outputs = await textClean(
+      [textInput('a.txt', 'c\na\nc\nb\na')],
+      { dedupe: true },
+      makeCtx(),
+    );
+    expect(bufferToText(outputs[0]!.buffer)).toBe('c\na\nb');
+  });
+
+  it('trims only TRAILING whitespace, never indentation', async () => {
+    const outputs = await textClean([textInput('a.txt', '    indented   ')], {}, makeCtx());
+    expect(bufferToText(outputs[0]!.buffer)).toBe('    indented');
+  });
+
+  it('preserves a trailing newline, and the absence of one', async () => {
+    const withNewline = await textClean([textInput('a.txt', 'b\na\n')], { sort: 'asc' }, makeCtx());
+    expect(bufferToText(withNewline[0]!.buffer)).toBe('a\nb\n');
+
+    const without = await textClean([textInput('a.txt', 'b\na')], { sort: 'asc' }, makeCtx());
+    expect(bufferToText(without[0]!.buffer)).toBe('a\nb');
+  });
+
+  it('treats a lone newline as one blank line, not as nothing', async () => {
+    const kept = await textClean([textInput('a.txt', '\n')], {}, makeCtx());
+    expect(bufferToText(kept[0]!.buffer)).toBe('\n');
+
+    // ...but a file whose every line was dropped must not come back as a
+    // stray newline.
+    const emptied = await textClean([textInput('a.txt', '\n\n\n')], { dropBlank: true }, makeCtx());
+    expect(bufferToText(emptied[0]!.buffer)).toBe('');
+  });
+
+  it('preserves a leading byte-order mark', async () => {
+    const outputs = await textClean(
+      [textInput('a.txt', BOM + 'b\na')],
+      { sort: 'asc' },
+      makeCtx(),
+    );
+    // Asserted on the BYTES: `bufferToText`'s decoder strips a leading BOM, so
+    // a check on the decoded string cannot tell "preserved" from "dropped".
+    expect(new Uint8Array(outputs[0]!.buffer).slice(0, 3)).toEqual(
+      new Uint8Array([0xef, 0xbb, 0xbf]),
+    );
+    // And the BOM is not a line: it stays at the front instead of sorting.
+    expect(bufferToText(outputs[0]!.buffer)).toBe('a\nb');
+    expect(new TextDecoder('utf-8', { ignoreBOM: true }).decode(outputs[0]!.buffer)).toBe(
+      BOM + 'a\nb',
+    );
+  });
+
+  it("follows the file's own line endings by default", async () => {
+    const crlf = await textClean([textInput('a.txt', 'b\r\na\r\n')], { sort: 'asc' }, makeCtx());
+    expect(bufferToText(crlf[0]!.buffer)).toBe('a\r\nb\r\n');
+
+    const lf = await textClean([textInput('a.txt', 'b\na\n')], { sort: 'asc' }, makeCtx());
+    expect(bufferToText(lf[0]!.buffer)).toBe('a\nb\n');
+  });
+
+  it('normalises line endings on request, in both directions', async () => {
+    const toLf = await textClean([textInput('a.txt', 'a\r\nb\r\n')], { endings: 'lf' }, makeCtx());
+    expect(bufferToText(toLf[0]!.buffer)).toBe('a\nb\n');
+
+    const toCrlf = await textClean([textInput('a.txt', 'a\nb\n')], { endings: 'crlf' }, makeCtx());
+    expect(bufferToText(toCrlf[0]!.buffer)).toBe('a\r\nb\r\n');
+
+    // A lone CR is a line ending too, and must not survive as content.
+    const oldMac = await textClean([textInput('a.txt', 'a\rb')], { endings: 'lf' }, makeCtx());
+    expect(bufferToText(oldMac[0]!.buffer)).toBe('a\nb');
+  });
+
+  it('returns the ORIGINAL bytes when nothing about the file changes', async () => {
+    const source = textInput('a.txt', 'a\nb\n');
+    const outputs = await textClean([source], {}, makeCtx());
+    // Identity, not equality: an unchanged file is not re-encoded at all.
+    expect(outputs[0]?.buffer).toBe(source.buffer);
+  });
+
+  it('keeps each file name and mime type', async () => {
+    const outputs = await textClean(
+      [textInput('rows.csv', 'b,2\na,1', 'text/csv')],
+      { sort: 'asc' },
+      makeCtx(),
+    );
+    expect(outputs[0]?.name).toBe('rows.csv');
+    expect(outputs[0]?.type).toBe('text/csv');
+  });
+
+  it('raises CorruptFile naming the file for bytes that are not UTF-8', async () => {
+    const bad: OpInput = {
+      name: 'bad.txt',
+      type: 'text/plain',
+      buffer: new Uint8Array([0xff, 0xfe, 0xfd]).buffer,
+    };
+    const err = await expectOpError(textClean([bad], {}, makeCtx()), 'CorruptFile');
+    expect(err.file).toBe('bad.txt');
+  });
+
+  it.each([
+    [{ sort: 'sideways' }],
+    [{ dedupe: 'yes' }],
+    [{ trim: 1 }],
+    [{ endings: 'cr' }],
+  ])('raises InvalidOptions for %j', async (options) => {
+    await expectOpError(textClean([textInput('a.txt', 'a')], options, makeCtx()), 'InvalidOptions');
+  });
+
+  it('raises InvalidOptions when given no files at all', async () => {
+    await expectOpError(textClean([], {}, makeCtx()), 'InvalidOptions');
+  });
+
+  it('cancels part-way through via AbortSignal', async () => {
+    const controller = new AbortController();
+    const ctx = makeCtx(controller.signal);
+    const originalOnProgress = ctx.onProgress.bind(ctx);
+    ctx.onProgress = (fraction: number) => {
+      originalOnProgress(fraction);
+      if (fraction < 1) controller.abort();
+    };
+
+    await expectOpError(
+      textClean([textInput('a.txt', 'a'), textInput('b.txt', 'b')], {}, ctx),
+      'Cancelled',
+    );
+  });
+
+  it('reports monotonic progress ending at 1', async () => {
+    const ctx = makeCtx();
+    await textClean([textInput('a.txt', 'a'), textInput('b.txt', 'b')], {}, ctx);
+    expect(ctx.progress).toEqual([0.5, 1]);
     assertMonotonicEndingAtOne(ctx.progress);
   });
 });

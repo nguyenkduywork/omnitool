@@ -12,4 +12,5 @@ export const IMAGE_LOADERS: Record<string, () => Promise<{ default: Op }>> = {
   'image-merge-sheet': () => import('../../tools/image/merge-sheet.op'),
   'image-rotate': () => import('../../tools/image/rotate.op'),
   'image-strip-metadata': () => import('../../tools/image/strip-metadata.op'),
+  'image-watermark': () => import('../../tools/image/watermark.op'),
 };

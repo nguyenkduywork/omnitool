@@ -115,4 +115,18 @@ export const PDF_TOOLS: ToolDef[] = [
     },
     load: () => import('../tools/pdf/from-images.op'),
   },
+  {
+    id: 'pdf-metadata',
+    name: 'Clean PDF metadata',
+    blurb: 'Remove the author, dates and XMP data a PDF carries.',
+    group: 'pdf',
+    accepts: ['application/pdf'],
+    minInputs: 1,
+    maxInputs: null,
+    options: {
+      keepTitle: { kind: 'toggle', label: 'Keep the document title', default: false },
+      removeXmp: { kind: 'toggle', label: 'Remove XMP and application data', default: true },
+    },
+    load: () => import('../tools/pdf/metadata.op'),
+  },
 ];

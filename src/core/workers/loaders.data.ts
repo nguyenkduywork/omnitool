@@ -17,4 +17,5 @@ export const DATA_LOADERS: Record<string, () => Promise<{ default: Op }>> = {
   'tar-extract': () => import('../../tools/data/tar-extract.op.js'),
   'file-split': () => import('../../tools/data/file-split.op.js'),
   'file-join': () => import('../../tools/data/file-join.op.js'),
+  'text-clean': () => import('../../tools/data/text-clean.op.js'),
 };

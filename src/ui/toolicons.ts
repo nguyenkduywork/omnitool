@@ -29,6 +29,7 @@ const TOOL_ICON: Record<string, IconName> = {
   'pdf-shrink': 'shrink',
   'pdf-to-images': 'image',
   'pdf-from-images': 'file',
+  'pdf-metadata': 'shield',
   'image-convert': 'swap',
   'image-resize': 'expand',
   'image-compress': 'shrink',
@@ -36,6 +37,7 @@ const TOOL_ICON: Record<string, IconName> = {
   'image-merge-sheet': 'layers',
   'image-rotate': 'rotate',
   'image-strip-metadata': 'shield',
+  'image-watermark': 'stamp',
   'zip-create': 'archive',
   'zip-extract': 'unarchive',
   hash: 'hash',
@@ -48,6 +50,7 @@ const TOOL_ICON: Record<string, IconName> = {
   'tar-extract': 'unarchive',
   'file-split': 'split',
   'file-join': 'merge',
+  'text-clean': 'spark',
 };
 
 /** A tool with no entry of its own falls back to its family's glyph, so adding

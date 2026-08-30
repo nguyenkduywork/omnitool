@@ -13,7 +13,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { PDFDocument } from 'pdf-lib';
+import { PDFDict, PDFDocument, PDFName } from 'pdf-lib';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import { OpError, type OpContext, type OpInput, type OpOutput } from '../../src/types';
@@ -22,6 +22,7 @@ import organize, { parsePagePlan } from '../../src/tools/pdf/organize.op';
 import shrink, { canReencodeImages } from '../../src/tools/pdf/shrink.op';
 import toImages from '../../src/tools/pdf/to-images.op';
 import fromImages, { imageKind } from '../../src/tools/pdf/from-images.op';
+import metadata from '../../src/tools/pdf/metadata.op';
 import { PDF_TOOLS } from '../../src/core/registry.pdf';
 import { PDF_LOADERS } from '../../src/core/workers/loaders.pdf';
 
@@ -108,9 +109,10 @@ describe('pdf registry entries', () => {
     'pdf-shrink',
     'pdf-to-images',
     'pdf-from-images',
+    'pdf-metadata',
   ];
 
-  it('registers all five pdf tools with matching loader entries', () => {
+  it('registers every pdf tool with a matching loader entry', () => {
     const ids = PDF_TOOLS.map((tool) => tool.id);
     for (const id of expected) {
       expect(ids).toContain(id);
@@ -181,6 +183,11 @@ describe('pdf registry entries', () => {
       max: 72,
       step: 1,
       default: 0,
+    });
+
+    expect(byId.get('pdf-metadata')?.options).toEqual({
+      keepTitle: { kind: 'toggle', label: 'Keep the document title', default: false },
+      removeXmp: { kind: 'toggle', label: 'Remove XMP and application data', default: true },
     });
 
     // pdf-organize has no schema — it uses its editor instead.
@@ -623,5 +630,222 @@ describe('pdf-from-images', () => {
     );
     expect(fractions.length).toBeGreaterThan(1);
     expect(fractions.at(-1)).not.toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pdf-metadata
+// ---------------------------------------------------------------------------
+
+/** A copy of small.pdf carrying a full Info dictionary, and optionally XMP. */
+async function pdfWithMetadata(xmp?: string): Promise<OpInput> {
+  const doc = await PDFDocument.load(await load('small.pdf'), { updateMetadata: false });
+  doc.setTitle('Quarterly numbers');
+  doc.setAuthor('Kim Duy');
+  doc.setSubject('Internal only');
+  doc.setKeywords(['confidential', 'draft']);
+  doc.setProducer('omnitool tests');
+  doc.setCreator('omnitool tests');
+  if (xmp !== undefined) {
+    const stream = doc.context.stream(new TextEncoder().encode(xmp), { Type: 'Metadata', Subtype: 'XML' });
+    doc.catalog.set(PDFName.of('Metadata'), doc.context.register(stream));
+  }
+  const bytes = await doc.save();
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  return { name: 'meta.pdf', type: 'application/pdf', buffer };
+}
+
+/** A copy of small.pdf with an empty Info dictionary and no XMP. */
+async function pdfWithoutMetadata(): Promise<OpInput> {
+  const doc = await PDFDocument.load(await load('small.pdf'), { updateMetadata: false });
+  const info = doc.context.lookup(doc.context.trailerInfo.Info, PDFDict);
+  for (const key of info.keys()) info.delete(key);
+  const bytes = await doc.save();
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  return { name: 'bare.pdf', type: 'application/pdf', buffer };
+}
+
+function reportOf(outputs: OpOutput[]): string {
+  return new TextDecoder().decode(outputs.find((o) => o.name === 'pdf-metadata-report.txt')?.buffer);
+}
+
+/** Does this file contain `needle` anywhere in its raw bytes? */
+function bytesContain(buffer: ArrayBuffer, needle: string): boolean {
+  return new TextDecoder('latin1').decode(new Uint8Array(buffer)).includes(needle);
+}
+
+/** How pdf-lib writes a text value into a PDF: UTF-16BE, hex, with a BOM. */
+function asPdfHex(text: string): string {
+  let hex = 'feff';
+  for (let i = 0; i < text.length; i++) hex += text.charCodeAt(i).toString(16).padStart(4, '0');
+  return hex;
+}
+
+/**
+ * Re-save a document with object streams OFF, which expands every surviving
+ * object into plain bytes. Searching *that* is what makes "no trace left"
+ * checkable: pdf-lib's default save deflates the Info dictionary into a
+ * compressed object stream, where a byte search would find nothing whether the
+ * value was removed or not.
+ */
+async function flattened(buffer: ArrayBuffer): Promise<string> {
+  const doc = await PDFDocument.load(buffer, { updateMetadata: false });
+  const bytes = await doc.save({ useObjectStreams: false });
+  return new TextDecoder('latin1').decode(bytes).toLowerCase();
+}
+
+describe('pdf-metadata', () => {
+  it('empties the Info dictionary and reports what came out', async () => {
+    const source = await pdfWithMetadata();
+    const { ctx, fractions } = recorder();
+    const outputs = await metadata([source], {}, ctx);
+
+    const pdf = outputs.find((o) => o.type === 'application/pdf');
+    expect(pdf?.name).toBe('meta.pdf');
+
+    const cleaned = await PDFDocument.load(pdf?.buffer as ArrayBuffer, { updateMetadata: false });
+    expect(cleaned.getTitle()).toBeUndefined();
+    expect(cleaned.getAuthor()).toBeUndefined();
+    expect(cleaned.getSubject()).toBeUndefined();
+    expect(cleaned.getKeywords()).toBeUndefined();
+    expect(cleaned.getProducer()).toBeUndefined();
+    expect(cleaned.getCreator()).toBeUndefined();
+    expect(cleaned.getCreationDate()).toBeUndefined();
+    expect(cleaned.getModificationDate()).toBeUndefined();
+    // The document itself is untouched — this removes metadata, not content.
+    expect(cleaned.getPageCount()).toBe(3);
+
+    const report = reportOf(outputs);
+    expect(report).toContain('removed Author: Kim Duy');
+    expect(report).toContain('removed Title: Quarterly numbers');
+    expect(report).toContain('removed Producer: omnitool tests');
+
+    expectMonotonicEndingAtOne(fractions);
+  });
+
+  it('leaves no surviving object holding the removed values', async () => {
+    const source = await pdfWithMetadata();
+    // The check has teeth only if it finds the value before the op runs.
+    expect(await flattened(source.buffer)).toContain(asPdfHex('Kim Duy'));
+
+    const { ctx } = recorder();
+    const outputs = await metadata([source], {}, ctx);
+    const pdf = outputs.find((o) => o.type === 'application/pdf');
+
+    expect(await flattened(pdf?.buffer as ArrayBuffer)).not.toContain(asPdfHex('Kim Duy'));
+  });
+
+  it('purges the XMP stream from the FILE, not just from the catalog', async () => {
+    // The whole point of context.delete(): unlinking alone leaves the stream in
+    // the file as an orphan object that pdf-lib faithfully writes back out.
+    const xmp = '<?xpacket begin="" ?><x:xmpmeta><dc:creator>SECRETPERSON</dc:creator></x:xmpmeta>';
+    const source = await pdfWithMetadata(xmp);
+    expect(bytesContain(source.buffer, 'SECRETPERSON')).toBe(true);
+
+    const { ctx } = recorder();
+    const outputs = await metadata([source], {}, ctx);
+    const pdf = outputs.find((o) => o.type === 'application/pdf');
+
+    expect(bytesContain(pdf?.buffer as ArrayBuffer, 'SECRETPERSON')).toBe(false);
+    const cleaned = await PDFDocument.load(pdf?.buffer as ArrayBuffer, { updateMetadata: false });
+    expect(cleaned.catalog.get(PDFName.of('Metadata'))).toBeUndefined();
+    expect(cleaned.getPageCount()).toBe(3);
+    expect(reportOf(outputs)).toContain('removed XMP metadata stream');
+  });
+
+  it('keeps the XMP stream when removeXmp is off, and says so', async () => {
+    const xmp = '<?xpacket begin="" ?><x:xmpmeta><dc:creator>SECRETPERSON</dc:creator></x:xmpmeta>';
+    const source = await pdfWithMetadata(xmp);
+    const { ctx } = recorder();
+    const outputs = await metadata([source], { removeXmp: false }, ctx);
+    const pdf = outputs.find((o) => o.type === 'application/pdf');
+
+    expect(bytesContain(pdf?.buffer as ArrayBuffer, 'SECRETPERSON')).toBe(true);
+    // The Info dictionary still went.
+    expect(bytesContain(pdf?.buffer as ArrayBuffer, 'Kim Duy')).toBe(false);
+    expect(reportOf(outputs)).toContain('XMP / application data: kept');
+  });
+
+  it('keeps the document title when asked, and nothing else', async () => {
+    const source = await pdfWithMetadata();
+    const { ctx } = recorder();
+    const outputs = await metadata([source], { keepTitle: true }, ctx);
+    const cleaned = await PDFDocument.load(
+      outputs.find((o) => o.type === 'application/pdf')?.buffer as ArrayBuffer,
+      { updateMetadata: false },
+    );
+
+    expect(cleaned.getTitle()).toBe('Quarterly numbers');
+    expect(cleaned.getAuthor()).toBeUndefined();
+    expect(cleaned.getProducer()).toBeUndefined();
+    expect(reportOf(outputs)).toContain('document title: kept');
+  });
+
+  it('returns the ORIGINAL bytes when there is no metadata to remove', async () => {
+    const source = await pdfWithoutMetadata();
+    const before = new Uint8Array(source.buffer.slice(0));
+    const { ctx, fractions } = recorder();
+    const outputs = await metadata([source], {}, ctx);
+
+    const pdf = outputs.find((o) => o.type === 'application/pdf');
+    expect(new Uint8Array(pdf?.buffer as ArrayBuffer)).toEqual(before);
+    expect(reportOf(outputs)).toContain('no document metadata found');
+    expectMonotonicEndingAtOne(fractions);
+  });
+
+  it('raises UnsupportedFormat naming the file for a non-PDF', async () => {
+    const { ctx } = recorder();
+    await expectOpError(
+      metadata([await input('sample.csv', 'text/csv')], {}, ctx),
+      'UnsupportedFormat',
+      'sample.csv',
+    );
+  });
+
+  it('raises CorruptFile naming the file for corrupt.pdf', async () => {
+    const { ctx } = recorder();
+    await expectOpError(metadata([await input('corrupt.pdf')], {}, ctx), 'CorruptFile', 'corrupt.pdf');
+  });
+
+  it('raises CorruptFile naming the file for encrypted.pdf', async () => {
+    const { ctx } = recorder();
+    await expectOpError(
+      metadata([await input('encrypted.pdf')], {}, ctx),
+      'CorruptFile',
+      'encrypted.pdf',
+    );
+  });
+
+  it.each([[{ keepTitle: 'yes' }], [{ removeXmp: 1 }]])(
+    'raises InvalidOptions for %j',
+    async (options) => {
+      const { ctx } = recorder();
+      await expectOpError(metadata([await input('small.pdf')], options, ctx), 'InvalidOptions');
+    },
+  );
+
+  it('raises InvalidOptions when given no files at all', async () => {
+    const { ctx } = recorder();
+    await expectOpError(metadata([], {}, ctx), 'InvalidOptions');
+  });
+
+  it('rejects with Cancelled when aborted mid-run', async () => {
+    const { ctx, fractions } = recorder((fraction, controller) => {
+      if (fraction > 0) controller.abort();
+    });
+    await expectOpError(
+      metadata([await pdfWithMetadata(), await pdfWithMetadata()], {}, ctx),
+      'Cancelled',
+    );
+    expect(fractions.length).toBe(1);
+    expect(fractions.at(-1)).not.toBe(1);
+  });
+
+  it('reports progress once per file, ending at exactly 1', async () => {
+    const { ctx, fractions } = recorder();
+    await metadata([await pdfWithMetadata(), await pdfWithMetadata()], {}, ctx);
+    expect(fractions).toEqual([0.5, 1]);
   });
 });

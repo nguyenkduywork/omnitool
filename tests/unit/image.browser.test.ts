@@ -22,6 +22,8 @@ import compress from '../../src/tools/image/compress.op';
 import crop from '../../src/tools/image/crop.op';
 import mergeSheet from '../../src/tools/image/merge-sheet.op';
 import rotate from '../../src/tools/image/rotate.op';
+import watermark from '../../src/tools/image/watermark.op';
+import { renameForMime } from '../../src/tools/image/mime';
 import editor from '../../src/tools/image/crop.editor';
 import rotateEditor from '../../src/tools/image/rotate.editor';
 
@@ -233,6 +235,7 @@ describe('image registry entries', () => {
     'image-merge-sheet',
     'image-rotate',
     'image-strip-metadata',
+    'image-watermark',
   ];
 
   it('registers every image tool with a matching loader entry', () => {
@@ -316,6 +319,38 @@ describe('image registry entries', () => {
       },
       quality: { kind: 'range', label: 'Re-encode quality', min: 10, max: 100, step: 5, default: 92 },
     });
+
+    expect(byId.get('image-watermark')?.options?.['text']).toEqual({
+      kind: 'text',
+      label: 'Text',
+      placeholder: 'CONFIDENTIAL',
+      default: 'CONFIDENTIAL',
+    });
+    expect(byId.get('image-watermark')?.options?.['position']).toMatchObject({
+      kind: 'select',
+      default: 'bottom-right',
+    });
+    expect(byId.get('image-watermark')?.options?.['size']).toEqual({
+      kind: 'range',
+      label: 'Text size (%)',
+      min: 1,
+      max: 25,
+      step: 1,
+      default: 6,
+    });
+    expect(byId.get('image-watermark')?.options?.['opacity']).toMatchObject({
+      kind: 'range',
+      default: 35,
+    });
+    expect(byId.get('image-watermark')?.options?.['colour']).toMatchObject({
+      kind: 'select',
+      default: 'white',
+    });
+    expect(byId.get('image-watermark')?.options?.['quality']).toMatchObject({
+      kind: 'range',
+      default: 92,
+    });
+    expect(byId.get('image-watermark')?.accepts).toEqual(['image/*']);
 
     expect(byId.get('image-merge-sheet')?.options).toEqual({
       layout: {
@@ -1028,5 +1063,239 @@ describe('rotate.editor', () => {
     for (const button of buttons) button.click(); // detached, but still live objects
     expect(events.length).toBe(countBefore);
     mount.remove();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// image-watermark
+//
+// Asserted on REAL PIXELS, never on "the op returned something": a watermark
+// that renders nothing at all would still produce a valid, correctly sized
+// image, so every test here decodes the output and looks at it.
+// ---------------------------------------------------------------------------
+
+/** The flat grey every watermark fixture starts as, so any mark stands out. */
+const BACKGROUND = 0x80;
+
+/** A solid grey image, big enough for text to actually land on. */
+async function plain(
+  name = 'plain.png',
+  type = 'image/png',
+  width = 240,
+  height = 160,
+): Promise<OpInput> {
+  const canvas = new OffscreenCanvas(width, height);
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('no 2d context');
+  context.fillStyle = '#808080';
+  context.fillRect(0, 0, width, height);
+  const blob = await canvas.convertToBlob({ type });
+  return { name, type, buffer: await blob.arrayBuffer() };
+}
+
+type Box = { x: number; y: number; width: number; height: number };
+
+/**
+ * How much of `box` is no longer the flat background: `count` is the number of
+ * pixels that moved, `peak` the largest single deviation. The tolerance keeps
+ * JPEG's ringing from counting as ink.
+ */
+async function inkIn(output: OpOutput, box: Box, tolerance = 12): Promise<{ count: number; peak: number }> {
+  const bitmap = await createImageBitmap(new Blob([output.buffer], { type: output.type }));
+  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('no 2d context');
+  context.drawImage(bitmap, 0, 0);
+  bitmap.close();
+
+  const { data } = context.getImageData(box.x, box.y, box.width, box.height);
+  let count = 0;
+  let peak = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    const deviation = Math.abs((data[i] ?? 0) - BACKGROUND);
+    if (deviation > tolerance) count += 1;
+    if (deviation > peak) peak = deviation;
+  }
+  return { count, peak };
+}
+
+const TOP_LEFT: Box = { x: 0, y: 0, width: 120, height: 80 };
+const BOTTOM_RIGHT: Box = { x: 120, y: 80, width: 120, height: 80 };
+const TOP_RIGHT: Box = { x: 120, y: 0, width: 120, height: 80 };
+const BOTTOM_LEFT: Box = { x: 0, y: 80, width: 120, height: 80 };
+
+describe('image-watermark', () => {
+  it('stamps the text into the pixels, in the corner asked for (happy path)', async () => {
+    const { ctx, fractions } = recorder();
+    const outputs = await watermark(
+      [await plain()],
+      { text: 'DRAFT', position: 'bottom-right', size: 12, opacity: 100 },
+      ctx,
+    );
+
+    expect(outputs).toHaveLength(1);
+    expect(outputs[0]?.name).toBe('plain.png');
+    expect(outputs[0]?.type).toBe('image/png');
+    // The picture keeps its size — a watermark is drawn on, not around.
+    expect(await decodeOutput(outputs[0] as OpOutput)).toEqual({ width: 240, height: 160 });
+
+    expect((await inkIn(outputs[0] as OpOutput, BOTTOM_RIGHT)).count).toBeGreaterThan(0);
+    expect((await inkIn(outputs[0] as OpOutput, TOP_LEFT)).count).toBe(0);
+
+    expectMonotonicEndingAtOne(fractions);
+  });
+
+  it('moves the stamp to the opposite corner on request', async () => {
+    const { ctx } = recorder();
+    const outputs = await watermark(
+      [await plain()],
+      { text: 'DRAFT', position: 'top-left', size: 12, opacity: 100 },
+      ctx,
+    );
+
+    expect((await inkIn(outputs[0] as OpOutput, TOP_LEFT)).count).toBeGreaterThan(0);
+    expect((await inkIn(outputs[0] as OpOutput, BOTTOM_RIGHT)).count).toBe(0);
+  });
+
+  it('covers every corner when tiled', async () => {
+    const { ctx } = recorder();
+    const outputs = await watermark(
+      [await plain()],
+      { text: 'DRAFT', position: 'tile', size: 8, opacity: 100 },
+      ctx,
+    );
+
+    for (const box of [TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT]) {
+      expect((await inkIn(outputs[0] as OpOutput, box)).count).toBeGreaterThan(0);
+    }
+  });
+
+  it('leaves a fainter mark at a lower opacity', async () => {
+    const { ctx } = recorder();
+    const faint = await watermark(
+      [await plain()],
+      { text: 'DRAFT', position: 'center', size: 14, opacity: 15 },
+      ctx,
+    );
+    const solid = await watermark(
+      [await plain()],
+      { text: 'DRAFT', position: 'center', size: 14, opacity: 100 },
+      ctx,
+    );
+
+    const faintPeak = (await inkIn(faint[0] as OpOutput, BOTTOM_RIGHT, 0)).peak;
+    const solidPeak = (await inkIn(solid[0] as OpOutput, BOTTOM_RIGHT, 0)).peak;
+    expect(faintPeak).toBeGreaterThan(0);
+    expect(solidPeak).toBeGreaterThan(faintPeak * 2);
+  });
+
+  it('marks more pixels at a bigger size', async () => {
+    const { ctx } = recorder();
+    const small = await watermark(
+      [await plain()],
+      { text: 'DRAFT', position: 'center', size: 3, opacity: 100 },
+      ctx,
+    );
+    const large = await watermark(
+      [await plain()],
+      { text: 'DRAFT', position: 'center', size: 20, opacity: 100 },
+      ctx,
+    );
+
+    const smallInk = (await inkIn(small[0] as OpOutput, BOTTOM_RIGHT)).count;
+    const largeInk = (await inkIn(large[0] as OpOutput, BOTTOM_RIGHT)).count;
+    expect(largeInk).toBeGreaterThan(smallInk);
+  });
+
+  it('keeps a JPEG a JPEG, name and all', async () => {
+    const { ctx } = recorder();
+    const outputs = await watermark(
+      [await plain('photo.jpg', 'image/jpeg')],
+      { text: 'DRAFT', position: 'center', size: 14, opacity: 100, quality: 90 },
+      ctx,
+    );
+
+    expect(outputs[0]?.type).toBe('image/jpeg');
+    expect(outputs[0]?.name).toBe('photo.jpg');
+    expect((await inkIn(outputs[0] as OpOutput, BOTTOM_RIGHT)).count).toBeGreaterThan(0);
+  });
+
+  it('renames the file when the output format has to change', async () => {
+    // A format canvas cannot encode comes back as PNG. The input here carries
+    // PNG bytes under a GIF label — createImageBitmap sniffs the real content,
+    // so this exercises exactly the naming path a real GIF would take.
+    const source = await plain('animation.gif');
+    const { ctx } = recorder();
+    const outputs = await watermark(
+      [{ ...source, type: 'image/gif' }],
+      { text: 'DRAFT', position: 'center', size: 14, opacity: 100 },
+      ctx,
+    );
+
+    expect(outputs[0]?.type).toBe('image/png');
+    expect(outputs[0]?.name).toBe('animation.png');
+  });
+
+  it.each([
+    [{ text: '' }],
+    [{ text: '   ' }],
+    [{ text: 42 }],
+    [{ text: 'DRAFT', position: 'middle' }],
+    [{ text: 'DRAFT', colour: 'red' }],
+    [{ text: 'DRAFT', size: 0 }],
+    [{ text: 'DRAFT', size: 30 }],
+    [{ text: 'DRAFT', opacity: 200 }],
+    [{ text: 'DRAFT', quality: 5 }],
+  ])('raises InvalidOptions for %j', async (options) => {
+    const { ctx } = recorder();
+    await expectOpError(watermark([await plain()], options, ctx), 'InvalidOptions');
+  });
+
+  it('raises UnsupportedFormat naming the file for a non-image input, never crashing', async () => {
+    const input = await opInput('corrupt.pdf', 'application/pdf');
+    const { ctx } = recorder();
+    await expectOpError(watermark([input], { text: 'DRAFT' }, ctx), 'UnsupportedFormat', 'corrupt.pdf');
+  });
+
+  it('raises CorruptFile naming the file for bytes that are not a decodable image', async () => {
+    const input: OpInput = {
+      name: 'broken.png',
+      type: 'image/png',
+      buffer: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02, 0x03]).buffer,
+    };
+    const { ctx } = recorder();
+    await expectOpError(watermark([input], { text: 'DRAFT' }, ctx), 'CorruptFile', 'broken.png');
+  });
+
+  it('cancels part-way through via AbortSignal', async () => {
+    const { ctx, controller } = recorder();
+    const promise = watermark([await plain()], { text: 'DRAFT' }, ctx);
+    controller.abort();
+    await expectOpError(promise, 'Cancelled');
+  });
+
+  it('reports monotonic progress ending at exactly 1', async () => {
+    const { ctx, fractions } = recorder();
+    await watermark([await plain('a.png'), await plain('b.png')], { text: 'DRAFT' }, ctx);
+    expect(fractions).toEqual([0.5, 1]);
+    expectMonotonicEndingAtOne(fractions);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renameForMime — the pure half of "never label bytes with the wrong extension"
+// ---------------------------------------------------------------------------
+
+describe('renameForMime', () => {
+  it('swaps the extension to match the mime', () => {
+    expect(renameForMime('holiday.gif', 'image/png')).toBe('holiday.png');
+    expect(renameForMime('scan.png', 'image/jpeg')).toBe('scan.jpg');
+    expect(renameForMime('no-extension', 'image/webp')).toBe('no-extension.webp');
+    expect(renameForMime('two.dots.here.bmp', 'image/png')).toBe('two.dots.here.png');
+  });
+
+  it('leaves the name alone for a mime it has no extension for', () => {
+    // A wrong extension is worse than an absent one.
+    expect(renameForMime('mystery.xyz', 'application/octet-stream')).toBe('mystery.xyz');
   });
 });

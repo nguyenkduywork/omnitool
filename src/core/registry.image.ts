@@ -165,4 +165,44 @@ export const IMAGE_TOOLS: ToolDef[] = [
     },
     load: () => import('../tools/image/merge-sheet.op'),
   },
+  {
+    id: 'image-watermark',
+    name: 'Watermark image',
+    blurb: 'Stamp a line of text over an image.',
+    group: 'image',
+    accepts: ['image/*'],
+    minInputs: 1,
+    maxInputs: null,
+    options: {
+      text: { kind: 'text', label: 'Text', placeholder: 'CONFIDENTIAL', default: 'CONFIDENTIAL' },
+      position: {
+        kind: 'select',
+        label: 'Position',
+        choices: [
+          { value: 'bottom-right', label: 'Bottom right' },
+          { value: 'bottom-left', label: 'Bottom left' },
+          { value: 'top-right', label: 'Top right' },
+          { value: 'top-left', label: 'Top left' },
+          { value: 'center', label: 'Centre' },
+          { value: 'tile', label: 'Tiled diagonally' },
+        ],
+        default: 'bottom-right',
+      },
+      // A percentage of the image's shorter side, not pixels — see the note at
+      // the top of watermark.op.ts.
+      size: { kind: 'range', label: 'Text size (%)', min: 1, max: 25, step: 1, default: 6 },
+      opacity: { kind: 'range', label: 'Opacity (%)', min: 5, max: 100, step: 5, default: 35 },
+      colour: {
+        kind: 'select',
+        label: 'Colour',
+        choices: [
+          { value: 'white', label: 'White' },
+          { value: 'black', label: 'Black' },
+        ],
+        default: 'white',
+      },
+      quality: { kind: 'range', label: 'Re-encode quality', min: 10, max: 100, step: 5, default: 92 },
+    },
+    load: () => import('../tools/image/watermark.op'),
+  },
 ];

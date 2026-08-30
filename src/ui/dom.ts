@@ -74,6 +74,7 @@ const ICONS = {
   code: `<path d="M7 6.2L3.4 10 7 13.8M13 6.2L16.6 10 13 13.8M11.4 3.8l-2.8 12.4" ${STROKE}/>`,
   table: `<rect x="2.8" y="3.8" width="14.4" height="12.4" rx="1.8" ${STROKE}/><path d="M2.8 8h14.4M8 8v8.2" ${STROKE}/>`,
   qr: `<rect x="3" y="3" width="5.4" height="5.4" rx="1.2" ${STROKE}/><rect x="11.6" y="3" width="5.4" height="5.4" rx="1.2" ${STROKE}/><rect x="3" y="11.6" width="5.4" height="5.4" rx="1.2" ${STROKE}/><path d="M11.6 11.6h2.2M17 11.6v2.4M11.6 15.2v1.8M15.4 17H17" ${STROKE}/>`,
+  stamp: `<rect x="5.6" y="2.8" width="8.8" height="5.4" rx="1.8" ${STROKE}/><path d="M8.4 8.2v2.2M11.6 8.2v2.2" ${STROKE}/><rect x="3.4" y="10.4" width="13.2" height="3.4" rx="1.2" ${STROKE}/><path d="M4.6 16.6h10.8" ${STROKE}/>`,
 
   // -- the promise, drawn -------------------------------------------------
   shield: `<path d="M10 2.8l5.6 2.2v4.6c0 3.5-2.3 6.5-5.6 7.6-3.3-1.1-5.6-4.1-5.6-7.6V5z" ${STROKE}/><path d="M7.6 10.1l1.8 1.8 3.2-3.6" ${STROKE}/>`,

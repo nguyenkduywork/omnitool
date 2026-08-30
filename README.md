@@ -82,6 +82,7 @@ from your browser's address bar if you want it out of a tab.
 | Shrink PDF | Re-encodes images inside the PDF; reports real before/after bytes |
 | PDF to images | Rasterise every page to PNG or JPEG at a chosen DPI |
 | Images to PDF | One image per page, in file-tray order |
+| Clean PDF metadata | Strip the author, dates, and XMP a PDF carries — without touching a page |
 
 **Images**
 | Tool | What it does |
@@ -93,6 +94,7 @@ from your browser's address bar if you want it out of a tab.
 | Rotate image | Turn in 90° steps, mirror left-to-right or top-to-bottom, with a live preview |
 | Strip metadata | Remove EXIF, GPS, XMP and comments — without re-encoding |
 | Merge into a sheet | Arrange several images into one contact sheet |
+| Watermark image | Stamp a line of text over an image, in a corner or tiled diagonally |
 
 **Data & text**
 | Tool | What it does |
@@ -109,6 +111,7 @@ from your browser's address bar if you want it out of a tab.
 | CSV ⇄ JSON | Convert between CSV and JSON, with quoted-field and CRLF handling |
 | Format JSON | Pretty-print or minify |
 | Generate QR code | Turn text or a URL into a QR code, PNG or SVG |
+| Clean up text | Sort, deduplicate, trim, and normalise the lines of a text file |
 
 ## Requirements
 
@@ -250,6 +253,32 @@ Pages.
   unless you ask for it too, because dropping it can change how the image
   looks. Every run writes a `metadata-report.txt` saying what came out of
   which file.
+- **"Clean PDF metadata" is not redaction.** It empties the document's Info
+  dictionary — every key, not just the ones we thought to name — and purges the
+  XMP metadata streams from the catalog and from each page, deleting the stream
+  objects themselves rather than merely unlinking them (an unlinked stream is
+  still sitting there in the bytes, which is a trap this tool has a test
+  against). What it does *not* touch is content: text on the page, images
+  embedded in it and any EXIF inside them, annotations, form-field values,
+  attachments and bookmarks all survive. A PDF whose first page has your name
+  on it still has your name on it. Every run writes a
+  `pdf-metadata-report.txt`, and a PDF that carried no metadata comes back as
+  its original bytes rather than re-saved.
+- **A watermark is a label, not a lock.** "Watermark image" paints text into
+  the pixels, which means it can be cropped off, painted over, or removed by
+  anyone who cares to — it marks provenance or state ("DRAFT"), it does not
+  protect anything. It also re-encodes, with the same cost as rotating: a JPEG
+  goes through the encoder a second time, and the quality slider is what that
+  costs you. Text size is a percentage of the image's shorter side rather than
+  a pixel size, so one setting reads the same on a screenshot and on a 6000px
+  photograph.
+- **"Clean up text" sorts in code-unit order, not your locale's.**
+  `localeCompare` answers differently in different runtimes and under different
+  locales, and a tool whose output depends on where it ran is not one you can
+  check into a repository — so uppercase sorts before lowercase and digits
+  before letters, exactly like `sort` under `LC_ALL=C`. It also reads UTF-8
+  only: anything else is refused by name rather than mangled into replacement
+  characters.
 - **A batch with a bad file costs a re-run.** The op contract has no channel
   for an op to report "this one input failed, keep going" — its only way to
   signal a failure is to throw, naming the file. So when one input in a

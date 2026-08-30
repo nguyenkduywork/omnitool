@@ -11,4 +11,5 @@ export const PDF_LOADERS: Record<string, () => Promise<{ default: Op }>> = {
   'pdf-shrink': () => import('../../tools/pdf/shrink.op'),
   'pdf-to-images': () => import('../../tools/pdf/to-images.op'),
   'pdf-from-images': () => import('../../tools/pdf/from-images.op'),
+  'pdf-metadata': () => import('../../tools/pdf/metadata.op'),
 };

@@ -230,4 +230,39 @@ export const DATA_TOOLS: ToolDef[] = [
     },
     load: () => import('../tools/data/qr.op.js'),
   },
+  {
+    id: 'text-clean',
+    name: 'Clean up text',
+    blurb: 'Sort, deduplicate and tidy the lines of a text file',
+    group: 'data',
+    accepts: ['text/plain', 'text/markdown', 'text/csv', 'text/tab-separated-values'],
+    minInputs: 1,
+    maxInputs: null,
+    options: {
+      sort: {
+        kind: 'select',
+        label: 'Sort lines',
+        choices: [
+          { value: 'none', label: 'Keep the original order' },
+          { value: 'asc', label: 'A to Z' },
+          { value: 'desc', label: 'Z to A' },
+        ],
+        default: 'none',
+      },
+      dedupe: { kind: 'toggle', label: 'Remove duplicate lines', default: false },
+      trim: { kind: 'toggle', label: 'Trim trailing whitespace', default: true },
+      dropBlank: { kind: 'toggle', label: 'Drop blank lines', default: false },
+      endings: {
+        kind: 'select',
+        label: 'Line endings',
+        choices: [
+          { value: 'keep', label: "Keep the file's own" },
+          { value: 'lf', label: 'LF (Unix)' },
+          { value: 'crlf', label: 'CRLF (Windows)' },
+        ],
+        default: 'keep',
+      },
+    },
+    load: () => import('../tools/data/text-clean.op.js'),
+  },
   ];
