@@ -1,8 +1,9 @@
 import type { ToolDef } from '../types.js';
 
 /**
- * Tool manifest for the 'pdf' group. METADATA ONLY - no logic.
- * Owned by the pdf tools task; appended to by that task alone.
+ * Tool manifest for the 'pdf' group. Metadata, plus pure predicates over file METADATA (name, size, sniffed
+ * type) — never over file contents. That rule is what keeps this module
+ * synchronous, allocation-free, and testable under plain Node.
  */
 export const PDF_TOOLS: ToolDef[] = [
   {
@@ -10,6 +11,7 @@ export const PDF_TOOLS: ToolDef[] = [
     name: 'Merge PDFs',
     blurb: 'Combine several PDFs into one, in tray order.',
     group: 'pdf',
+    kind: 'transform',
     accepts: ['application/pdf'],
     minInputs: 2,
     maxInputs: null,
@@ -20,6 +22,7 @@ export const PDF_TOOLS: ToolDef[] = [
     name: 'Split PDF',
     blurb: 'One file per page, or one file per page range.',
     group: 'pdf',
+    kind: 'transform',
     accepts: ['application/pdf'],
     minInputs: 1,
     maxInputs: null,
@@ -42,6 +45,7 @@ export const PDF_TOOLS: ToolDef[] = [
     name: 'Organize pages',
     blurb: 'Reorder, rotate and delete pages on a visual page board.',
     group: 'pdf',
+    kind: 'transform',
     accepts: ['application/pdf'],
     minInputs: 1,
     maxInputs: 1,
@@ -53,6 +57,7 @@ export const PDF_TOOLS: ToolDef[] = [
     name: 'Shrink PDF',
     blurb: 'Re-encodes images inside the PDF. Reports real before/after bytes.',
     group: 'pdf',
+    kind: 'transform',
     accepts: ['application/pdf'],
     minInputs: 1,
     maxInputs: null,
@@ -66,6 +71,7 @@ export const PDF_TOOLS: ToolDef[] = [
     name: 'PDF to images',
     blurb: 'Turn pages into PNG or JPEG images.',
     group: 'pdf',
+    kind: 'transform',
     accepts: ['application/pdf'],
     minInputs: 1,
     maxInputs: null,
@@ -97,6 +103,7 @@ export const PDF_TOOLS: ToolDef[] = [
     name: 'Images to PDF',
     blurb: 'One image per page, in tray order. PNG and JPEG.',
     group: 'pdf',
+    kind: 'transform',
     accepts: ['image/png', 'image/jpeg'],
     minInputs: 1,
     maxInputs: null,
@@ -120,6 +127,7 @@ export const PDF_TOOLS: ToolDef[] = [
     name: 'Clean PDF metadata',
     blurb: 'Remove the author, dates and XMP data a PDF carries.',
     group: 'pdf',
+    kind: 'transform',
     accepts: ['application/pdf'],
     minInputs: 1,
     maxInputs: null,
@@ -134,6 +142,7 @@ export const PDF_TOOLS: ToolDef[] = [
     name: 'Extract images',
     blurb: 'Pull the pictures embedded in a PDF back out as image files.',
     group: 'pdf',
+    kind: 'transform',
     accepts: ['application/pdf'],
     minInputs: 1,
     maxInputs: null,

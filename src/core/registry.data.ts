@@ -1,8 +1,9 @@
 import type { ToolDef } from '../types.js';
 
 /**
- * Tool manifest for the 'data' group. METADATA ONLY - no logic.
- * Owned by the data tools task; appended to by that task alone.
+ * Tool manifest for the 'data' group. Metadata, plus pure predicates over file METADATA (name, size, sniffed
+ * type) — never over file contents. That rule is what keeps this module
+ * synchronous, allocation-free, and testable under plain Node.
  */
 export const DATA_TOOLS: ToolDef[] = [
   {
@@ -10,6 +11,7 @@ export const DATA_TOOLS: ToolDef[] = [
     name: 'Create ZIP',
     blurb: 'Bundle the dropped files into one ZIP archive',
     group: 'data',
+    kind: 'utility',
     accepts: ['*'],
     minInputs: 1,
     maxInputs: null,
@@ -24,6 +26,7 @@ export const DATA_TOOLS: ToolDef[] = [
     name: 'Extract ZIP',
     blurb: 'Unpack every file from a ZIP archive',
     group: 'data',
+    kind: 'transform',
     accepts: ['application/zip'],
     minInputs: 1,
     maxInputs: null,
@@ -34,6 +37,7 @@ export const DATA_TOOLS: ToolDef[] = [
     name: 'Gzip',
     blurb: 'Compress files to .gz, or decompress a .gz back to its bytes',
     group: 'data',
+    kind: 'utility',
     accepts: ['*'],
     minInputs: 1,
     maxInputs: null,
@@ -56,6 +60,7 @@ export const DATA_TOOLS: ToolDef[] = [
     name: 'Create TAR',
     blurb: 'Bundle the dropped files into one .tar, or a gzipped .tar.gz',
     group: 'data',
+    kind: 'utility',
     accepts: ['*'],
     minInputs: 1,
     maxInputs: null,
@@ -71,6 +76,7 @@ export const DATA_TOOLS: ToolDef[] = [
     name: 'Extract TAR',
     blurb: 'Unpack every file from a .tar or .tar.gz archive',
     group: 'data',
+    kind: 'transform',
     accepts: ['application/x-tar', 'application/gzip'],
     minInputs: 1,
     maxInputs: null,
@@ -81,6 +87,7 @@ export const DATA_TOOLS: ToolDef[] = [
     name: 'Split file',
     blurb: 'Cut a file into fixed-size parts that Join file parts puts back together',
     group: 'data',
+    kind: 'utility',
     accepts: ['*'],
     minInputs: 1,
     maxInputs: null,
@@ -103,6 +110,7 @@ export const DATA_TOOLS: ToolDef[] = [
     name: 'Join file parts',
     blurb: 'Concatenate split parts back into one file, in file-tray order',
     group: 'data',
+    kind: 'utility',
     accepts: ['*'],
     minInputs: 2,
     maxInputs: null,
@@ -113,6 +121,7 @@ export const DATA_TOOLS: ToolDef[] = [
     name: 'Hash files',
     blurb: 'Compute a SHA-1, SHA-256, SHA-512, or MD5 checksum',
     group: 'data',
+    kind: 'utility',
     accepts: ['*'],
     minInputs: 1,
     maxInputs: null,
@@ -136,6 +145,7 @@ export const DATA_TOOLS: ToolDef[] = [
     name: 'Base64',
     blurb: 'Encode files to Base64 text, or decode Base64 text back to bytes',
     group: 'data',
+    kind: 'utility',
     accepts: ['*'],
     minInputs: 1,
     maxInputs: null,
@@ -157,6 +167,7 @@ export const DATA_TOOLS: ToolDef[] = [
     name: 'CSV ⇄ JSON',
     blurb: 'Convert between CSV and JSON',
     group: 'data',
+    kind: 'transform',
     accepts: ['text/csv', 'application/json', 'text/plain'],
     minInputs: 1,
     maxInputs: null,
@@ -190,6 +201,7 @@ export const DATA_TOOLS: ToolDef[] = [
     name: 'Format JSON',
     blurb: 'Pretty-print or minify JSON',
     group: 'data',
+    kind: 'transform',
     accepts: ['application/json', 'text/plain'],
     minInputs: 1,
     maxInputs: null,
@@ -212,9 +224,10 @@ export const DATA_TOOLS: ToolDef[] = [
     name: 'Generate QR code',
     blurb: 'Turn text or a URL into a QR code',
     group: 'data',
-    accepts: ['*'],
+    kind: 'generate',
+    accepts: [],
     minInputs: 0,
-    maxInputs: null,
+    maxInputs: 0,
     options: {
       text: { kind: 'text', label: 'Text or URL', placeholder: 'https://example.com', default: '' },
       format: {
@@ -235,6 +248,7 @@ export const DATA_TOOLS: ToolDef[] = [
     name: 'Clean up text',
     blurb: 'Sort, deduplicate and tidy the lines of a text file',
     group: 'data',
+    kind: 'transform',
     accepts: ['text/plain', 'text/markdown', 'text/csv', 'text/tab-separated-values'],
     minInputs: 1,
     maxInputs: null,

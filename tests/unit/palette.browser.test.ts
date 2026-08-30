@@ -15,6 +15,7 @@ function tool(over: Partial<ToolDef> = {}): ToolDef {
     name: 'Merge PDFs',
     blurb: 'Combine several PDFs into one, in tray order.',
     group: 'pdf',
+    kind: 'transform',
     accepts: ['application/pdf'],
     minInputs: 2,
     maxInputs: null,

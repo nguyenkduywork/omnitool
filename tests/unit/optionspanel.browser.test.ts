@@ -32,6 +32,7 @@ function tool(over: Partial<ToolDef> = {}): ToolDef {
     name: 'Test tool',
     blurb: 'A tool used by the panel test.',
     group: 'data',
+    kind: 'utility',
     accepts: ['*'],
     minInputs: 1,
     maxInputs: null,

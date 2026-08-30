@@ -53,11 +53,32 @@ export type ToolEditor = (
   onChange: (options: Record<string, unknown>) => void,
 ) => () => void;
 
+/**
+ * What KIND of thing a tool is. `accepts` describes a transform completely and
+ * a generator not at all, which is why one axis was never enough.
+ *
+ *   transform — files in, files out; `accepts` is the whole story
+ *   generate  — no files at all: options in, files out
+ *   utility   — runs on any bytes; never the reason you opened the app
+ */
+export type ToolKind = 'transform' | 'generate' | 'utility';
+
+/** All a registry predicate may see: metadata, never contents. */
+export type SniffedFile = { name: string; size: number; type: string };
+
+/** Option defaults derived from the inputs, each with a reason to show. */
+export type Preset = {
+  values: Record<string, unknown>;
+  /** option key -> why it was preset, e.g. "from the file's gzip signature". */
+  because: Record<string, string>;
+};
+
 export type ToolDef = {
   id: string;
   name: string;
   blurb: string;
   group: ToolGroup;
+  kind: ToolKind;
   /** Mime types, or the wildcards 'image/*' / '*'. */
   accepts: string[];
   minInputs: number;
@@ -65,6 +86,9 @@ export type ToolDef = {
   maxInputs: number | null;
   options?: OptionSchema;
   editor?: () => Promise<{ default: ToolEditor }>;
+  /** Defaults read off the inputs' metadata. Pure and synchronous — never
+   *  reads file contents (see the design spec, §3.2). */
+  preset?: (files: readonly SniffedFile[]) => Preset;
   load: () => Promise<{ default: Op }>;
 };
 

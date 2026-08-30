@@ -1,8 +1,9 @@
 import type { ToolDef } from '../types.js';
 
 /**
- * Tool manifest for the 'image' group. METADATA ONLY - no logic.
- * Owned by the image tools task; appended to by that task alone.
+ * Tool manifest for the 'image' group. Metadata, plus pure predicates over file METADATA (name, size, sniffed
+ * type) — never over file contents. That rule is what keeps this module
+ * synchronous, allocation-free, and testable under plain Node.
  */
 export const IMAGE_TOOLS: ToolDef[] = [
   {
@@ -10,6 +11,7 @@ export const IMAGE_TOOLS: ToolDef[] = [
     name: 'Convert image',
     blurb: 'Convert images to PNG, JPEG, WebP or AVIF.',
     group: 'image',
+    kind: 'transform',
     accepts: ['image/*'],
     minInputs: 1,
     maxInputs: null,
@@ -34,6 +36,7 @@ export const IMAGE_TOOLS: ToolDef[] = [
     name: 'Resize image',
     blurb: 'Resize by exact dimensions or by percentage, with an optional aspect-ratio lock.',
     group: 'image',
+    kind: 'transform',
     accepts: ['image/*'],
     minInputs: 1,
     maxInputs: null,
@@ -59,6 +62,7 @@ export const IMAGE_TOOLS: ToolDef[] = [
     name: 'Compress image',
     blurb: 'Re-encode at a lower quality to shrink file size, keeping the same format.',
     group: 'image',
+    kind: 'transform',
     accepts: ['image/*'],
     minInputs: 1,
     maxInputs: null,
@@ -72,6 +76,7 @@ export const IMAGE_TOOLS: ToolDef[] = [
     name: 'Crop image',
     blurb: 'Draw a crop box on a visual editor, in the image’s own pixels.',
     group: 'image',
+    kind: 'transform',
     accepts: ['image/*'],
     minInputs: 1,
     maxInputs: 1,
@@ -83,6 +88,7 @@ export const IMAGE_TOOLS: ToolDef[] = [
     name: 'Rotate image',
     blurb: 'Turn images in 90° steps, or mirror them left-to-right or top-to-bottom.',
     group: 'image',
+    kind: 'transform',
     accepts: ['image/*'],
     minInputs: 1,
     maxInputs: null,
@@ -123,6 +129,7 @@ export const IMAGE_TOOLS: ToolDef[] = [
     name: 'Strip metadata',
     blurb: 'Remove EXIF, GPS, XMP and comments without re-encoding the picture.',
     group: 'image',
+    kind: 'transform',
     accepts: ['image/jpeg', 'image/png', 'image/webp'],
     minInputs: 1,
     maxInputs: null,
@@ -136,6 +143,7 @@ export const IMAGE_TOOLS: ToolDef[] = [
     name: 'Merge into a sheet',
     blurb: 'Arrange several images into one contact sheet, in tray order.',
     group: 'image',
+    kind: 'transform',
     accepts: ['image/*'],
     minInputs: 2,
     maxInputs: null,
@@ -170,6 +178,7 @@ export const IMAGE_TOOLS: ToolDef[] = [
     name: 'Watermark image',
     blurb: 'Stamp a line of text over an image.',
     group: 'image',
+    kind: 'transform',
     accepts: ['image/*'],
     minInputs: 1,
     maxInputs: null,

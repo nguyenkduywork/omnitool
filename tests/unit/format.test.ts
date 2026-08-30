@@ -22,6 +22,7 @@ function tool(over: Partial<ToolDef> = {}): ToolDef {
     name: 'T',
     blurb: '',
     group: 'pdf',
+    kind: 'transform',
     accepts: ['application/pdf'],
     minInputs: 1,
     maxInputs: null,
