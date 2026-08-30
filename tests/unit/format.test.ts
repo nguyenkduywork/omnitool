@@ -40,6 +40,21 @@ describe('sniffType — magic bytes, never the extension', () => {
     expect(sniffType(await fixture('a.webp'), 'a.webp')).toBe('image/webp');
     expect(sniffType(await fixture('sample.zip'), 'sample.zip')).toBe('application/zip');
     expect(sniffType(await fixture('traversal.zip'), 'traversal.zip')).toBe('application/zip');
+    expect(sniffType(await fixture('sample.tar'), 'sample.tar')).toBe('application/x-tar');
+    expect(sniffType(await fixture('pax.tar'), 'pax.tar')).toBe('application/x-tar');
+    expect(sniffType(await fixture('sample.tar.gz'), 'sample.tar.gz')).toBe('application/gzip');
+  });
+
+  // TAR's magic is 257 bytes in, further than any other signature here, so
+  // this is also a test that sniffing reads a wide enough window.
+  it('finds the ustar magic at offset 257, whatever the file is called', async () => {
+    expect(sniffType(await fixture('sample.tar'), 'holiday.png')).toBe('application/x-tar');
+  });
+
+  it('falls back to the extension for a tar with no ustar magic (old v7 archives)', () => {
+    const notTarBytes = new TextEncoder().encode('this has no ustar magic').buffer;
+    expect(sniffType(notTarBytes, 'old.tar')).toBe('application/x-tar');
+    expect(sniffType(notTarBytes, 'bundle.tgz')).toBe('application/gzip');
   });
 
   // REQUIREMENT 5: magic-byte sniffing, never extension-first.
@@ -81,6 +96,8 @@ describe('label', () => {
     expect(label('image/png')).toBe('PNG image');
     expect(label('image/jpeg')).toBe('JPEG image');
     expect(label('application/zip')).toBe('ZIP archive');
+    expect(label('application/x-tar')).toBe('TAR archive');
+    expect(label('application/gzip')).toBe('Gzip file');
     expect(label('text/csv')).toBe('CSV data');
   });
 

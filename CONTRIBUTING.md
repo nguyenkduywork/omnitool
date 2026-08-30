@@ -21,7 +21,10 @@ never about the DOM, the registry, or the UI. This is enforced by
   `src/ui/**`.** An op receives everything else it needs as function
   arguments (`inputs`, `options`, `ctx`). This is what keeps every op
   testable in plain Node/vitest with no browser and no mocking, and what
-  makes "copy one file, add one registry line" actually true.
+  makes "copy one file, add one registry line" actually true. A *sibling*
+  module under `src/tools/**` is fine, and is how two ops share the format
+  knowledge they both need — `pdf/page-range.ts`, `data/tar.ts`,
+  `data/entry-name.ts` — as long as it obeys the same rules the ops do.
 - **`src/core/**` must never import from `src/ui/**`.** The kernel (registry,
   pipeline, worker pool) has no idea the UI exists. The dependency only ever
   points one way: `ui/` → `core/` → `types.ts`.

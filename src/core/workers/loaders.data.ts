@@ -12,4 +12,9 @@ export const DATA_LOADERS: Record<string, () => Promise<{ default: Op }>> = {
   'csv-json': () => import('../../tools/data/csv-json.op.js'),
   'json-format': () => import('../../tools/data/json-format.op.js'),
   'qr-generate': () => import('../../tools/data/qr.op.js'),
+  gzip: () => import('../../tools/data/gzip.op.js'),
+  'tar-create': () => import('../../tools/data/tar-create.op.js'),
+  'tar-extract': () => import('../../tools/data/tar-extract.op.js'),
+  'file-split': () => import('../../tools/data/file-split.op.js'),
+  'file-join': () => import('../../tools/data/file-join.op.js'),
 };

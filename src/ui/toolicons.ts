@@ -34,6 +34,8 @@ const TOOL_ICON: Record<string, IconName> = {
   'image-compress': 'shrink',
   'image-crop': 'crop',
   'image-merge-sheet': 'layers',
+  'image-rotate': 'rotate',
+  'image-strip-metadata': 'shield',
   'zip-create': 'archive',
   'zip-extract': 'unarchive',
   hash: 'hash',
@@ -41,6 +43,11 @@ const TOOL_ICON: Record<string, IconName> = {
   'csv-json': 'table',
   'json-format': 'braces',
   'qr-generate': 'qr',
+  gzip: 'shrink',
+  'tar-create': 'archive',
+  'tar-extract': 'unarchive',
+  'file-split': 'split',
+  'file-join': 'merge',
 };
 
 /** A tool with no entry of its own falls back to its family's glyph, so adding
