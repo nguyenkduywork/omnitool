@@ -45,13 +45,25 @@ network round trip, which is exactly the point.
 
 ## Getting around
 
-**Drop first, choose second.** Most tools of this kind make you pick an
-operation and *then* hand over a file. omnitool inverts that: drop your files
-and the tool grid narrows to what can actually run on them. Drop two PDFs and
-you get PDF tools; drop PNGs and you get image tools.
+**Two doors, both first-class.** Drop your files and the tool list narrows to
+what can actually run on them — drop two PDFs and you get PDF tools. Or pick a
+tool first and bring the files after; the tool tells you what it needs instead
+of refusing. Tools that need no files at all, like the QR code generator, just
+open and run.
 
 - **Drag, paste, or pick.** Drop files anywhere in the window, paste with
   `Ctrl/Cmd+V`, or use the Choose files button.
+- **Every tool has its own address.** `#/pdf-merge` is bookmarkable and
+  shareable, and the back button moves between a tool and the catalogue rather
+  than leaving the app. Files are never in the URL — a link you share opens the
+  tool empty.
+- **Tools that don't fit are explained, not hidden.** A tool that works on your
+  file type but wants a different number of them stays visible and says so
+  ("Needs exactly 1 file — you have 2"). A tool for a different format entirely
+  is simply absent, so the list stays scannable.
+- **Tools that work on any bytes** — zip, hash, Base64, gzip — sit in a quiet
+  row of their own rather than competing with the tools that understand your
+  format.
 - **Order matters for merging**, so the file tray is reorderable — drag a row,
   use its arrow buttons, or focus a row and press the arrow keys (`Home`/`End`
   jump to the ends, `Delete` removes). The buttons exist because drag needs a
@@ -171,7 +183,10 @@ src/
     pdf/             # one *.op.ts (+ optional *.editor.ts) per tool, DOM-free, pure functions
     image/
     data/
-  ui/                # DOM, dropzone, results tray, command palette, animation — never runs in a worker
+  ui/                # DOM, dropzone, results tray, command palette, animation
+    state.ts         #   the state machine — DOM-free, unit-tested under Node
+    router.ts        #   hash <-> tool id
+    zones/           #   files · catalogue · work
   styles/            # design tokens (tokens.css) + component styles (app.css)
 tests/
   unit/              # vitest — plain Node for pure ops, headless Chromium for canvas/OffscreenCanvas ops

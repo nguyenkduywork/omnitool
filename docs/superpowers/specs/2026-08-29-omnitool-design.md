@@ -273,6 +273,13 @@ These are **CI-enforced budgets**, not aspirations. A build that exceeds them fa
 
 ## 7. UX specification
 
+> **Superseded (2026-08-30).** §7.1 ("drop first, choose second") and §7.2
+> ("one screen, no navigation") describe the v1 model. They were replaced by
+> [2026-08-30-ui-overhaul-design.md](./2026-08-30-ui-overhaul-design.md): two
+> equal entry doors, a three-zone workbench, and the hash routing §1 of this
+> document already called for. §7.3–§7.5 (components, option schema, theme and
+> accessibility) still hold.
+
 ### 7.1 Drop first, choose second
 
 The differentiating decision. Comparable tools require choosing an operation
