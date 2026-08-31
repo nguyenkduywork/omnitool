@@ -1,9 +1,11 @@
 /* src/styles/app.css — the one screen.
  *
- * Structure: a topbar, a stage that holds the hero/workbench switcher and the
- * results tray, and a footer. The switcher stacks the hero and the workbench in
- * a single grid cell so the dropzone can dissolve into the workbench in place,
- * with no reflow mid-transition (motion.ts drives the transform/opacity side).
+ * Structure: a topbar, a stage that holds the hero and the always-mounted
+ * three-zone workbench (files, catalogue, work) stacked in normal flow, plus
+ * the results tray, and a footer. The hero is the `browsing` phase's own
+ * presentation of that same workbench — see `.workbench` below — and hides
+ * itself once the phase moves on; motion.ts's `morphToTray` drives the
+ * transform/opacity side of that handoff, never a layout property.
  *
  * Three rules this file keeps to:
  *
@@ -204,16 +206,6 @@ button {
   align-content: start;
 }
 
-/* The hero and the workbench share one grid cell, so the dropzone can dissolve
- * into the workbench in place with no reflow while the morph is running. */
-.stageswitch {
-  display: grid;
-}
-
-.stageswitch > * {
-  grid-area: 1 / 1;
-}
-
 /* ------------------------------------------------------------------ hero */
 
 .hero {
@@ -404,105 +396,89 @@ html.is-dragging .hero__drop {
   margin-top: 0.15rem;
 }
 
-/* ----------------------------------------------- hero: the tool families */
-
-.families {
-  display: grid;
-  gap: var(--s-4);
-  padding: var(--s-5);
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  background: var(--bg-1);
-  box-shadow: var(--edge);
-}
-
-.families__title {
-  font-size: var(--fs-md);
-  font-weight: 620;
-  letter-spacing: var(--tracking-tight);
-}
-
-.families__list {
-  display: grid;
-  gap: var(--s-4);
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
-}
-
-.family {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--s-3);
-  padding-inline-start: var(--s-3);
-  border-inline-start: 2px solid var(--fam);
-}
-
-.family__icon {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 1.75rem;
-  height: 1.75rem;
-  border-radius: var(--r-sm);
-  background: var(--fam-quiet);
-  color: var(--fam);
-}
-
-.family__icon .icon {
-  width: 1rem;
-  height: 1rem;
-}
-
-.family__name {
-  font-size: var(--fs-sm);
-  font-weight: 620;
-  color: var(--fam);
-  letter-spacing: var(--tracking-wide);
-  text-transform: uppercase;
-}
-
-.family__text {
-  color: var(--ink-3);
-  font-size: var(--fs-xs);
-  line-height: var(--lh-snug);
-  margin-top: 0.2rem;
-}
-
-.families__note {
-  color: var(--ink-3);
-  font-size: var(--fs-xs);
-  padding-top: var(--s-3);
-  border-top: 1px solid var(--line);
-}
-
-/* ------------------------------------------------------------- workbench */
-
+/* ------------------------------------------------------------- workbench
+ * Files · tools · work, always mounted (§ shell.ts's `paint`) — the hero above
+ * is only the `browsing` phase's own presentation of this same grid, not a
+ * separate screen, so there is no `.workbench.hidden` state to speak of: an
+ * empty file rail and a hidden run panel already read as "nothing yet" on
+ * their own. Three responsive steps:
+ *
+ *   < 48rem   one column, one step open at a time — see the `[data-phase]`
+ *             rule on `.catalogue__body` below, which is what actually
+ *             performs the fold.
+ *   48–75rem  two columns: files + catalogue share the left, work is pinned
+ *             right, spanning both their rows.
+ *   >= 75rem  three columns, all in one row; the file rail itself also picks
+ *             up sticky positioning here (kept off narrower widths, where it
+ *             would otherwise pin a short rail above a catalogue several
+ *             screens tall).
+ *
+ * The work zone is sticky from 48rem up so that options, Run and results
+ * never scroll out from under the person using them — the single biggest
+ * complaint about the old one-column stack. */
 .workbench {
   display: grid;
-  gap: var(--s-5);
+  gap: var(--s-4);
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
 }
 
-@media (min-width: 64rem) {
+@media (min-width: 48rem) {
   .workbench {
-    grid-template-columns: minmax(0, 21.5rem) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 20rem);
   }
+  .zone--files {
+    grid-column: 1;
+  }
+  .catalogue {
+    grid-column: 1;
+  }
+  .zone--work {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    /* 3.375rem is the topbar's own height (see `--topbar-h`), which this and
+     * the file rail below both have to clear. */
+    position: sticky;
+    top: calc(3.375rem + var(--s-4));
+  }
+}
 
-  /* The file rail follows the tool column, because the tray IS the context for
-   * everything on the right — merge order especially. 3.375rem is the topbar's
-   * own height (see `--topbar-h`), which this must clear. */
-  .panel--files {
+@media (min-width: 75rem) {
+  .workbench {
+    grid-template-columns: minmax(0, 17rem) minmax(0, 1fr) minmax(0, 22rem);
+  }
+  .zone--files {
+    grid-column: 1;
+    grid-row: 1;
     position: sticky;
     top: calc(3.375rem + var(--s-4));
     max-height: calc(100dvh - 3.375rem - var(--s-6));
     overflow-y: auto;
     overscroll-behavior: contain;
   }
+  .catalogue {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .zone--work {
+    grid-column: 3;
+    grid-row: 1;
+  }
 }
 
-.panel {
+/* Zone chrome, written from scratch (Task 9 left `.zone`/`.zone--files`/
+ * `.zone--work` with no rules at all). The file rail gets the boxed-card
+ * treatment the old `.panel` gave it; the work zone stays a transparent
+ * wrapper, because `.run` below already carries its own border, background
+ * and shadow — boxing `.zone--work` too would nest one card inside another. */
+.zone {
   display: grid;
   gap: var(--s-4);
   align-content: start;
+  min-width: 0;
+}
+
+.zone--files {
   padding: var(--s-4);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
@@ -510,12 +486,8 @@ html.is-dragging .hero__drop {
   box-shadow: var(--edge);
 }
 
-.panel--work {
-  background: transparent;
-  border: 0;
-  padding: 0;
+.zone--work {
   gap: var(--s-6);
-  box-shadow: none;
 }
 
 .panel__title {
@@ -730,6 +702,30 @@ html.is-dragging .hero__drop {
   color: var(--ink-3);
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
+}
+
+/* The narrow layout's way back — see the note on `backBar` in catalogue.ts.
+ * Empty until a tool is selected, at every width, not only the narrow one. */
+.catalogue__back {
+  display: flex;
+}
+
+/* Wraps everything the narrow layout folds away. `display: contents` keeps it
+ * out of the box tree entirely — its children sit directly in `.catalogue`'s
+ * own grid, so wrapping them here costs nothing at 48rem and up — until the
+ * narrow rule below overrides it to `none` and takes the whole subtree with
+ * it in one declaration instead of four. */
+.catalogue__body {
+  display: contents;
+}
+
+@media (max-width: 47.99rem) {
+  [data-phase='tool-picked'] .catalogue__body,
+  [data-phase='ready'] .catalogue__body,
+  [data-phase='running'] .catalogue__body,
+  [data-phase='results'] .catalogue__body {
+    display: none;
+  }
 }
 
 .catalogue__groups {
@@ -1763,8 +1759,7 @@ html.is-dragging .hero__drop {
   }
 
   .run,
-  .results,
-  .families {
+  .results {
     padding: var(--s-4);
   }
 

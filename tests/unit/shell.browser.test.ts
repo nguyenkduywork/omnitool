@@ -152,7 +152,12 @@ function watchOptionMounts(): () => number {
 describe('the shell against the state machine', () => {
   it('tears down a selection the machine pruned, and announces it', async () => {
     deliver([await fixture('small.pdf')]);
-    await until('the tool grid', () => count('.toolcard[data-tool="pdf-split"]') === 1);
+    // Task 10: the cold catalogue already shows every tool, `pdf-split`
+    // included, before any file lands — so waiting on the CARD proves
+    // nothing about intake having finished. The tray is what `intake()`
+    // populates last, after `state.addFiles()` has already re-rendered the
+    // grid warm, so waiting on it is the one signal that cannot fire early.
+    await until('the file to land', () => count('.tray__item') === 1);
 
     // pdf-split takes any number of PDFs and has a plain schema panel, so the
     // only thing that can remove its options is the teardown under test.
@@ -187,7 +192,13 @@ describe('the shell against the state machine', () => {
 
   it('mounts an editor tool’s options exactly once when it is selected', async () => {
     deliver([await fixture('small.pdf')]);
-    await until('the tool grid', () => count('.toolcard[data-tool="pdf-to-images"]') === 1);
+    // Task 10: `pdf-to-images` is already on screen cold (every tool is), so
+    // waiting on the card would let the click race `intake()` — clicking
+    // before `state.addFiles()` lands would select the tool with zero files,
+    // and the file arriving a moment later would look exactly like an
+    // editor's file set changing under it, mounting its options a genuine
+    // SECOND time. Waiting on the tray closes that race.
+    await until('the file to land', () => count('.tray__item') === 1);
 
     const mounts = watchOptionMounts();
 
@@ -236,7 +247,13 @@ describe('the shell against the state machine', () => {
 describe('the catalogue does not rebuild under a real click', () => {
   it('updates the tick on the SAME card node instead of replacing it with a rebuilt look-alike', async () => {
     deliver([await fixture('small.pdf')]);
-    await until('the tool grid', () => count('.toolcard[data-tool="pdf-split"]') === 1);
+    // Task 10: the cold catalogue already carries a `pdf-split` card before
+    // any file lands, so waiting on the card would let the click race
+    // `intake()` — landing while still cold, with the warm rebuild (a real,
+    // deliberate content change, not the pure-selection case this test is
+    // about) arriving a moment later instead of before. Waiting on the tray
+    // guarantees the grid is already in its stable warm shape.
+    await until('the file to land', () => count('.tray__item') === 1);
 
     const card = one<HTMLButtonElement>('.toolcard[data-tool="pdf-split"]');
 

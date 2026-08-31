@@ -11,7 +11,7 @@
 import { el, icon, type IconName } from './dom';
 
 export type DropzoneHandle = {
-  /** The big first-run surface: drop panel, proof points and the tool preview. */
+  /** The big first-run surface: drop panel and the proof points beneath it. */
   readonly hero: HTMLElement;
   /** The slim "add more files" bar shown once the workbench is up. */
   readonly addbar: HTMLElement;
@@ -56,34 +56,20 @@ const FACTS: { icon: IconName; title: string; body: string }[] = [
   },
 ];
 
-/** What is waiting behind the drop, so the empty screen still says what this is. */
-const FAMILIES: { icon: IconName; kind: string; title: string; body: string }[] = [
-  {
-    icon: 'file',
-    kind: 'pdf',
-    title: 'PDF',
-    body: 'Merge, split, organise pages, shrink, and convert to or from images.',
-  },
-  {
-    icon: 'image',
-    kind: 'image',
-    title: 'Images',
-    body: 'Convert, resize, compress, crop, and arrange into one contact sheet.',
-  },
-  {
-    icon: 'braces',
-    kind: 'data',
-    title: 'Data & text',
-    body: 'Zip and unzip, hash, Base64, CSV ⇄ JSON, format JSON, make a QR code.',
-  },
-];
-
 export function createDropzone(init: {
   onFiles: (files: File[]) => void;
-  /** Opens the command palette, so the tools are browsable before any file is in. */
-  onBrowse: () => void;
-  /** How many tools exist, counted from the registry rather than written down. */
-  toolCount: number;
+  /**
+   * The real tool catalogue (Task 8/9), grouped and rendered elsewhere — this
+   * module only places it. Appending it here nests it under `hero` for the
+   * moment `hero` is built; `shell.ts`'s own three-zone wiring re-appends the
+   * SAME element into the always-on workbench right after, which — since
+   * `Node.append` MOVES an existing node rather than cloning it — is what
+   * actually ends up on screen. That second move is not optional: `hero` is
+   * hidden outright once the browsing phase ends (see the shell's
+   * `morphToTray` handling), and the catalogue has to survive that or picking
+   * a tool would take the whole grid down with it.
+   */
+  catalogue: HTMLElement;
 }): DropzoneHandle {
   const picker = el('input', 'sr-only');
   picker.type = 'file';
@@ -110,8 +96,8 @@ export function createDropzone(init: {
   // The landing screen has one job — get files in — but an empty screen that
   // only says "drop files" tells a first-time visitor nothing about what they
   // are dropping them into. So the drop panel is the loud part, and beneath it
-  // sit the claims and the tool families: readable in one scroll-free glance,
-  // gone the instant a file arrives.
+  // sit the claims and, moved in by shell.ts a moment later, the real tool
+  // catalogue: the second door, open from the very first paint.
   const hero = el('section', 'hero');
   hero.setAttribute('aria-labelledby', 'hero-title');
 
@@ -132,19 +118,14 @@ export function createDropzone(init: {
   const sub = el(
     'p',
     'hero__sub',
-    'Merge, convert, shrink, hash, zip. Everything happens inside this tab — the files never travel anywhere, because there is nowhere for them to go.',
+    'Drop files and the list below narrows to what can run on them — or pick a tool from it and bring the files after.',
   );
 
   const actions = el('div', 'hero__actions');
   const pickButton = el('button', 'btn btn--primary btn--lg', 'Choose files');
   pickButton.type = 'button';
   pickButton.addEventListener('click', pick);
-
-  const browseButton = el('button', 'btn btn--ghost btn--lg', 'Browse the tools');
-  browseButton.type = 'button';
-  browseButton.append(el('kbd', undefined, `${MOD} K`));
-  browseButton.addEventListener('click', () => init.onBrowse());
-  actions.append(pickButton, browseButton);
+  actions.append(pickButton);
 
   const hint = el('p', 'hero__hint');
   hint.append(
@@ -168,31 +149,7 @@ export function createDropzone(init: {
     facts.append(item);
   }
 
-  const families = el('div', 'families');
-  families.append(
-    el('h2', 'families__title', `${init.toolCount} tools, in three families`),
-  );
-  const familyList = el('ul', 'families__list');
-  for (const family of FAMILIES) {
-    const item = el('li', 'family');
-    item.dataset.kind = family.kind;
-    const glyph = el('span', 'family__icon');
-    glyph.append(icon(family.icon));
-    const body = el('div', 'family__body');
-    body.append(el('h3', 'family__name', family.title), el('p', 'family__text', family.body));
-    item.append(glyph, body);
-    familyList.append(item);
-  }
-  families.append(familyList);
-  families.append(
-    el(
-      'p',
-      'families__note',
-      'Drop a file and this list narrows to the tools that can actually run on it.',
-    ),
-  );
-
-  hero.append(drop, facts, families, picker);
+  hero.append(drop, facts, init.catalogue, picker);
 
   // ---- compact add-bar --------------------------------------------------
   const addbar = el('div', 'addbar');

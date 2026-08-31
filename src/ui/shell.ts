@@ -50,7 +50,7 @@ import { morphToTray } from './motion';
 import { defaultOptions, renderOptions, type OptionsHandle } from './optionspanel';
 import { createPalette } from './palette';
 import { prefetchModule, prefetchTool } from './prefetch';
-import { createState } from './state';
+import { createState, type Snapshot } from './state';
 import { createThemeControl } from './theme';
 import { createCatalogue } from './zones/catalogue';
 import { createFilesZone } from './zones/files';
@@ -159,11 +159,20 @@ export function mountShell(root: HTMLElement): ShellHandle {
     },
   });
 
+  // zone 2 — the tool grid, in both of its densities (cold: all tools; warm:
+  // the three applicability tiers). See ui/zones/catalogue.ts. Built BEFORE
+  // `dropzone` on purpose: `createDropzone` places this element inside the
+  // hero it builds (see the comment on its `catalogue` init field), so its
+  // own element has to exist first.
+  const catalogue = createCatalogue({
+    tools: TOOLS,
+    onPick: (id) => void select(id),
+    onWarm: prefetchTool,
+  });
+
   const dropzone = createDropzone({
     onFiles: (files) => void intake(files),
-    // `palette` is created further down; this only runs on a click, long after.
-    onBrowse: () => palette.open(),
-    toolCount: TOOLS.length,
+    catalogue: catalogue.el,
   });
 
   const tray: FileTrayHandle = createFileTray({
@@ -184,31 +193,25 @@ export function mountShell(root: HTMLElement): ShellHandle {
       tray.setEntries([]);
       workZone.results.clear();
       announce('All files removed.');
-      showHero();
-      // Never strand the keyboard on a button that just disappeared.
+      // The subscriber below un-hides the hero itself, synchronously, the
+      // instant `clearFiles()` emits a cold snapshot (see `wasCold` there) —
+      // this only has to move focus off a button that is about to vanish.
       dropzone.focus();
     },
   });
 
-  // zone 2 — the tool grid, in both of its densities (cold: all tools; warm:
-  // the three applicability tiers). See ui/zones/catalogue.ts.
-  const catalogue = createCatalogue({
-    tools: TOOLS,
-    onPick: (id) => void select(id),
-    onWarm: prefetchTool,
-  });
-
-  const workbench = el('div', 'workbench');
-  workbench.hidden = true;
-  workbench.append(filesZone.el, catalogue.el, workZone.el);
-
-  const switcher = el('div', 'stageswitch');
-  switcher.append(dropzone.hero, workbench);
+  // One stage, three zones — always mounted, never torn down. `dropzone.hero`
+  // is the `browsing` phase's presentation of the same workbench, not a
+  // separate screen: it sits ABOVE these zones and hides itself once the
+  // phase moves on (see the `paint` subscriber below), rather than the zones
+  // waiting to be built until the first file arrives.
+  const stageEl = el('div', 'workbench');
+  stageEl.append(filesZone.el, catalogue.el, workZone.el);
 
   // Results sit below the whole workbench, not confined to the work zone's
   // own column — the tray is created by `workZone` (zone 3 owns the tool's
   // whole lifecycle, results included), but its element is placed here.
-  stage.append(switcher, workZone.results.el);
+  stage.append(dropzone.hero, stageEl, workZone.results.el);
 
   const footer = el('footer', 'footer');
   const footerMark = el('span', 'footer__mark');
@@ -241,13 +244,50 @@ export function mountShell(root: HTMLElement): ShellHandle {
    * `shell.browser.test.ts` fails on both counts if `syncWork` moves ahead of
    * `refreshTools`. `filesZone.render` has no such dependency — it reads
    * nothing `shownTool`-shaped — so its position here is not load-bearing.
+   *
+   * `wasCold` is the one thing bolted on for Task 10: `browsing` (no files,
+   * no tool — see `derivePhase` in state.ts) is the ONLY phase the hero
+   * covers, so leaving it is the one transition worth animating, and
+   * returning to it (Remove-all with nothing selected) is the one worth
+   * reversing. `morphToTray` is fired and left to run — never awaited here —
+   * so a render is never blocked on it and nothing below depends on it
+   * finishing (§7.5's reduced-motion promise: under reduced motion it has
+   * already applied the end state by the time this function returns).
    */
-  const unsubscribe = state.subscribe((next) => {
+  let wasCold = true;
+
+  function paint(next: Snapshot): void {
     snap = next;
+    // Narrow layouts key off this to fold the catalogue away once a tool is
+    // picked (see `[data-phase]` in app.css) — set before the zones render so
+    // nothing downstream needs to re-derive it.
+    stage.dataset.phase = snap.phase;
     filesZone.render(snap);
     refreshTools();
     syncWork();
-  });
+
+    const cold = snap.phase === 'browsing';
+    if (wasCold && !cold) {
+      dropzone.hero.classList.add('is-exiting');
+      void morphToTray(dropzone.hero, stageEl).then(() => {
+        dropzone.hero.hidden = true;
+      });
+    } else if (!wasCold && cold) {
+      dropzone.hero.classList.remove('is-exiting');
+      dropzone.hero.style.opacity = '';
+      dropzone.hero.style.transform = '';
+      dropzone.hero.hidden = false;
+    }
+    wasCold = cold;
+  }
+
+  const unsubscribe = state.subscribe(paint);
+  // `subscribe` only calls back on the NEXT change — without one explicit
+  // call up front the catalogue would sit empty (no heading, no cards) on
+  // the very first paint, since nothing has ever rendered it yet. `wasCold`
+  // is already `true`, matching a fresh machine's snapshot, so this cannot
+  // itself trigger the morph.
+  paint(snap);
 
   // ------------------------------------------------------------- intake
   async function intake(files: File[]): Promise<void> {
@@ -258,17 +298,16 @@ export function mountShell(root: HTMLElement): ShellHandle {
     }
     if (added.length === 0) return;
 
-    const wasEmpty = snap.entries.length === 0;
     // Emits, which is what refreshes the grid; the tray is the one surface the
-    // machine does not drive, so it is mirrored from the new snapshot.
+    // machine does not drive, so it is mirrored from the new snapshot. Any
+    // hero-to-workbench morph this triggers is `paint`'s business, fired off
+    // to the side — it never delays the announcement below.
     state.addFiles(added);
     tray.setEntries([...snap.entries]);
 
     // The first run is the only one that pays for the pipeline chunk; warm it
     // while the user is still reading the tool grid.
     prefetchModule('core:pipeline', () => import('../core/pipeline'));
-
-    if (wasEmpty) await showWorkbench();
 
     const types = [...new Set(added.map((entry) => label(entry.type)))].join(', ');
     announce(
@@ -278,21 +317,6 @@ export function mountShell(root: HTMLElement): ShellHandle {
 
   function mimes(): string[] {
     return snap.entries.map((entry) => entry.type);
-  }
-
-  async function showWorkbench(): Promise<void> {
-    workbench.hidden = false;
-    dropzone.hero.classList.add('is-exiting');
-    await morphToTray(dropzone.hero, workbench);
-    dropzone.hero.hidden = true;
-  }
-
-  function showHero(): void {
-    workbench.hidden = true;
-    dropzone.hero.hidden = false;
-    dropzone.hero.classList.remove('is-exiting');
-    dropzone.hero.style.opacity = '';
-    dropzone.hero.style.transform = '';
   }
 
   // -------------------------------------------------------------- tools

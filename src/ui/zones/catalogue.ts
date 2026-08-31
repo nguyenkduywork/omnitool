@@ -38,6 +38,26 @@ export function createCatalogue(init: {
   const head = el('div', 'catalogue__head');
   head.append(heading, count);
 
+  // The narrow layout's way back: below 768px, picking a tool folds the grid
+  // away so the work zone is on screen without a second scroll (see
+  // `.catalogue__body`'s `[data-phase]` rule in app.css). Folding the grid
+  // must not fold this too, or there would be no way to reach it again —
+  // `onPick` with the id ALREADY selected is the existing toggle-off behaviour
+  // (see `select()` in shell.ts), so this is not a new code path, just a new
+  // way to reach it.
+  const backBar = el('div', 'catalogue__back');
+  const back = el('button', 'btn btn--quiet btn--sm', 'Change tool');
+  back.type = 'button';
+  back.addEventListener('click', () => {
+    if (selectedId) init.onPick(selectedId);
+  });
+  backBar.append(back);
+  backBar.hidden = true;
+
+  // Everything below is what the narrow layout folds away — grouped under one
+  // element (`display: contents`, so it costs nothing in the wider layouts'
+  // grid) purely so app.css has one selector to hide instead of four.
+  const body = el('div', 'catalogue__body');
   const groups = el('div', 'catalogue__groups');
   const blockedWrap = el('section', 'blocked');
   blockedWrap.hidden = true;
@@ -58,7 +78,8 @@ export function createCatalogue(init: {
   const empty = el('p', 'catalogue__empty');
   empty.hidden = true;
 
-  root.append(head, groups, blockedWrap, utilityWrap, empty);
+  body.append(groups, blockedWrap, utilityWrap, empty);
+  root.append(head, backBar, body);
 
   let selectedId: string | null = null;
   // Every `.toolcard` built during the CURRENT render() call — primary and
@@ -161,6 +182,11 @@ export function createCatalogue(init: {
     el: root,
     render(snapshot) {
       selectedId = snapshot.selected?.id ?? null;
+      // Independent of cold/warm and of the short-circuit below: a generator
+      // (the QR code) is reachable — and selectable — straight from the cold
+      // grid, with no files at all, so this cannot wait for the warm branch
+      // the way the plan first sketched it.
+      backBar.hidden = selectedId === null;
 
       const signature = gridSignature(snapshot);
       if (signature === lastSignature) {
