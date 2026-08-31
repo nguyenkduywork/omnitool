@@ -124,7 +124,22 @@ export default tseslint.config(
     },
   },
 
-  // 3b. Everything else (main.ts, scripts/, tests/): no animejs either.
+  // 3b. src/ui/state.ts is the shell's logic, and it is unit-tested under
+  //     plain Node. Touching the DOM here would silently make that
+  //     impossible, so the rule is enforced rather than documented.
+  {
+    files: ['src/ui/state.ts'],
+    rules: {
+      'no-restricted-globals': [
+        'error',
+        { name: 'document', message: 'src/ui/state.ts must stay DOM-free.' },
+        { name: 'window', message: 'src/ui/state.ts must stay DOM-free.' },
+        { name: 'HTMLElement', message: 'src/ui/state.ts must stay DOM-free.' },
+      ],
+    },
+  },
+
+  // 3c. Everything else (main.ts, scripts/, tests/): no animejs either.
   {
     files: ['**/*.ts'],
     ignores: ['src/ui/**/*.ts', 'src/tools/**/*.ts', 'src/core/**/*.ts'],

@@ -1,0 +1,156 @@
+import { describe, expect, it, vi } from 'vitest';
+
+import { TOOLS, getTool } from '../../src/core/registry';
+import { createState, derivePhase, runBlockedReason } from '../../src/ui/state';
+import type { FileEntry } from '../../src/ui/state';
+
+function entry(name: string, type: string): FileEntry {
+  return { file: new File([new Uint8Array([1, 2, 3])], name, { type }), type };
+}
+
+const PDF = 'application/pdf';
+const pdf = (n = 'a.pdf'): FileEntry => entry(n, PDF);
+
+describe('derivePhase — spec §4.2', () => {
+  // `runBlocked` is runBlockedReason()'s answer for the same inputs. Passing
+  // it in rather than recomputing keeps derivePhase a pure fold with no
+  // opinion about WHY a tool is blocked.
+  const base = {
+    fileCount: 0,
+    selected: null,
+    runBlocked: 'Pick a tool first.' as string | null,
+    running: false,
+    hasResults: false,
+  };
+  const merge = getTool('pdf-merge')!;
+
+  it('is browsing with nothing loaded and nothing picked', () => {
+    expect(derivePhase(base)).toBe('browsing');
+  });
+
+  it('is filtered once files land with no tool picked', () => {
+    expect(derivePhase({ ...base, fileCount: 2 })).toBe('filtered');
+  });
+
+  it('is tool-picked when a file tool is chosen with no files', () => {
+    expect(
+      derivePhase({ ...base, selected: merge, runBlocked: 'Needs at least 2 files — you have none.' }),
+    ).toBe('tool-picked');
+  });
+
+  // The QR fix, as one transition: a generator is never blocked, so it is READY.
+  it('goes straight to ready for a generator with no files', () => {
+    expect(
+      derivePhase({ ...base, selected: getTool('qr-generate')!, runBlocked: null }),
+    ).toBe('ready');
+  });
+
+  it('is ready once the picked tool has what it needs', () => {
+    expect(derivePhase({ ...base, fileCount: 2, selected: merge, runBlocked: null })).toBe('ready');
+  });
+
+  it('stays tool-picked while anything still blocks the run', () => {
+    expect(
+      derivePhase({ ...base, fileCount: 1, selected: merge, runBlocked: 'Needs at least 2 files — you have 1.' }),
+    ).toBe('tool-picked');
+    // A type mismatch holds it back exactly the same way.
+    expect(
+      derivePhase({ ...base, fileCount: 2, selected: merge, runBlocked: "Merge PDFs doesn't work with these files." }),
+    ).toBe('tool-picked');
+  });
+
+  it('reports running and results', () => {
+    const ready = { ...base, fileCount: 2, selected: merge, runBlocked: null };
+    expect(derivePhase({ ...ready, running: true })).toBe('running');
+    expect(derivePhase({ ...ready, hasResults: true })).toBe('results');
+  });
+});
+
+describe('runBlockedReason', () => {
+  it('asks for a tool when none is picked', () => {
+    expect(runBlockedReason(null, [])).toBe('Pick a tool first.');
+  });
+
+  it('never blocks a generator', () => {
+    expect(runBlockedReason(getTool('qr-generate')!, [])).toBeNull();
+  });
+
+  it('reports the count shortfall', () => {
+    expect(runBlockedReason(getTool('pdf-merge')!, [PDF])).toBe('Needs at least 2 files — you have 1.');
+  });
+
+  it('reports a type mismatch by name', () => {
+    expect(runBlockedReason(getTool('pdf-merge')!, [PDF, 'image/png'])).toBe(
+      "Merge PDFs doesn't work with these files.",
+    );
+  });
+
+  it('is null when the tool can run', () => {
+    expect(runBlockedReason(getTool('pdf-merge')!, [PDF, PDF])).toBeNull();
+  });
+});
+
+describe('createState', () => {
+  it('notifies subscribers and reflects added files', () => {
+    const state = createState(TOOLS);
+    const seen = vi.fn();
+    state.subscribe(seen);
+
+    state.addFiles([pdf('one.pdf'), pdf('two.pdf')]);
+
+    expect(seen).toHaveBeenCalledTimes(1);
+    const snap = state.snapshot();
+    expect(snap.phase).toBe('filtered');
+    expect(snap.entries).toHaveLength(2);
+    expect(snap.applicability.primary.map((t) => t.id)).toContain('pdf-merge');
+  });
+
+  it('drops a selection the new file set cannot run', () => {
+    const state = createState(TOOLS);
+    state.addFiles([pdf(), pdf()]);
+    state.selectTool('pdf-merge');
+    expect(state.snapshot().selected?.id).toBe('pdf-merge');
+
+    state.setFiles([entry('a.png', 'image/png')]);
+    expect(state.snapshot().selected).toBeNull();
+  });
+
+  // A generator survives any file change: it never depended on them.
+  it('keeps a generator selected when the files change under it', () => {
+    const state = createState(TOOLS);
+    state.selectTool('qr-generate');
+    state.addFiles([pdf()]);
+    expect(state.snapshot().selected?.id).toBe('qr-generate');
+    expect(state.snapshot().phase).toBe('ready');
+  });
+
+  it('keeps a tool selected while its count is merely short', () => {
+    const state = createState(TOOLS);
+    state.selectTool('pdf-merge');
+    state.addFiles([pdf()]);
+
+    const snap = state.snapshot();
+    expect(snap.selected?.id).toBe('pdf-merge');
+    expect(snap.phase).toBe('tool-picked');
+    expect(snap.runBlockedReason).toBe('Needs at least 2 files — you have 1.');
+  });
+
+  it('clears files, selection and results together', () => {
+    const state = createState(TOOLS);
+    state.addFiles([pdf(), pdf()]);
+    state.selectTool('pdf-merge');
+    state.setResults(true);
+
+    state.clearFiles();
+
+    expect(state.snapshot()).toMatchObject({ phase: 'browsing', entries: [], selected: null });
+  });
+
+  it('stops notifying after unsubscribe', () => {
+    const state = createState(TOOLS);
+    const seen = vi.fn();
+    state.subscribe(seen)();
+    state.addFiles([pdf()]);
+    expect(seen).not.toHaveBeenCalled();
+  });
+});

@@ -21,12 +21,10 @@
 import { label } from '../core/format';
 import { el, formatBytes, icon, iconButton } from './dom';
 import { settleReorder, type Displacement } from './motion';
+import type { FileEntry } from './state';
 
-export type TrayEntry = {
-  readonly file: File;
-  /** The sniffed mime type — never File.type, which is extension-derived. */
-  readonly type: string;
-};
+/** The tray renders exactly what the state machine holds. */
+export type TrayEntry = FileEntry;
 
 export type FileTrayHandle = {
   readonly el: HTMLElement;
