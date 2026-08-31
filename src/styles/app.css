@@ -708,14 +708,17 @@ html.is-dragging .hero__drop {
   background: var(--bad-quiet);
 }
 
-/* ------------------------------------------------------------- tool grid */
+/* ------------------------------------------------------------- tool grid
+ * Zone 2, in both of its densities (ui/zones/catalogue.ts): cold, every tool
+ * grouped by family; warm, the three applicability tiers. Same classes
+ * either way — one component, one stylesheet. */
 
-.tools {
+.catalogue {
   display: grid;
   gap: var(--s-5);
 }
 
-.tools__head {
+.catalogue__head {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -723,24 +726,15 @@ html.is-dragging .hero__drop {
   gap: var(--s-2) var(--s-3);
 }
 
-.tools__count {
+.catalogue__count {
   color: var(--ink-3);
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
 }
 
-.tools__groups {
+.catalogue__groups {
   display: grid;
   gap: var(--s-6);
-}
-
-.tools__empty {
-  padding: var(--s-5);
-  border: 1px dashed var(--line-2);
-  border-radius: var(--r-lg);
-  color: var(--ink-2);
-  font-size: var(--fs-sm);
-  text-wrap: pretty;
 }
 
 .toolgroup {
@@ -1766,6 +1760,27 @@ html.is-dragging .hero__drop {
     margin-top: 0;
     padding: var(--s-3) var(--s-4);
   }
+}
+
+/* ---------------------------------------------------- the blocked tier
+ * A tool whose TYPE fits but whose COUNT does not: explained under its own
+ * quiet heading, in the same card grid as the primary tiers (see
+ * `.toolcard--blocked` below for how the cards themselves de-emphasise). */
+.blocked {
+  display: grid;
+  gap: var(--s-3);
+  margin-top: var(--s-5);
+}
+.blocked__title {
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--ink-3);
+}
+.blocked__grid {
+  display: grid;
+  gap: var(--s-3);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr));
 }
 
 /* ------------------------------------------------- the second tier

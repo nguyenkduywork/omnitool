@@ -32,14 +32,14 @@
 // prefetched on the first intake, so it is warm before the click. That is what
 // keeps the entry chunk inside the §1 budget.
 
-import { label, sniffType, type Applicability } from '../core/format';
+import { label, sniffType } from '../core/format';
 import { TOOLS, getTool, toolsFor } from '../core/registry';
 import type { Job, JobResult, OpErrorCode, ToolDef } from '../types';
 import { el, icon } from './dom';
 import { createDropzone } from './dropzone';
 import { disabledFormatChoices } from './encoder';
 import { createFileTray, type FileTrayHandle, type TrayEntry } from './filetray';
-import { morphToTray, revealTools } from './motion';
+import { morphToTray } from './motion';
 import { defaultOptions, renderOptions, type OptionsHandle } from './optionspanel';
 import { createPalette } from './palette';
 import { prefetchModule, prefetchTool } from './prefetch';
@@ -47,7 +47,8 @@ import { createProgressRing } from './progress';
 import { createResults } from './results';
 import { createState } from './state';
 import { createThemeControl } from './theme';
-import { GROUP_ICON, GROUP_ORDER, GROUP_TITLE, toolIcon } from './toolicons';
+import { toolIcon } from './toolicons';
+import { createCatalogue } from './zones/catalogue';
 
 export type ShellHandle = { destroy(): void };
 
@@ -88,8 +89,6 @@ export function mountShell(root: HTMLElement): ShellHandle {
   let options: Record<string, unknown> = {};
   let panel: OptionsHandle | null = null;
   let job: Job | null = null;
-  let gridRevealed = false;
-  let lastGridSignature = '';
   let lastFilesSignature = '';
   /**
    * The tool the run panel currently DESCRIBES — not a second copy of the
@@ -164,9 +163,6 @@ export function mountShell(root: HTMLElement): ShellHandle {
   const clearButton = el('button', 'btn btn--quiet btn--sm clearbtn', 'Remove all files');
   clearButton.type = 'button';
   clearButton.addEventListener('click', () => {
-    // Before the machine emits: the next intake is a first paint again, and
-    // `refreshTools` runs inside `clearFiles` rather than after it.
-    gridRevealed = false;
     state.clearFiles();
     tray.setEntries([]);
     results.clear();
@@ -177,32 +173,13 @@ export function mountShell(root: HTMLElement): ShellHandle {
   });
   filesPanel.append(dropzone.addbar, tray.el, clearButton);
 
-  // tool grid
-  const toolsPanel = el('section', 'tools');
-  toolsPanel.setAttribute('aria-labelledby', 'tools-heading');
-  const toolsHead = el('div', 'tools__head');
-  const toolsHeading = el('h2', 'panel__title', 'Tools for these files');
-  toolsHeading.id = 'tools-heading';
-  const toolsCount = el('p', 'tools__count');
-  toolsHead.append(toolsHeading, toolsCount);
-  const toolsGrid = el('div', 'tools__groups');
-
-  // A tool whose TYPE fits but whose COUNT does not is shown, disabled, with the
-  // count it wants — silently omitting it reads as "this app cannot do that".
-  const blockedGrid = el('div', 'toolgroup__grid');
-  blockedGrid.hidden = true;
-
-  // The any-bytes tier. Always applicable, never the reason anyone came, so it
-  // is a quiet row under the grid rather than another eighteen cards.
-  const utilityWrap = el('section', 'utility');
-  utilityWrap.hidden = true;
-  utilityWrap.append(el('h3', 'utility__title', 'Works on any file'));
-  const utilityBar = el('div', 'utilitybar');
-  utilityWrap.append(utilityBar);
-
-  const toolsEmpty = el('p', 'tools__empty');
-  toolsEmpty.hidden = true;
-  toolsPanel.append(toolsHead, toolsGrid, blockedGrid, utilityWrap, toolsEmpty);
+  // tool grid — zone 2, in both of its densities (cold: all tools; warm: the
+  // three applicability tiers). See ui/zones/catalogue.ts.
+  const catalogue = createCatalogue({
+    tools: TOOLS,
+    onPick: (id) => void select(id),
+    onWarm: prefetchTool,
+  });
 
   // run panel
   const runPanel = el('section', 'run');
@@ -238,7 +215,7 @@ export function mountShell(root: HTMLElement): ShellHandle {
   runPanel.append(runHead, runOptions, runBar);
 
   const workPanel = el('div', 'panel panel--work');
-  workPanel.append(toolsPanel, runPanel);
+  workPanel.append(catalogue.el, runPanel);
 
   const workbench = el('div', 'workbench');
   workbench.hidden = true;
@@ -331,155 +308,35 @@ export function mountShell(root: HTMLElement): ShellHandle {
   }
 
   // -------------------------------------------------------------- tools
-  /**
-   * Identity of the tool grid's CONTENT, so a reorder does not rebuild it.
-   * All THREE buckets go in: a change confined to the blocked or utility tier
-   * is still a change, and hashing only `primary` would leave it unpainted.
-   */
-  function gridSignature(app: Applicability): string {
-    return [
-      snap.entries.length,
-      app.primary.map((tool) => tool.id).join(','),
-      app.blocked.map((blocked) => blocked.tool.id).join(','),
-      app.utility.map((tool) => tool.id).join(','),
-    ].join('|');
-  }
-
   /** Identity of the FILES, so an editor built from them can be kept in sync. */
   function filesSignature(): string {
     return snap.entries.map((entry) => `${entry.file.name}:${entry.file.size}`).join('|');
   }
 
   function refreshTools(): void {
-    // The machine has already bucketed the tools for this file set; asking the
-    // registry again here would be a second, divergeable answer.
-    const app: Applicability = snap.applicability;
+    // The catalogue owns the grid entirely now — building it, the three
+    // tiers, the tick on the selected card. This only asks what THIS shell
+    // still owns: whether the tool the run panel is currently showing
+    // survived the new snapshot.
+    catalogue.render(snap);
 
-    const signature = gridSignature(app);
-    if (signature === lastGridSignature) {
-      // A pure reorder. The grid is unchanged, but an editor whose input IS the
-      // file list (crop, organize) has to be rebuilt from the new order.
-      syncEditor();
-      return;
-    }
-    lastGridSignature = signature;
-
-    toolsGrid.replaceChildren();
-    blockedGrid.replaceChildren();
-
-    const cards: HTMLElement[] = [];
-    for (const group of GROUP_ORDER) {
-      const inGroup = app.primary.filter((tool) => tool.group === group);
-      if (inGroup.length === 0) continue;
-
-      const section = el('div', 'toolgroup');
-      section.dataset.kind = group;
-      const head = el('div', 'toolgroup__head');
-      const glyph = el('span', 'toolgroup__icon');
-      glyph.append(icon(GROUP_ICON[group]));
-      head.append(
-        glyph,
-        el('h3', 'toolgroup__title', GROUP_TITLE[group]),
-        el('span', 'toolgroup__count', String(inGroup.length)),
-      );
-      section.append(head);
-      const grid = el('div', 'toolgroup__grid');
-      for (const tool of inGroup) grid.append(toolCard(tool, cards));
-      section.append(grid);
-      toolsGrid.append(section);
-    }
-
-    for (const { tool, reason } of app.blocked) {
-      const card = toolCard(tool, cards);
-      card.classList.add('toolcard--blocked');
-      card.disabled = true;
-      card.append(el('span', 'toolcard__reason', reason));
-      blockedGrid.append(card);
-    }
-    blockedGrid.hidden = app.blocked.length === 0;
-
-    utilityBar.replaceChildren();
-    for (const tool of app.utility) {
-      const pill = el('button', 'utilitypill');
-      pill.type = 'button';
-      pill.dataset.tool = tool.id;
-      pill.setAttribute('aria-pressed', 'false');
-      pill.append(icon(toolIcon(tool)), el('span', undefined, tool.name));
-      pill.addEventListener('click', () => void select(tool.id));
-      utilityBar.append(pill);
-    }
-    utilityWrap.hidden = app.utility.length === 0;
-
-    const count = snap.entries.length;
-    const subject = count === 1 ? 'this file' : `these ${count} files`;
-    const runnable = app.primary.length + app.utility.length;
-    toolsCount.textContent =
-      runnable === 0 ? '' : `${runnable === 1 ? '1 tool' : `${runnable} tools`} can run on ${subject}.`;
-
-    toolsEmpty.hidden = runnable > 0;
-    if (runnable === 0 && count > 0) {
-      toolsEmpty.textContent =
-        'No tool works with this exact mix of files. Remove the odd one out — most tools want every file to be the same kind.';
-    }
-
-    // Keep the selection only while it is still valid for what is in the tray.
-    // A blocked card is not selectable, so it is not in this list.
+    // `state.ts` prunes a selection whose TYPE no longer fits, entirely on
+    // its own, before this runs (see `pruneSelection`). `shownTool` still
+    // holds what was painted last cycle — `syncRunPanel` has not overwritten
+    // it yet — so "something was shown, and the new snapshot has nothing
+    // selected" IS that prune, and tearing down the options panel built for
+    // it is the only thing left undone.
     //
-    // The question is asked of `shownTool` as well as of the snapshot: a tool
-    // the machine has already pruned needs exactly the same teardown, and only
-    // the shell knows it was on screen a moment ago.
-    const selectable = [...app.primary, ...app.utility];
-    const current = snap.selected ?? shownTool;
-    if (current && !selectable.some((tool) => tool.id === current.id)) {
+    // A selection merely short on COUNT is deliberately NOT this:
+    // `pruneSelection` leaves it selected on purpose ("you need one more
+    // PDF" beats a cleared panel), so `snap.selected` stays non-null and this
+    // guard leaves it alone — `syncRunPanel` puts the reason on the button.
+    if (shownTool && !snap.selected) {
       clearSelection();
       announce('The selected tool no longer fits these files, so it was cleared.');
-    } else if (snap.selected) {
-      markSelected(snap.selected.id);
-      syncEditor();
     }
 
-    // §8: the stagger is the grid's FIRST paint only. Re-filtering is not an
-    // entrance, and animating it every time would be decoration.
-    if (!gridRevealed && cards.length > 0) {
-      gridRevealed = true;
-      void revealTools(cards);
-    }
-  }
-
-  function toolCard(tool: ToolDef, sink: HTMLElement[]): HTMLButtonElement {
-    const card = el('button', 'toolcard');
-    card.type = 'button';
-    card.dataset.tool = tool.id;
-    card.dataset.kind = tool.group;
-    card.setAttribute('aria-pressed', 'false');
-
-    // Selection is marked by a tick as well as by colour — colour alone would
-    // fail WCAG 1.4.1 for anyone who cannot distinguish the accent.
-    const top = el('span', 'toolcard__top');
-    const glyph = el('span', 'toolcard__icon');
-    glyph.append(icon(toolIcon(tool)));
-    const check = el('span', 'toolcard__check');
-    check.append(icon('check'));
-    top.append(glyph, el('span', 'toolcard__name', tool.name), check);
-    card.append(top, el('span', 'toolcard__blurb', tool.blurb));
-
-    // Intent prefetch (§6.1 mechanism 5) on BOTH pointer and keyboard intent.
-    const warm = (): void => prefetchTool(tool);
-    card.addEventListener('pointerenter', warm);
-    card.addEventListener('focus', warm);
-
-    card.addEventListener('click', () => void select(tool.id));
-    sink.push(card);
-    return card;
-  }
-
-  /** Both tiers: a utility pill is as selectable as a card, so it marks the same. */
-  function markSelected(id: string | null): void {
-    for (const node of toolsPanel.querySelectorAll<HTMLElement>('.toolcard, .utilitypill')) {
-      const on = node.dataset.tool === id;
-      node.classList.toggle('is-selected', on);
-      node.setAttribute('aria-pressed', on ? 'true' : 'false');
-    }
+    syncEditor();
   }
 
   function clearSelection(): void {
@@ -488,11 +345,12 @@ export function mountShell(root: HTMLElement): ShellHandle {
     options = {};
     lastFilesSignature = '';
     progressWrap.hidden = true;
-    // Forgotten BEFORE the machine is told, or the notification below would
-    // find a painted tool that is no longer selectable and clear it again.
+    // Forgotten BEFORE the machine is told, or `refreshTools`'s own prune
+    // check below would find a tool that was shown a moment ago and clear it
+    // again.
     shownTool = null;
-    markSelected(null);
-    // Emits: `syncRunPanel` is what hides the panel.
+    // Emits: `refreshTools` repaints the catalogue with nothing selected, and
+    // `syncRunPanel` is what hides the panel.
     state.selectTool(null);
   }
 
@@ -585,11 +443,9 @@ export function mountShell(root: HTMLElement): ShellHandle {
       return;
     }
 
-    // Emits: `syncRunPanel` fills the head in and reveals the panel. The grid
-    // is not rebuilt by that (its content is unchanged), so the tick still has
-    // to be moved here.
+    // Emits: `refreshTools` repaints the catalogue with the tick on this
+    // card, and `syncRunPanel` fills the run panel's head in and reveals it.
     state.selectTool(id);
-    markSelected(id);
     progressWrap.hidden = true;
     announce(`${tool.name} selected. ${tool.blurb}`);
 
@@ -746,6 +602,7 @@ export function mountShell(root: HTMLElement): ShellHandle {
       unsubscribe();
       job?.cancel();
       panel?.destroy();
+      catalogue.destroy();
       tray.destroy();
       dropzone.destroy();
       document.removeEventListener('keydown', onGlobalKeydown);
