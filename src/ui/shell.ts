@@ -97,14 +97,11 @@ export function mountShell(root: HTMLElement): ShellHandle {
    * its own (state.ts's `pruneSelection`), so by the time `refreshTools` sees
    * the new snapshot the selection is already gone while its options panel is
    * still mounted. This is what remembers it long enough to tear that down.
+   *
+   * It is written by `syncRunPanel`, which the subscriber calls AFTER
+   * `refreshTools` — see the ordering note there before touching either.
    */
   let shownTool: ToolDef | null = null;
-
-  const unsubscribe = state.subscribe((next) => {
-    snap = next;
-    refreshTools();
-    syncRunPanel();
-  });
 
   // ------------------------------------------------------------- chrome
   const live = el('div', 'sr-only');
@@ -267,6 +264,25 @@ export function mountShell(root: HTMLElement): ShellHandle {
   );
 
   root.replaceChildren(topbar, stage, footer, live);
+
+  // ------------------------------------------------------- the one wiring
+  /**
+   * Armed once the DOM these two paint exists, and before anything can emit.
+   *
+   * THE ORDER OF THESE TWO CALLS IS LOAD-BEARING. `syncRunPanel` is what
+   * records `shownTool`, so while `refreshTools` runs, `shownTool` still holds
+   * the PREVIOUS snapshot's selection — which is the only reason it can notice
+   * a selection the machine pruned, and the only reason `syncEditor` can tell a
+   * tool it has already painted from one selected a moment ago. Paint the panel
+   * first and both of those silently stop working: a pruned tool's options are
+   * left mounted with nothing announced, and selecting an editor tool builds
+   * its board twice. `shell.browser.test.ts` fails on both counts if they swap.
+   */
+  const unsubscribe = state.subscribe((next) => {
+    snap = next;
+    refreshTools();
+    syncRunPanel();
+  });
 
   // ------------------------------------------------------------- intake
   async function intake(files: File[]): Promise<void> {
@@ -480,11 +496,22 @@ export function mountShell(root: HTMLElement): ShellHandle {
     state.selectTool(null);
   }
 
-  /** The run panel is a pure function of the snapshot. */
+  /**
+   * The run panel is a pure function of the snapshot — and the one place that
+   * records WHICH tool it painted, in `shownTool`.
+   */
   function syncRunPanel(): void {
     const tool = snap.selected;
     shownTool = tool;
     runPanel.hidden = tool === null;
+
+    // Run's state is settled BEFORE the early return. With no tool the panel is
+    // hidden and the snapshot's reason is 'Pick a tool first.', which must not
+    // latch the button: clearing the selection mid-run would then leave it
+    // disabled behind the hidden panel, where the unconditional
+    // `runButton.disabled = on` this replaced left it live.
+    const blocked = tool === null ? null : snap.runBlockedReason;
+    runButton.disabled = snap.phase === 'running' || blocked !== null;
     if (!tool) return;
 
     runHeading.textContent = tool.name;
@@ -494,8 +521,6 @@ export function mountShell(root: HTMLElement): ShellHandle {
 
     // The reason IS the label. Cancel and the progress ring stay with
     // `setRunning`, which also has to decide where stranded focus goes.
-    const blocked = snap.runBlockedReason;
-    runButton.disabled = snap.phase === 'running' || blocked !== null;
     runLabel.textContent = blocked ?? 'Run';
   }
 
