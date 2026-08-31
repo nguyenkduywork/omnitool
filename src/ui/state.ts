@@ -11,7 +11,7 @@ import type { Applicability } from '../core/format';
 import type { ToolDef } from '../types';
 
 /** A file plus the type its MAGIC BYTES said it was — never the extension. */
-export type FileEntry = { file: File; type: string };
+export type FileEntry = { readonly file: File; readonly type: string };
 
 export type Phase =
   | 'browsing'     // no files, no tool: the catalogue
@@ -23,7 +23,9 @@ export type Phase =
 
 export type Snapshot = {
   phase: Phase;
-  entries: FileEntry[];
+  /** A defensive copy of readonly-fielded entries: splicing it, or writing to
+   *  an entry's `file`/`type`, cannot corrupt the store's own mime tracking. */
+  entries: readonly FileEntry[];
   selected: ToolDef | null;
   applicability: Applicability;
   /** null when Run is enabled; otherwise why it is not. */
@@ -139,6 +141,7 @@ export function createState(tools: readonly ToolDef[]): StateHandle {
     },
     setFiles(next) {
       entries = [...next];
+      hasResults = false;
       pruneSelection();
       emit();
     },

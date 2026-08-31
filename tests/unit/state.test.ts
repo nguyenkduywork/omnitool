@@ -146,6 +146,60 @@ describe('createState', () => {
     expect(state.snapshot()).toMatchObject({ phase: 'browsing', entries: [], selected: null });
   });
 
+  // Regression: setFiles used to leave hasResults untouched, so a reorder or
+  // removal right after a run left the screen showing stale results. A
+  // reorder that leaves the tool still satisfiable returns to 'ready' — the
+  // tool is still selected and can still run — not back to 'filtered'.
+  it('setFiles drops a stale results screen back to ready when the tool still works', () => {
+    const state = createState(TOOLS);
+    const one = pdf('one.pdf');
+    const two = pdf('two.pdf');
+    state.addFiles([one, two]);
+    state.selectTool('pdf-merge');
+    state.setResults(true);
+    expect(state.snapshot().phase).toBe('results');
+
+    // Reorder: same two PDFs, swapped — order matters for a merge, so this
+    // is the normal next thing a user does after seeing the result.
+    state.setFiles([two, one]);
+
+    const snap = state.snapshot();
+    expect(snap.phase).toBe('ready');
+    expect(snap.selected?.id).toBe('pdf-merge');
+    expect(snap.runBlockedReason).toBeNull();
+  });
+
+  // Same bug, worse outcome: if the file change also breaks the type match,
+  // pruneSelection drops the selection — without the hasResults reset this
+  // would show 'results' with no tool selected at all.
+  it('setFiles drops a stale results screen to filtered when the tool no longer fits', () => {
+    const state = createState(TOOLS);
+    state.addFiles([pdf(), pdf()]);
+    state.selectTool('pdf-merge');
+    state.setResults(true);
+
+    state.setFiles([entry('a.png', 'image/png')]);
+
+    const snap = state.snapshot();
+    expect(snap.phase).toBe('filtered');
+    expect(snap.selected).toBeNull();
+  });
+
+  // setFiles([]) goes through the same count-shortfall-never-drops path as
+  // addFiles: pruneSelection's type check is gated on entries.length > 0.
+  it('setFiles([]) keeps the selection — an empty tray is a count shortfall, not a type mismatch', () => {
+    const state = createState(TOOLS);
+    state.selectTool('pdf-merge');
+    state.addFiles([pdf(), pdf()]);
+
+    state.setFiles([]);
+
+    const snap = state.snapshot();
+    expect(snap.selected?.id).toBe('pdf-merge');
+    expect(snap.entries).toHaveLength(0);
+    expect(snap.phase).toBe('tool-picked');
+  });
+
   it('stops notifying after unsubscribe', () => {
     const state = createState(TOOLS);
     const seen = vi.fn();
