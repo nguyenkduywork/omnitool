@@ -11,8 +11,8 @@ import {
   DURATION,
   EASE,
   STAGGER_MS,
+  fadeHero,
   flyToResults,
-  morphToTray,
   openPalette,
   prefersReducedMotion,
   refreshMotionPreference,
@@ -56,7 +56,6 @@ describe('motion tokens', () => {
   it('exports shared duration and easing tokens', () => {
     expect(DURATION.fast).toBeGreaterThan(0);
     expect(DURATION.base).toBeGreaterThan(0);
-    expect(DURATION.morph).toBeGreaterThan(0);
     expect(DURATION.settle).toBeGreaterThan(0);
     expect(typeof EASE.out).toBe('string');
     expect(STAGGER_MS).toBeGreaterThan(0);
@@ -130,13 +129,31 @@ describe('with motion enabled', () => {
     expect(panel.style.opacity).toBe('');
   });
 
-  it('morphToTray fades the source out and lands the target at rest', async () => {
-    const from = box();
-    const to = box();
-    await morphToTray(from, to);
-    expect(from.style.opacity).toBe('0');
-    expect(to.style.transform).toBe('');
-    expect(to.style.opacity).toBe('');
+  it('fadeHero marks the element exiting and resolves, touching nothing else', async () => {
+    const hero = box();
+    // A stand-in for the always-mounted workbench next to it: the bug this
+    // replaces `morphToTray` for was exactly a function that reached past
+    // its `from` and drove a SECOND element's opacity/transform as though it
+    // were entering, even once that element was already on screen. `fadeHero`
+    // takes no second element at all — this proves the sibling is never
+    // touched, not merely that it ends up back at rest.
+    const sibling = box();
+
+    const running = fadeHero(hero);
+
+    // Synchronously: the class the CSS transition keys off is already on,
+    // proof this actually triggers the visual side rather than queuing it.
+    expect(hero.classList.contains('is-exiting')).toBe(true);
+    expect(sibling.style.opacity).toBe('');
+    expect(sibling.style.transform).toBe('');
+    expect(sibling.className).toBe('');
+
+    await running;
+
+    // Still true after resolving — nothing here ever had a reason to touch it.
+    expect(sibling.style.opacity).toBe('');
+    expect(sibling.style.transform).toBe('');
+    expect(sibling.className).toBe('');
   });
 });
 
@@ -183,25 +200,29 @@ describe('with prefers-reduced-motion: reduce', () => {
     return Promise.all(jobs);
   });
 
-  it('morphToTray applies its end state instantly', () => {
-    const from = box();
-    const to = box();
-    to.style.opacity = '0';
-    to.style.transform = 'translateY(60px)';
+  it('fadeHero resolves immediately, with no wait for the transition', async () => {
+    const hero = box();
+    const before = performance.now();
 
-    const running = morphToTray(from, to);
+    const running = fadeHero(hero);
+    // The class still goes on — that is what lets the (now 1ms, per
+    // tokens.css's own reduced-motion collapse) CSS transition apply the end
+    // state instantly. What must NOT happen is `fadeHero` itself waiting out
+    // a duration on top of that: `reduced` short-circuits to
+    // `Promise.resolve()` before the `setTimeout` line is ever reached.
+    expect(hero.classList.contains('is-exiting')).toBe(true);
 
-    expect(to.style.transform).toBe('');
-    expect(to.style.opacity).toBe('');
-    expect(from.style.opacity).toBe('0');
-    return running;
+    await running;
+    // Generous bound for CI jitter — the property under test is "did not
+    // wait ~120ms", not a tight timing assertion.
+    expect(performance.now() - before).toBeLessThan(60);
   });
 
   it('every motion export still resolves, so nothing can depend on a tick', async () => {
     const el = box();
     await Promise.all([
       revealTools([el]),
-      morphToTray(box(), box()),
+      fadeHero(box()),
       flyToResults([el]),
       settleReorder([{ el, dx: 4, dy: 4 }]),
       openPalette(el),

@@ -46,7 +46,7 @@ import { el, icon } from './dom';
 import { createDropzone } from './dropzone';
 import { disabledFormatChoices } from './encoder';
 import { createFileTray, type FileTrayHandle, type TrayEntry } from './filetray';
-import { morphToTray } from './motion';
+import { fadeHero } from './motion';
 import { defaultOptions, renderOptions, type OptionsHandle } from './optionspanel';
 import { createPalette } from './palette';
 import { prefetchModule, prefetchTool } from './prefetch';
@@ -159,20 +159,8 @@ export function mountShell(root: HTMLElement): ShellHandle {
     },
   });
 
-  // zone 2 — the tool grid, in both of its densities (cold: all tools; warm:
-  // the three applicability tiers). See ui/zones/catalogue.ts. Built BEFORE
-  // `dropzone` on purpose: `createDropzone` places this element inside the
-  // hero it builds (see the comment on its `catalogue` init field), so its
-  // own element has to exist first.
-  const catalogue = createCatalogue({
-    tools: TOOLS,
-    onPick: (id) => void select(id),
-    onWarm: prefetchTool,
-  });
-
   const dropzone = createDropzone({
     onFiles: (files) => void intake(files),
-    catalogue: catalogue.el,
   });
 
   const tray: FileTrayHandle = createFileTray({
@@ -198,6 +186,17 @@ export function mountShell(root: HTMLElement): ShellHandle {
       // this only has to move focus off a button that is about to vanish.
       dropzone.focus();
     },
+  });
+
+  // zone 2 — the tool grid, in both of its densities (cold: all tools; warm:
+  // the three applicability tiers). See ui/zones/catalogue.ts. `shell.ts` is
+  // this element's ONLY placer — it never passes through `dropzone.ts`, so
+  // there is exactly one line in the whole app that decides where it lives
+  // (the `stageEl.append` below).
+  const catalogue = createCatalogue({
+    tools: TOOLS,
+    onPick: (id) => void select(id),
+    onWarm: prefetchTool,
   });
 
   // One stage, three zones — always mounted, never torn down. `dropzone.hero`
@@ -249,10 +248,13 @@ export function mountShell(root: HTMLElement): ShellHandle {
    * no tool — see `derivePhase` in state.ts) is the ONLY phase the hero
    * covers, so leaving it is the one transition worth animating, and
    * returning to it (Remove-all with nothing selected) is the one worth
-   * reversing. `morphToTray` is fired and left to run — never awaited here —
-   * so a render is never blocked on it and nothing below depends on it
-   * finishing (§7.5's reduced-motion promise: under reduced motion it has
-   * already applied the end state by the time this function returns).
+   * reversing. The workbench underneath (`stageEl`) is always mounted and
+   * already fully visible, so there is nothing to animate IN any more —
+   * `fadeHero` only ever fades the hero itself OUT. It is fired and left to
+   * run — never awaited here — so a render is never blocked on it and
+   * nothing below depends on it finishing (§7.5's reduced-motion promise:
+   * under reduced motion it has already applied the end state by the time
+   * this function returns).
    */
   let wasCold = true;
 
@@ -268,14 +270,14 @@ export function mountShell(root: HTMLElement): ShellHandle {
 
     const cold = snap.phase === 'browsing';
     if (wasCold && !cold) {
-      dropzone.hero.classList.add('is-exiting');
-      void morphToTray(dropzone.hero, stageEl).then(() => {
+      void fadeHero(dropzone.hero).then(() => {
         dropzone.hero.hidden = true;
       });
     } else if (!wasCold && cold) {
+      // `fadeHero` never writes an inline style — the whole visual side is
+      // the `.is-exiting` CSS transition (app.css) — so undoing it is just
+      // the class and `hidden`, nothing left to clear.
       dropzone.hero.classList.remove('is-exiting');
-      dropzone.hero.style.opacity = '';
-      dropzone.hero.style.transform = '';
       dropzone.hero.hidden = false;
     }
     wasCold = cold;

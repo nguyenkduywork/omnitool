@@ -80,8 +80,6 @@ export const DURATION = {
   fast: 180,
   /** The default: cards in, results in. */
   base: 240,
-  /** Dropzone -> file tray morph. */
-  morph: 320,
   /** Spring settle after a reorder. */
   settle: 420,
 } as const;
@@ -153,10 +151,6 @@ function play(
   });
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
 /**
  * The filtered tool grid appearing for the first time: a short staggered rise.
  * Shown once per grid paint — re-filtering does not re-run it (that would be
@@ -187,55 +181,37 @@ export function revealTools(cards: readonly HTMLElement[]): Promise<void> {
 }
 
 /**
- * The hero dropzone becoming the file tray + tool grid. A FLIP-flavoured morph:
- * `to` rises from where `from` actually was (measured, then clamped so a tall
- * page cannot fling it across the viewport) while `from` fades out in place.
- *
- * `from` is left at opacity 0 — the caller hides it once this resolves, and
- * clears the inline style if it ever shows it again.
+ * `.hero`'s own exit transition duration, in ms — app.css's `--dur-fast`,
+ * kept here as a plain number because this file has no resolved CSS custom
+ * property to read before the transition starts. Deliberately NOT
+ * `DURATION.fast` above: that token is animejs's own vocabulary, used only by
+ * tweens `animate()` drives, and the two happen to differ (180ms vs 120ms).
  */
-export function morphToTray(from: HTMLElement, to: HTMLElement): Promise<void> {
-  if (reduced) {
-    rest([to]);
-    from.style.opacity = '0';
-    return Promise.resolve();
-  }
+const HERO_EXIT_DURATION_MS = 120;
 
-  const origin = from.getBoundingClientRect();
-  const target = to.getBoundingClientRect();
-  const dy = clamp(origin.top - target.top, -120, 120);
-
-  const fade = play(
-    [from],
-    {
-      opacity: [1, 0],
-      scale: [1, 0.97],
-      duration: DURATION.fast,
-      ease: EASE.out,
-    },
-    'transform, opacity',
-    DURATION.fast + 400,
-  );
-
-  const rise = play(
-    [to],
-    {
-      opacity: [0, 1],
-      translateY: [dy, 0],
-      scale: [0.985, 1],
-      duration: DURATION.morph,
-      ease: EASE.out,
-    },
-    'transform, opacity',
-    DURATION.morph + 400,
-  );
-
-  return Promise.all([fade, rise]).then(() => {
-    rest([to]);
-    from.style.transform = '';
-    from.style.willChange = '';
-    from.style.opacity = '0';
-  });
+/**
+ * The hero dissolving away as the `browsing` phase ends. Before Task 10 this
+ * was a FLIP-flavoured morph into the file tray + tool grid, because that
+ * workbench did not exist on screen yet (`hidden` until the first file). It
+ * is now always mounted and already fully visible, so there is nothing left
+ * to animate an entrance for — treating it as one (as the old `morphToTray`
+ * did, blind to whether its `to` target had ever been painted) snapped the
+ * already-visible workbench to `opacity: 0` and flew it back in, a flicker
+ * over content the user was already looking at.
+ *
+ * So this only ever touches the ONE element that actually leaves. A single
+ * element losing opacity has no FLIP measurement to do, so the visual side
+ * is a plain CSS transition (`.hero.is-exiting` in app.css) rather than an
+ * `animate()` tween — the weight of measuring rects and coordinating two
+ * tweens bought nothing once only one element was moving. This keeps the one
+ * contract every other export here keeps: fire, never block a render, and
+ * resolve once it is safe to act on the end state — nothing functional may
+ * depend on the visual transition itself finishing (§7.5).
+ */
+export function fadeHero(el: HTMLElement): Promise<void> {
+  el.classList.add('is-exiting');
+  if (reduced) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, HERO_EXIT_DURATION_MS));
 }
 
 /**

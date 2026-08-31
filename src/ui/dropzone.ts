@@ -58,18 +58,6 @@ const FACTS: { icon: IconName; title: string; body: string }[] = [
 
 export function createDropzone(init: {
   onFiles: (files: File[]) => void;
-  /**
-   * The real tool catalogue (Task 8/9), grouped and rendered elsewhere — this
-   * module only places it. Appending it here nests it under `hero` for the
-   * moment `hero` is built; `shell.ts`'s own three-zone wiring re-appends the
-   * SAME element into the always-on workbench right after, which — since
-   * `Node.append` MOVES an existing node rather than cloning it — is what
-   * actually ends up on screen. That second move is not optional: `hero` is
-   * hidden outright once the browsing phase ends (see the shell's
-   * `morphToTray` handling), and the catalogue has to survive that or picking
-   * a tool would take the whole grid down with it.
-   */
-  catalogue: HTMLElement;
 }): DropzoneHandle {
   const picker = el('input', 'sr-only');
   picker.type = 'file';
@@ -96,8 +84,10 @@ export function createDropzone(init: {
   // The landing screen has one job — get files in — but an empty screen that
   // only says "drop files" tells a first-time visitor nothing about what they
   // are dropping them into. So the drop panel is the loud part, and beneath it
-  // sit the claims and, moved in by shell.ts a moment later, the real tool
-  // catalogue: the second door, open from the very first paint.
+  // sit the claims. The real tool catalogue — the second door, open from the
+  // very first paint — is placed directly by `shell.ts`, immediately below
+  // this whole section rather than inside it: this module only owns the drop
+  // surface, never the catalogue's element.
   const hero = el('section', 'hero');
   hero.setAttribute('aria-labelledby', 'hero-title');
 
@@ -149,7 +139,7 @@ export function createDropzone(init: {
     facts.append(item);
   }
 
-  hero.append(drop, facts, init.catalogue, picker);
+  hero.append(drop, facts, picker);
 
   // ---- compact add-bar --------------------------------------------------
   const addbar = el('div', 'addbar');

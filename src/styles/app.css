@@ -4,8 +4,11 @@
  * three-zone workbench (files, catalogue, work) stacked in normal flow, plus
  * the results tray, and a footer. The hero is the `browsing` phase's own
  * presentation of that same workbench — see `.workbench` below — and hides
- * itself once the phase moves on; motion.ts's `morphToTray` drives the
- * transform/opacity side of that handoff, never a layout property.
+ * itself once the phase moves on. The workbench never leaves, so there is
+ * nothing left to animate an entrance for: only the hero's own exit is
+ * animated, by this file's `.hero.is-exiting` transition (opacity and
+ * transform only, never a layout property) — motion.ts's `fadeHero` is just
+ * the class toggle plus knowing when it is safe to remove the element.
  *
  * Three rules this file keeps to:
  *
@@ -212,11 +215,21 @@ button {
   display: grid;
   gap: var(--s-6);
   align-content: start;
+  /* The one exit this file animates: motion.ts's `fadeHero` adds
+   * `.is-exiting` and waits `HERO_EXIT_DURATION_MS` (kept equal to
+   * `--dur-fast` below, by hand — see that constant's own comment) before
+   * removing the element, so this transition IS the visual side of that
+   * contract, not decoration layered on top of it. */
+  transition:
+    opacity var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
 }
 
 .hero.is-exiting {
   z-index: 2;
   pointer-events: none;
+  opacity: 0;
+  transform: scale(0.97);
 }
 
 /* The drop surface. Dashed, because a dashed edge is the one border convention

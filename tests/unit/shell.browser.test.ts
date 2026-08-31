@@ -276,3 +276,48 @@ describe('the catalogue does not rebuild under a real click', () => {
     expect(card.getAttribute('aria-pressed')).toBe('true');
   });
 });
+
+// Regression guard for the flicker a code review caught by instrumenting the
+// running app, not from reading the diff: `.workbench` is mounted and
+// painted at rest from the very first frame (Task 10 — it never leaves, only
+// the hero does), but `paint()`'s hero-exit call used to be `morphToTray`,
+// which treated its SECOND argument as an entrance and snapped it to
+// `opacity: 0; transform: translateY(...) scale(...)` synchronously, on
+// every single browsing -> !browsing transition. The fix (`fadeHero` in
+// motion.ts) takes no second element at all, which makes the bug's shape
+// structurally unreachable through it — the assertions below are what would
+// have caught the old shape regardless, by watching the one element that
+// must never move for either headline path: dropping a file cold, and
+// picking a tool (Generate QR code, reachable with zero files) cold.
+describe('the always-visible workbench never gets treated as an entrance', () => {
+  function expectWorkbenchAtRest(): void {
+    const workbench = one<HTMLElement>('.workbench');
+    expect(workbench.style.opacity).toBe('');
+    expect(workbench.style.transform).toBe('');
+  }
+
+  it('stays untouched when a file lands cold', async () => {
+    expectWorkbenchAtRest();
+
+    deliver([await fixture('small.pdf')]);
+    // The tray is the signal that `state.addFiles()` — and with it `paint()`,
+    // which is what fires the hero's exit — has already run synchronously;
+    // see the comment on the same wait elsewhere in this file.
+    await until('the file to land', () => count('.tray__item') === 1);
+
+    expectWorkbenchAtRest();
+    await settle();
+    expectWorkbenchAtRest();
+  });
+
+  it('stays untouched when a generator is picked cold, with no files at all', async () => {
+    expectWorkbenchAtRest();
+
+    one<HTMLButtonElement>('.toolcard[data-tool="qr-generate"]').click();
+    await until('Run to take focus', () => document.activeElement === one('.run .btn--primary'));
+
+    expectWorkbenchAtRest();
+    await settle();
+    expectWorkbenchAtRest();
+  });
+});
