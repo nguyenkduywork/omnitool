@@ -12,11 +12,20 @@
 // of the snapshot; nothing here reads `shownTool` or any other shell-owned
 // bookkeeping — see shell.ts's subscriber for why that split matters.
 //
-// The ZONE ROOT is the landmark (`aria-labelledby="run-heading"`), not the
-// inner `.run` card — one heading, `#run-heading`, labels both the card
-// visually and the zone's region role, so there is exactly one landmark here
-// rather than two nested ones sharing a name. The card itself carries no
-// `aria-labelledby` of its own for that reason.
+// The ZONE ROOT is the landmark, not the inner `.run` card, so there is
+// exactly one landmark here rather than two nested ones. Its accessible name
+// is a plain `aria-label="Selected tool"` — deliberately NOT `aria-labelledby`
+// pointing at the `<h2>` in `.run__head`, because that heading only gets text
+// once a tool is picked (see `render`): with nothing selected `.run` is
+// `hidden` and the heading is empty, which would leave the region with an
+// EMPTY accessible name at the app's own default, cold state — exactly the
+// state a screen-reader user meets first through the second entry door.
+// `aria-label` is stable across cold and warm alike, so the region always has
+// something to say for itself. The card itself carries no `aria-labelledby`
+// of its own, so this is the only "Selected tool"/tool-name naming in play —
+// no second heading duplicating the landmark's own name (contrast
+// `zones/files.ts`, where reusing `filetray.ts`'s own heading was the
+// carry-forward fix, not a pattern to repeat here).
 
 import { el, icon } from '../dom';
 import { createProgressRing, type ProgressHandle } from '../progress';
@@ -45,17 +54,28 @@ export type WorkZoneHandle = ZoneHandle & {
 
 export function createWorkZone(init: { onRun: () => void; onCancel: () => void }): WorkZoneHandle {
   const root = el('section', 'zone zone--work');
-  root.setAttribute('aria-labelledby', 'run-heading');
+  root.setAttribute('aria-label', 'Selected tool');
 
-  // The one thing this zone shows or hides. Like the `<section class="run">`
-  // it replaces, there is no separate empty state: with no tool picked, this
-  // zone paints nothing, exactly as before the three-zone split.
+  // The prompt this whole task exists to restore: cut in Task 9 ("Task 10 can
+  // add it if the new grid layout turns out to need a placeholder box"),
+  // never revisited once Task 10 shipped the permanent three-column sticky
+  // layout — the condition was met and nobody came back for it. Without this,
+  // the column beside the catalogue is bare page background until a tool is
+  // picked, and the second sentence is the discoverability hook for the
+  // headline feature: a first-time visitor has no other way to learn the QR
+  // generator needs no file before trying it.
+  const empty = el('div', 'zone__empty');
+  empty.append(
+    el('p', undefined, 'Pick a tool to get started.'),
+    el('p', 'zone__hint', 'Some tools need files; the QR code generator does not.'),
+  );
+
+  // The one thing this zone shows or hides besides `empty` above.
   const panel = el('section', 'run');
   panel.hidden = true;
 
   const glyph = el('span', 'run__glyph');
   const heading = el('h2', 'panel__title', '');
-  heading.id = 'run-heading';
   const blurb = el('p', 'run__blurb');
   const titles = el('div', 'run__titles');
   titles.append(heading, blurb);
@@ -89,7 +109,7 @@ export function createWorkZone(init: { onRun: () => void; onCancel: () => void }
   const results = createResults();
 
   panel.append(head, options, bar);
-  root.append(panel);
+  root.append(empty, panel);
 
   return {
     el: root,
@@ -101,6 +121,7 @@ export function createWorkZone(init: { onRun: () => void; onCancel: () => void }
     hasRunFocus: () => document.activeElement === runButton,
     render(snapshot) {
       const tool = snapshot.selected;
+      empty.hidden = tool !== null;
       panel.hidden = tool === null;
 
       // Run's disabled state (and Cancel's / the ring's visibility) is

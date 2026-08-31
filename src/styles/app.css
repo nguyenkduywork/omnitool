@@ -503,6 +503,27 @@ html.is-dragging .hero__drop {
   gap: var(--s-6);
 }
 
+/* The cold-state prompt for zone 3 (ui/zones/work.ts) — same dashed,
+ * explained-not-blank treatment as `.catalogue__empty` below, reused here for
+ * the same reason: silence in a box that should say something reads as "this
+ * app cannot do that", and here it would additionally have left the column
+ * beside the catalogue rendering as bare page background with nothing at all
+ * painted in it (a `.zone--work` with only a hidden `.run` child collapses to
+ * zero height). */
+.zone__empty {
+  padding: var(--s-5);
+  border: 1px dashed var(--line-2);
+  border-radius: var(--r-lg);
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  text-wrap: pretty;
+}
+
+.zone__hint {
+  margin-top: var(--s-2);
+  color: var(--ink-3);
+}
+
 .panel__title {
   font-size: var(--fs-md);
   font-weight: 620;

@@ -259,6 +259,21 @@ test.describe('keyboard-only operation', () => {
     // card, Enter selects it, focus lands on Run — needs a tool that is
     // actually ready to run once selected, which is what the files below
     // are for.
+    //
+    // KNOWN COVERAGE GAP, recorded here rather than fixed: because this
+    // rescoped scenario picks a tool that is already runnable, it does NOT
+    // exercise "the reason IS the button label" (see the comment on
+    // `runLabel` in zones/work.ts) for a sequential-Tab keyboard user. A
+    // disabled <button> cannot receive focus at all — native HTML behaviour —
+    // so a keyboard user who selects a BLOCKED tool never lands on Run and
+    // never has its label read to them by focus. The reason is still
+    // visually on the button, so a sighted keyboard-only user can read it;
+    // the gap is specifically someone who relies on focus to read (e.g. a
+    // magnifier that follows focus). Closing it means moving Run (and the
+    // blocked cards) from `disabled` to `aria-disabled`, which changes
+    // activation semantics and was deliberately deferred rather than bolted
+    // onto the last task of Stage 3 — this is a known trade, not an
+    // oversight.
     await page
       .locator('input[type="file"]')
       .setInputFiles([fixturePath('small.pdf'), fixturePath('small.pdf')]);
@@ -275,12 +290,12 @@ test.describe('keyboard-only operation', () => {
 });
 
 test.describe('landmarks', () => {
-  test('gives each zone a labelled landmark, with no duplicate "Files" region', async ({ page }) => {
+  test('gives zones 1 and 2 a labelled landmark, with no duplicate "Files" region', async ({
+    page,
+  }) => {
     // Ids as SHIPPED: zone 1 (`ui/zones/files.ts`) reuses filetray.ts's own
     // `<h2 id="tray-heading">Files</h2>` rather than inventing a duplicate
-    // heading, and zone 3 (`ui/zones/work.ts`) keeps `run-heading` on the
-    // ZONE root, not the inner `.run` card — one heading labelling one
-    // landmark, not two nested ones sharing a name.
+    // heading.
     await expect(page.locator('aside[aria-labelledby="tray-heading"]')).toBeVisible();
     await expect(page.locator('section[aria-labelledby="catalogue-heading"]')).toBeVisible();
 
@@ -293,17 +308,45 @@ test.describe('landmarks', () => {
     // `<aside>` — carries it now, and the heading itself still exists,
     // referenced by id, for both to point at.
     await expect(page.locator('[aria-labelledby="tray-heading"]')).toHaveCount(1);
+  });
 
-    // Zone 3 paints nothing until a tool is picked (ui/zones/work.ts: "like
-    // the `<section class="run">` it replaces, there is no separate empty
-    // state") — with nothing selected its only child is `hidden` and the
-    // grid collapses to zero height, so `toBeVisible()` on the landmark
-    // itself would fail even though it is correctly in the accessibility
-    // tree. Picking the cold-reachable QR generator (Task 10's second door —
-    // no file needed) gives it real content before checking it is a
-    // landmark too.
+  // Zone 3 gets its own test: unlike zones 1 and 2, its landmark name and its
+  // visible content are BOTH state-dependent in ways worth proving
+  // separately — the cold, tool-first state is the app's own default, and a
+  // test that only ever checks the warm state (as an earlier version of this
+  // test did, by picking a tool before asserting anything) cannot catch a
+  // regression that is specific to cold.
+  test('names and paints zone 3 even before a tool is picked', async ({ page }) => {
+    // COLD: `ui/zones/work.ts`'s `<h2>` inside `.run` is empty here (it only
+    // gets `tool.name` once something is selected — see `render`), so the
+    // zone root is named with a stable `aria-label` instead of
+    // `aria-labelledby` pointing at that heading. `getByRole('region', {
+    // name })` is the accessible-name-based way to prove that: it fails
+    // outright if the name resolves empty, which `toBeVisible()` on a raw
+    // `[aria-labelledby]` selector would not have caught (the ATTRIBUTE was
+    // always present — the TEXT it pointed at was the empty part).
+    const zone = page.getByRole('region', { name: 'Selected tool' });
+    await expect(zone).toBeVisible();
+
+    // The restored placeholder copy — cut in Task 9 on the assumption a later
+    // task's layout might need it, never revisited once Task 10's permanent
+    // three-column sticky layout made that layout the shipped one. Without
+    // this, `.zone--work` painted nothing at all with no tool picked: its
+    // only child was `hidden` and the grid item collapsed to zero height, so
+    // the column beside the catalogue was bare page background for as long
+    // as the app sat in its own default state.
+    await expect(zone.getByText('Pick a tool to get started.')).toBeVisible();
+    await expect(
+      zone.getByText('Some tools need files; the QR code generator does not.'),
+    ).toBeVisible();
+
+    // WARM: picking the cold-reachable QR generator (Task 10's second
+    // door — no file needed) proves the SAME landmark carries real tool
+    // content once something is selected, and that the name did not need to
+    // change to do it.
     await page.locator('.toolcard[data-tool="qr-generate"]').click();
-    await expect(page.locator('section[aria-labelledby="run-heading"]')).toBeVisible();
+    await expect(zone).toBeVisible();
+    await expect(zone.getByRole('heading', { name: 'Generate QR code' })).toBeVisible();
   });
 });
 
