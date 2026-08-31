@@ -11,8 +11,9 @@
 // shell cannot ask the snapshot "was something selected?" — by then the answer
 // is no, while that tool's options panel is still mounted on screen. `shell.ts`
 // keeps `shownTool` for exactly that, and the subscriber's order —
-// `refreshTools()` and only then `syncRunPanel()` — is what keeps it holding
-// the PREVIOUS snapshot's selection while the grid is rebuilt.
+// `refreshTools()` (which calls `syncEditor()`) and only then `syncWork()` —
+// is what keeps it holding the PREVIOUS snapshot's selection while the grid
+// and the work zone (ui/zones/work.ts, Stage 3) are rebuilt.
 //
 // That is an invariant spread across three functions and two adjacent lines,
 // with nothing about it visible at the point a future editor is most likely to
@@ -25,8 +26,9 @@
 //      the same files, leaking the first one's handle (test two).
 //
 // Neither is reachable from the e2e specs, which never change the file set
-// while a tool is selected. Stage 3 moves `syncEditor` into the subscriber and
-// the run panel into `work.ts`, so this is the guard rail that refactor needs.
+// while a tool is selected. This is the guard rail Stage 3's split into
+// ui/zones/work.ts leans on — `syncWork()` is the function that replaced
+// the old `syncRunPanel()`, and it must still run last.
 //
 // The announcement in (1) cannot be read off the settled DOM: it is overwritten
 // by intake's own "1 file added…" inside the same synchronous block. It is

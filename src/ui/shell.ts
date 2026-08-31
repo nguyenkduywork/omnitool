@@ -31,6 +31,13 @@
 // `core/fs` + fflate + the worker pool) is fetched when the first run starts and
 // prefetched on the first intake, so it is warm before the click. That is what
 // keeps the entry chunk inside the §1 budget.
+//
+// The screen is three zones (files, catalogue, work — ui/zones/*.ts), each a
+// pure function of a `Snapshot`. This file is the composition root: it wires
+// the zones to the state machine and owns the one piece of DOM none of them
+// can own on their own, the mounted options panel — see `mountOptions` and the
+// comment on `unsubscribe` below for why that split means one call order in
+// the subscriber is load-bearing.
 
 import { label, sniffType } from '../core/format';
 import { TOOLS, getTool, toolsFor } from '../core/registry';
@@ -43,12 +50,11 @@ import { morphToTray } from './motion';
 import { defaultOptions, renderOptions, type OptionsHandle } from './optionspanel';
 import { createPalette } from './palette';
 import { prefetchModule, prefetchTool } from './prefetch';
-import { createProgressRing } from './progress';
-import { createResults } from './results';
 import { createState } from './state';
 import { createThemeControl } from './theme';
-import { toolIcon } from './toolicons';
 import { createCatalogue } from './zones/catalogue';
+import { createFilesZone } from './zones/files';
+import { createWorkZone } from './zones/work';
 
 export type ShellHandle = { destroy(): void };
 
@@ -83,21 +89,21 @@ export function mountShell(root: HTMLElement): ShellHandle {
   const state = createState(TOOLS);
   let snap = state.snapshot();
 
-  // What the shell owns is the DOM: the mounted options panel, the running
-  // job, and the "what is already painted" guards that keep this file from
-  // rebuilding surfaces that have not changed.
+  // What the shell owns is the DOM the zones don't: the mounted options
+  // panel, the running job, and the "what is already painted" guards that
+  // keep this file from rebuilding surfaces that have not changed.
   let options: Record<string, unknown> = {};
   let panel: OptionsHandle | null = null;
   let job: Job | null = null;
   let lastFilesSignature = '';
   /**
-   * The tool the run panel currently DESCRIBES — not a second copy of the
+   * The tool the work zone currently DESCRIBES — not a second copy of the
    * selection. The machine drops a selection whose TYPE no longer fits all on
    * its own (state.ts's `pruneSelection`), so by the time `refreshTools` sees
    * the new snapshot the selection is already gone while its options panel is
    * still mounted. This is what remembers it long enough to tear that down.
    *
-   * It is written by `syncRunPanel`, which the subscriber calls AFTER
+   * It is written by `syncWork`, which the subscriber calls AFTER
    * `refreshTools` — see the ordering note there before touching either.
    */
   let shownTool: ToolDef | null = null;
@@ -140,8 +146,18 @@ export function mountShell(root: HTMLElement): ShellHandle {
   const stage = el('main', 'stage');
   stage.id = 'stage';
 
-  const results = createResults();
-  const progress = createProgressRing();
+  // zone 3 — the chosen tool: options mount point, Run/Cancel/progress, and
+  // the results tray. `onRun`/`onCancel` close over `start`/`job`, both
+  // declared below as hoisted function/`let` bindings — safe to reference
+  // here because these callbacks only fire from a later click, exactly like
+  // `catalogue`'s `onPick: (id) => void select(id)` already does below.
+  const workZone = createWorkZone({
+    onRun: () => void start(),
+    onCancel: () => {
+      job?.cancel();
+      announce('Cancelling…');
+    },
+  });
 
   const dropzone = createDropzone({
     onFiles: (files) => void intake(files),
@@ -159,72 +175,40 @@ export function mountShell(root: HTMLElement): ShellHandle {
     announce,
   });
 
-  const filesPanel = el('div', 'panel panel--files');
-  const clearButton = el('button', 'btn btn--quiet btn--sm clearbtn', 'Remove all files');
-  clearButton.type = 'button';
-  clearButton.addEventListener('click', () => {
-    state.clearFiles();
-    tray.setEntries([]);
-    results.clear();
-    announce('All files removed.');
-    showHero();
-    // Never strand the keyboard on a button that just disappeared.
-    dropzone.focus();
+  // zone 1 — files: the add-bar, the tray, and the "remove all" control.
+  const filesZone = createFilesZone({
+    addbar: dropzone.addbar,
+    tray,
+    onClear: () => {
+      state.clearFiles();
+      tray.setEntries([]);
+      workZone.results.clear();
+      announce('All files removed.');
+      showHero();
+      // Never strand the keyboard on a button that just disappeared.
+      dropzone.focus();
+    },
   });
-  filesPanel.append(dropzone.addbar, tray.el, clearButton);
 
-  // tool grid — zone 2, in both of its densities (cold: all tools; warm: the
-  // three applicability tiers). See ui/zones/catalogue.ts.
+  // zone 2 — the tool grid, in both of its densities (cold: all tools; warm:
+  // the three applicability tiers). See ui/zones/catalogue.ts.
   const catalogue = createCatalogue({
     tools: TOOLS,
     onPick: (id) => void select(id),
     onWarm: prefetchTool,
   });
 
-  // run panel
-  const runPanel = el('section', 'run');
-  runPanel.hidden = true;
-  runPanel.setAttribute('aria-labelledby', 'run-heading');
-  const runHead = el('div', 'run__head');
-  const runGlyph = el('span', 'run__glyph');
-  const runTitles = el('div', 'run__titles');
-  const runHeading = el('h2', 'panel__title', '');
-  runHeading.id = 'run-heading';
-  const runBlurb = el('p', 'run__blurb');
-  runTitles.append(runHeading, runBlurb);
-  runHead.append(runGlyph, runTitles);
-  const runOptions = el('div', 'run__options');
-  const runBar = el('div', 'run__bar');
-
-  const runButton = el('button', 'btn btn--primary');
-  runButton.type = 'button';
-  // Addressable, because when the run is blocked the REASON becomes the label:
-  // a disabled button with no explanation is the thing this overhaul removes.
-  const runLabel = el('span', undefined, 'Run');
-  runButton.append(icon('play'), runLabel);
-
-  const cancelButton = el('button', 'btn btn--ghost', 'Cancel');
-  cancelButton.type = 'button';
-  cancelButton.hidden = true;
-
-  const progressWrap = el('div', 'run__progress');
-  progressWrap.hidden = true;
-  progressWrap.append(progress.el);
-
-  runBar.append(runButton, cancelButton, progressWrap);
-  runPanel.append(runHead, runOptions, runBar);
-
-  const workPanel = el('div', 'panel panel--work');
-  workPanel.append(catalogue.el, runPanel);
-
   const workbench = el('div', 'workbench');
   workbench.hidden = true;
-  workbench.append(filesPanel, workPanel);
+  workbench.append(filesZone.el, catalogue.el, workZone.el);
 
   const switcher = el('div', 'stageswitch');
   switcher.append(dropzone.hero, workbench);
 
-  stage.append(switcher, results.el);
+  // Results sit below the whole workbench, not confined to the work zone's
+  // own column — the tray is created by `workZone` (zone 3 owns the tool's
+  // whole lifecycle, results included), but its element is placed here.
+  stage.append(switcher, workZone.results.el);
 
   const footer = el('footer', 'footer');
   const footerMark = el('span', 'footer__mark');
@@ -244,21 +228,25 @@ export function mountShell(root: HTMLElement): ShellHandle {
 
   // ------------------------------------------------------- the one wiring
   /**
-   * Armed once the DOM these two paint exists, and before anything can emit.
+   * Armed once the DOM these three paint exists, and before anything can emit.
    *
-   * THE ORDER OF THESE TWO CALLS IS LOAD-BEARING. `syncRunPanel` is what
+   * THE ORDER OF THESE THREE CALLS IS LOAD-BEARING. `syncWork` is what
    * records `shownTool`, so while `refreshTools` runs, `shownTool` still holds
    * the PREVIOUS snapshot's selection — which is the only reason it can notice
-   * a selection the machine pruned, and the only reason `syncEditor` can tell a
-   * tool it has already painted from one selected a moment ago. Paint the panel
-   * first and both of those silently stop working: a pruned tool's options are
-   * left mounted with nothing announced, and selecting an editor tool builds
-   * its board twice. `shell.browser.test.ts` fails on both counts if they swap.
+   * a selection the machine pruned, and the only reason `syncEditor` (called
+   * from inside `refreshTools`) can tell a tool it has already painted from
+   * one selected a moment ago. Paint the work zone first and both of those
+   * silently stop working: a pruned tool's options are left mounted with
+   * nothing announced, and selecting an editor tool builds its board twice.
+   * `shell.browser.test.ts` fails on both counts if `syncWork` moves ahead of
+   * `refreshTools`. `filesZone.render` has no such dependency — it reads
+   * nothing `shownTool`-shaped — so its position here is not load-bearing.
    */
   const unsubscribe = state.subscribe((next) => {
     snap = next;
+    filesZone.render(snap);
     refreshTools();
-    syncRunPanel();
+    syncWork();
   });
 
   // ------------------------------------------------------------- intake
@@ -314,23 +302,23 @@ export function mountShell(root: HTMLElement): ShellHandle {
   }
 
   function refreshTools(): void {
-    // The catalogue owns the grid entirely now — building it, the three
-    // tiers, the tick on the selected card. This only asks what THIS shell
-    // still owns: whether the tool the run panel is currently showing
-    // survived the new snapshot.
+    // The catalogue owns the grid entirely — building it, the three tiers,
+    // the tick on the selected card. This only asks what THIS shell still
+    // owns: whether the tool the work zone is currently showing survived the
+    // new snapshot.
     catalogue.render(snap);
 
     // `state.ts` prunes a selection whose TYPE no longer fits, entirely on
     // its own, before this runs (see `pruneSelection`). `shownTool` still
-    // holds what was painted last cycle — `syncRunPanel` has not overwritten
-    // it yet — so "something was shown, and the new snapshot has nothing
+    // holds what was painted last cycle — `syncWork` has not overwritten it
+    // yet — so "something was shown, and the new snapshot has nothing
     // selected" IS that prune, and tearing down the options panel built for
     // it is the only thing left undone.
     //
     // A selection merely short on COUNT is deliberately NOT this:
     // `pruneSelection` leaves it selected on purpose ("you need one more
     // PDF" beats a cleared panel), so `snap.selected` stays non-null and this
-    // guard leaves it alone — `syncRunPanel` puts the reason on the button.
+    // guard leaves it alone — `syncWork` puts the reason on the button.
     if (shownTool && !snap.selected) {
       clearSelection();
       announce('The selected tool no longer fits these files, so it was cleared.');
@@ -344,42 +332,23 @@ export function mountShell(root: HTMLElement): ShellHandle {
     panel = null;
     options = {};
     lastFilesSignature = '';
-    progressWrap.hidden = true;
     // Forgotten BEFORE the machine is told, or `refreshTools`'s own prune
     // check below would find a tool that was shown a moment ago and clear it
     // again.
     shownTool = null;
     // Emits: `refreshTools` repaints the catalogue with nothing selected, and
-    // `syncRunPanel` is what hides the panel.
+    // `syncWork` is what hides the work zone's panel.
     state.selectTool(null);
   }
 
   /**
-   * The run panel is a pure function of the snapshot — and the one place that
-   * records WHICH tool it painted, in `shownTool`.
+   * Paint the work zone from the snapshot, and record WHICH tool it painted,
+   * in `shownTool` — the one thing about zone 3 that stays shell-owned. Must
+   * run LAST in the subscriber: see the comment on `unsubscribe`.
    */
-  function syncRunPanel(): void {
-    const tool = snap.selected;
-    shownTool = tool;
-    runPanel.hidden = tool === null;
-
-    // Run's state is settled BEFORE the early return. With no tool the panel is
-    // hidden and the snapshot's reason is 'Pick a tool first.', which must not
-    // latch the button: clearing the selection mid-run would then leave it
-    // disabled behind the hidden panel, where the unconditional
-    // `runButton.disabled = on` this replaced left it live.
-    const blocked = tool === null ? null : snap.runBlockedReason;
-    runButton.disabled = snap.phase === 'running' || blocked !== null;
-    if (!tool) return;
-
-    runHeading.textContent = tool.name;
-    runBlurb.textContent = tool.blurb;
-    runGlyph.replaceChildren(icon(toolIcon(tool)));
-    runPanel.dataset.kind = tool.group;
-
-    // The reason IS the label. Cancel and the progress ring stay with
-    // `setRunning`, which also has to decide where stranded focus goes.
-    runLabel.textContent = blocked ?? 'Run';
+  function syncWork(): void {
+    workZone.render(snap);
+    shownTool = snap.selected;
   }
 
   /** Build (or rebuild) the options surface for `tool`. */
@@ -414,7 +383,7 @@ export function mountShell(root: HTMLElement): ShellHandle {
     });
     panel = mounted;
     options = { ...options, ...mounted.values() };
-    runOptions.replaceChildren(mounted.el);
+    workZone.options.replaceChildren(mounted.el);
   }
 
   /**
@@ -424,7 +393,7 @@ export function mountShell(root: HTMLElement): ShellHandle {
    */
   function syncEditor(): void {
     const tool = snap.selected;
-    // Only a tool the run panel is ALREADY showing can be out of sync. A
+    // Only a tool the work zone is ALREADY showing can be out of sync. A
     // selection made this instant has not been painted yet, and mounting it
     // here would race `select()`'s own mount and build the board twice.
     if (!tool?.editor || shownTool?.id !== tool.id || snap.phase === 'running') return;
@@ -444,16 +413,15 @@ export function mountShell(root: HTMLElement): ShellHandle {
     }
 
     // Emits: `refreshTools` repaints the catalogue with the tick on this
-    // card, and `syncRunPanel` fills the run panel's head in and reveals it.
+    // card, and `syncWork` fills the work zone's head in and reveals it.
     state.selectTool(id);
-    progressWrap.hidden = true;
     announce(`${tool.name} selected. ${tool.blurb}`);
 
     await mountOptions(tool);
     if (snap.selected?.id !== id) return;
     // The e2e suite waits on this: Run taking focus is the app's own race-free
     // "ready" signal, and it lands only once the options have mounted.
-    runButton.focus();
+    workZone.focusRun();
   }
 
   // ---------------------------------------------------------------- run
@@ -462,14 +430,11 @@ export function mountShell(root: HTMLElement): ShellHandle {
     // browser — a keyboard user who just activated Run or Remove-all must not
     // be dropped onto nothing. Cancel is about to become the one live,
     // meaningful control, so focus follows there instead. Read BEFORE the
-    // machine emits, because that emit is what disables Run.
-    const stranded =
-      on && (document.activeElement === runButton || document.activeElement === clearButton);
+    // machine emits, because that emit is what disables Run and Remove-all
+    // (see zones/work.ts's and zones/files.ts's `render`).
+    const stranded = on && (workZone.hasRunFocus() || filesZone.hasClearFocus());
     state.setRunning(on);
-    cancelButton.hidden = !on;
-    progressWrap.hidden = !on;
-    clearButton.disabled = on;
-    if (stranded) cancelButton.focus();
+    if (stranded) workZone.focusCancel();
   }
 
   async function start(): Promise<void> {
@@ -488,9 +453,9 @@ export function mountShell(root: HTMLElement): ShellHandle {
     }));
 
     setRunning(true);
-    progress.reset();
-    progress.setLabel(`${tool.name}…`);
-    results.clear();
+    workZone.progress.reset();
+    workZone.progress.setLabel(`${tool.name}…`);
+    workZone.results.clear();
     announce(`${tool.name} started on ${files.length} ${files.length === 1 ? 'file' : 'files'}.`);
 
     let result: JobResult | undefined;
@@ -503,7 +468,7 @@ export function mountShell(root: HTMLElement): ShellHandle {
 
       let quarter = 0;
       active.onProgress((fraction) => {
-        progress.set(fraction);
+        workZone.progress.set(fraction);
         const step = Math.floor(fraction * 4);
         if (step > quarter && step < 4) {
           quarter = step;
@@ -512,7 +477,7 @@ export function mountShell(root: HTMLElement): ShellHandle {
       });
 
       result = await active.done;
-      progress.set(1);
+      workZone.progress.set(1);
     } catch (error) {
       failure = asFailure(error);
     } finally {
@@ -520,7 +485,7 @@ export function mountShell(root: HTMLElement): ShellHandle {
       setRunning(false);
     }
 
-    await results.show({ toolName: tool.name, inputs, result, error: failure });
+    await workZone.results.show({ toolName: tool.name, inputs, result, error: failure });
 
     if (failure) {
       announce(
@@ -538,14 +503,8 @@ export function mountShell(root: HTMLElement): ShellHandle {
       announce(`${tool.name} finished. ${made} ${made === 1 ? 'file' : 'files'} ready.`);
     }
 
-    results.el.scrollIntoView({ block: 'nearest' });
+    workZone.results.el.scrollIntoView({ block: 'nearest' });
   }
-
-  runButton.addEventListener('click', () => void start());
-  cancelButton.addEventListener('click', () => {
-    job?.cancel();
-    announce('Cancelling…');
-  });
 
   // -------------------------------------------------------------- palette
   /** Why `tool` can't run right now, or `null` when it can (Task 7). */
@@ -573,8 +532,6 @@ export function mountShell(root: HTMLElement): ShellHandle {
     if (snap.phase === 'running') return;
     if (snap.selected?.id !== tool.id) {
       await select(tool.id);
-    } else {
-      runPanel.hidden = false;
     }
     if (snap.selected?.id === tool.id && !tool.editor) {
       await start();
@@ -602,7 +559,9 @@ export function mountShell(root: HTMLElement): ShellHandle {
       unsubscribe();
       job?.cancel();
       panel?.destroy();
+      filesZone.destroy();
       catalogue.destroy();
+      workZone.destroy();
       tray.destroy();
       dropzone.destroy();
       document.removeEventListener('keydown', onGlobalKeydown);
