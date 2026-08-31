@@ -1704,7 +1704,7 @@ export function createFilesZone(init: {
   onClear: () => void;
 }): ZoneHandle {
   const root = el('aside', 'zone zone--files');
-  root.setAttribute('aria-labelledby', 'files-heading');
+  root.setAttribute('aria-labelledby', 'tray-heading'); // filetray.ts's own heading
 
   const heading = el('h2', 'panel__title', 'Files');
   heading.id = 'files-heading';
@@ -1758,7 +1758,7 @@ export type WorkZoneHandle = ZoneHandle & {
 
 export function createWorkZone(init: { onRun: () => void; onCancel: () => void }): WorkZoneHandle {
   const root = el('section', 'zone zone--work');
-  root.setAttribute('aria-labelledby', 'work-heading');
+  root.setAttribute('aria-labelledby', 'run-heading');
 
   const empty = el('div', 'zone__empty');
   empty.append(
@@ -2125,9 +2125,13 @@ In `tests/e2e/a11y.spec.ts`, replace the file's header note about the hero with 
 ```ts
 test('gives each zone a labelled landmark', async ({ page }) => {
   await page.goto('/');
-  await expect(page.locator('aside[aria-labelledby="files-heading"]')).toBeVisible();
+  // Ids as SHIPPED by Task 9, not as first guessed here: zone 1 reuses
+  // filetray.ts's existing <h2 id="tray-heading">Files</h2> rather than
+  // inventing a duplicate heading, and zone 3 kept `run-heading`, moved up
+  // from the inner .run card so there is one region rather than two nested.
+  await expect(page.locator('aside[aria-labelledby="tray-heading"]')).toBeVisible();
   await expect(page.locator('section[aria-labelledby="catalogue-heading"]')).toBeVisible();
-  await expect(page.locator('section[aria-labelledby="work-heading"]')).toBeVisible();
+  await expect(page.locator('section[aria-labelledby="run-heading"]')).toBeVisible();
 });
 
 test('reaches a tool card, then its Run button, by keyboard alone', async ({ page }) => {
