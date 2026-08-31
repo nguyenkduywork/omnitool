@@ -11,6 +11,12 @@
 // exposes `options`, the element it mounts into. `render` is a pure function
 // of the snapshot; nothing here reads `shownTool` or any other shell-owned
 // bookkeeping — see shell.ts's subscriber for why that split matters.
+//
+// The ZONE ROOT is the landmark (`aria-labelledby="run-heading"`), not the
+// inner `.run` card — one heading, `#run-heading`, labels both the card
+// visually and the zone's region role, so there is exactly one landmark here
+// rather than two nested ones sharing a name. The card itself carries no
+// `aria-labelledby` of its own for that reason.
 
 import { el, icon } from '../dom';
 import { createProgressRing, type ProgressHandle } from '../progress';
@@ -39,13 +45,13 @@ export type WorkZoneHandle = ZoneHandle & {
 
 export function createWorkZone(init: { onRun: () => void; onCancel: () => void }): WorkZoneHandle {
   const root = el('section', 'zone zone--work');
+  root.setAttribute('aria-labelledby', 'run-heading');
 
   // The one thing this zone shows or hides. Like the `<section class="run">`
   // it replaces, there is no separate empty state: with no tool picked, this
   // zone paints nothing, exactly as before the three-zone split.
   const panel = el('section', 'run');
   panel.hidden = true;
-  panel.setAttribute('aria-labelledby', 'run-heading');
 
   const glyph = el('span', 'run__glyph');
   const heading = el('h2', 'panel__title', '');

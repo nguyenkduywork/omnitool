@@ -7,6 +7,11 @@
 // morph) stays in shell.ts, so `render` below is defensive rather than load
 // bearing: by the time this zone is visible at all, `snapshot.entries` is
 // already non-empty in every reachable path.
+//
+// The landmark is labelled by `filetray.ts`'s OWN heading (`#tray-heading`)
+// rather than a second "Files" heading invented here — one visible heading
+// doing double duty as the tray's own caption and this zone's accessible
+// name, instead of a duplicate a screen reader would announce twice.
 
 import { el } from '../dom';
 import type { FileTrayHandle } from '../filetray';
@@ -37,7 +42,8 @@ export function createFilesZone(init: {
   tray: FileTrayHandle;
   onClear: () => void;
 }): FilesZoneHandle {
-  const root = el('div', 'zone zone--files');
+  const root = el('aside', 'zone zone--files');
+  root.setAttribute('aria-labelledby', 'tray-heading');
 
   const clear = el('button', 'btn btn--quiet btn--sm clearbtn', 'Remove all files');
   clear.type = 'button';
