@@ -1,9 +1,13 @@
 // src/ui/zones/catalogue.ts — zone 2, in both of its densities.
 //
 // Cold, this renders all 29 tools grouped by family: the tool-first door.
-// With files loaded, the SAME component renders the three applicability tiers.
-// One component, because two would drift — and because the whole reason the
-// second entry door is cheap is that there is no second landing page.
+// With files loaded, the SAME component renders the three applicability tiers,
+// PLUS — see `persistedGenerator` in `render` — whichever generator is still
+// the selection, since applicability's own bucketing structurally excludes
+// every generator and state.ts's pruneSelection just as deliberately never
+// drops one. One component, because two would drift — and because the whole
+// reason the second entry door is cheap is that there is no second landing
+// page.
 
 import type { ToolDef } from '../../types';
 import { el, icon } from '../dom';
@@ -175,7 +179,25 @@ export function createCatalogue(init: {
       primary.map((tool) => tool.id).join(','),
       blocked.map((b) => b.tool.id).join(','),
       utility.map((tool) => tool.id).join(','),
+      // A selected GENERATOR: see `persistedGenerator` in `render` below for
+      // why one can reach here at all, and why it needs a slot in the
+      // signature even though it is never one of the three tiers above.
+      snapshot.selected?.kind === 'generate' ? snapshot.selected.id : '',
     ].join('|');
+  }
+
+  /** A single quiet pill in the utility row — a utility tool that fits, or
+   *  (see `persistedGenerator` in `render`) a generator whose SELECTION
+   *  survived into a warm grid that structurally has no bucket for it. */
+  function pill(tool: ToolDef): HTMLButtonElement {
+    const node = el('button', 'utilitypill');
+    node.type = 'button';
+    node.dataset.tool = tool.id;
+    node.classList.toggle('is-selected', tool.id === selectedId);
+    node.setAttribute('aria-pressed', String(tool.id === selectedId));
+    node.append(icon(toolIcon(tool)), el('span', undefined, tool.name));
+    node.addEventListener('click', () => init.onPick(tool.id));
+    return node;
   }
 
   return {
@@ -234,22 +256,39 @@ export function createCatalogue(init: {
       blockedWrap.hidden = blocked.length === 0;
 
       utilityBar.replaceChildren();
-      for (const tool of utility) {
-        const pill = el('button', 'utilitypill');
-        pill.type = 'button';
-        pill.dataset.tool = tool.id;
-        pill.classList.toggle('is-selected', tool.id === selectedId);
-        pill.setAttribute('aria-pressed', String(tool.id === selectedId));
-        pill.append(icon(toolIcon(tool)), el('span', undefined, tool.name));
-        pill.addEventListener('click', () => init.onPick(tool.id));
-        utilityBar.append(pill);
-      }
-      utilityWrap.hidden = utility.length === 0;
+      for (const tool of utility) utilityBar.append(pill(tool));
+
+      // `applicabilityFor` structurally excludes EVERY generator from all
+      // three tiers above, unconditionally — it describes what fits these
+      // files, and a generator reads none (see core/format.ts's own comment
+      // on `applicabilityFor`, pinned by a test: "never lets a generator
+      // into any bucket, whatever is loaded"). But `state.ts`'s
+      // `pruneSelection` deliberately keeps a generator SELECTED straight
+      // through a file change, for the opposite reason — it never depended
+      // on the files either, so there is nothing about them that should make
+      // it lose its place (also pinned: "keeps a generator selected when the
+      // files change under it"). Both rules are correct on their own terms;
+      // reachable one after the other — select a generator cold, then drop a
+      // file, or pick one from the now bucket-aware palette while already
+      // warm — they used to leave the grid showing no selection at all while
+      // the work zone kept running it. `persistedGenerator` is that
+      // reconciliation: not a fourth bucket `applicabilityFor` computes, just
+      // this component adding back, from the snapshot's own `selected`, the
+      // one card its own bucketing rule can never contain. It rides in the
+      // quiet utility row rather than a new bucket of its own, because
+      // "ignores every file" and "runs on any file" read the same way to
+      // someone scanning the grid for what they can still do.
+      const persistedGenerator = snapshot.selected?.kind === 'generate' ? snapshot.selected : null;
+      if (persistedGenerator) utilityBar.append(pill(persistedGenerator));
+      utilityWrap.hidden = utility.length === 0 && !persistedGenerator;
 
       // Nothing to run AND nothing to explain: every bucket came up empty,
       // so there is no blocked card telling the story on its own. Silence
-      // here reads as "this app cannot do that" — say so instead.
-      const allEmpty = primary.length === 0 && blocked.length === 0 && utility.length === 0;
+      // here reads as "this app cannot do that" — say so instead. Not true
+      // when a persisted generator is sitting right there in the utility
+      // row, still perfectly runnable.
+      const allEmpty =
+        primary.length === 0 && blocked.length === 0 && utility.length === 0 && !persistedGenerator;
       empty.hidden = !allEmpty;
       if (allEmpty) {
         empty.textContent =

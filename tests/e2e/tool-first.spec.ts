@@ -74,3 +74,56 @@ test('explains a tool blocked only on count, rather than hiding it', async ({ pa
   await expect(organize).toContainText('Needs exactly 1 file');
   await expect(organize).toBeDisabled();
 });
+
+// Task 13: the router (ui/router.ts) wired into the shell — every tool gets
+// its own bookmarkable URL, and Back/Forward move between a tool and the
+// catalogue instead of leaving the app. FILES ARE NEVER IN THE URL (see
+// router.ts's own header comment), which the second test below is what
+// actually proves, not just asserts in a comment.
+
+test('gives a tool its own URL, and keeps back inside the app', async ({ page }) => {
+  await page.locator('.toolcard[data-tool="qr-generate"]').click();
+  await expect(page).toHaveURL(/#\/qr-generate$/);
+
+  await page.goBack();
+  await expect(page).toHaveURL(/#\/$|\/$/);
+  await expect(page.locator('.toolcard')).toHaveCount(29);
+
+  await page.goForward();
+  await expect(page.locator('.toolcard[data-tool="qr-generate"]')).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+});
+
+test('opens a deep link straight into the tool, with no files attached', async ({ page }) => {
+  // The registry's own id is `pdf-merge` (see src/core/registry.pdf.ts) —
+  // NOT `merge-pdfs`, which is only ever used as a placeholder in
+  // router.test.ts's format-agnostic parse/serialise checks.
+  //
+  // `beforeEach` above has already loaded `/` before this test body runs, so
+  // a bare `page.goto('/#/pdf-merge')` here is a HASH-ONLY, same-document
+  // navigation — a browser never re-requests the document for a URL that
+  // differs only in its hash. That would exercise `router`'s `hashchange`
+  // LISTENER, which stays live regardless of `.start()`, not the thing this
+  // test exists to cover: `.start()` itself, reading the hash a real,
+  // freshly opened tab already carries on its very first paint. The
+  // `page.reload()` forces that genuine fresh load (a reload is a real
+  // network re-request; the hash survives it, same as in a real browser).
+  // Without it this test passed even with `router.start()` never called at
+  // all — checked by hand while writing it, not left on faith.
+  await page.goto('/#/pdf-merge');
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Merge PDFs' })).toBeVisible();
+  await expect(page.locator('.tray__item')).toHaveCount(0);
+});
+
+test('falls back to the catalogue for an unknown tool id', async ({ page }) => {
+  // Same reasoning as the deep-link test above: force a genuine fresh load
+  // (router.start(), not the hashchange listener) so this actually covers
+  // the id-validation `router.start()` runs on boot, not just the listener
+  // that stays live either way.
+  await page.goto('/#/not-a-real-tool');
+  await page.reload();
+  await expect(page.locator('.toolcard')).toHaveCount(29);
+});

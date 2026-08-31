@@ -50,7 +50,8 @@ import { fadeHero } from './motion';
 import { defaultOptions, renderOptions, type OptionsHandle } from './optionspanel';
 import { createPalette } from './palette';
 import { prefetchModule, prefetchTool } from './prefetch';
-import { createState, type Snapshot } from './state';
+import { createRouter } from './router';
+import { createState, runBlockedReason, type Snapshot } from './state';
 import { createThemeControl } from './theme';
 import { createCatalogue } from './zones/catalogue';
 import { createFilesZone } from './zones/files';
@@ -291,6 +292,27 @@ export function mountShell(root: HTMLElement): ShellHandle {
   // itself trigger the morph.
   paint(snap);
 
+  // -------------------------------------------------------------- router
+  // Every tool gets its own bookmarkable, shareable URL — FILES NEVER RIDE
+  // ALONG (see router.ts's own header comment): a deep link opens the tool
+  // with nothing loaded, exactly like picking it cold. `select()` below
+  // takes the `fromRouter` flag this hands it, so a route never toggles a
+  // tool off and a route delivering the tool already on screen — which
+  // `createRouter`'s own doc comment says CAN happen twice in the same tick,
+  // same id both times — is a no-op rather than a second `mountOptions()`
+  // rebuilding the panel out from under whatever the user had already typed.
+  //
+  // Started AFTER the first `paint(snap)` above: `start()` reads the URL and
+  // fires `onRoute` synchronously, and `onRoute` calls `select()`, which
+  // reads and writes through `state` — that only reaches the screen once
+  // this shell is actually subscribed and has painted once, which the two
+  // lines above already guarantee.
+  const router = createRouter({
+    isKnownTool: (id) => getTool(id) !== undefined,
+    onRoute: (id) => void select(id, { fromRouter: true }),
+  });
+  router.start();
+
   // ------------------------------------------------------------- intake
   async function intake(files: File[]): Promise<void> {
     const added: TrayEntry[] = [];
@@ -428,19 +450,58 @@ export function mountShell(root: HTMLElement): ShellHandle {
     void mountOptions(tool);
   }
 
-  async function select(id: string): Promise<void> {
+  /**
+   * `opts.fromRouter` marks a call that came from `router`'s `onRoute` — `id`
+   * came from reading (or being pushed to) the URL, not from a card click or
+   * the palette. Two things follow:
+   *
+   *   - it must never TOGGLE OFF. A route repeating the tool already on
+   *     screen is a page load, a Back/Forward, or the router's own harmless
+   *     duplicate echo — never the "click the same card again" gesture the
+   *     toggle-off branch exists for. Gating that branch on `!opts.fromRouter`
+   *     is what keeps a route from ever deselecting.
+   *
+   *   - a route for the tool ALREADY selected must be a total no-op. Per
+   *     `createRouter`'s own doc comment, a same-tick multi-write pattern can
+   *     fire `onRoute` twice for the identical id — never a wrong id, never a
+   *     dropped one, just a duplicate. Without the guard below, that second
+   *     call would fall through to `mountOptions(tool)` a second time and
+   *     rebuild the options panel from its defaults, discarding whatever the
+   *     user had already typed into the first one.
+   */
+  async function select(id: string | null, opts: { fromRouter?: boolean } = {}): Promise<void> {
     if (snap.phase === 'running') return;
-    const tool = getTool(id);
-    if (!tool) return;
-    if (snap.selected?.id === id) {
+    if (opts.fromRouter && id !== null && snap.selected?.id === id) return;
+
+    // A click on the CURRENT tool deselects; a route never does (see above).
+    if (!opts.fromRouter && id !== null && snap.selected?.id === id) {
       clearSelection();
+      router.navigate(null);
       announce('Tool deselected.');
+      return;
+    }
+
+    const tool = id === null ? null : getTool(id);
+    if (!tool) {
+      // A route to the catalogue itself — Back/Forward, an unknown id
+      // (`router`'s own `read()` has already folded that into `null` before
+      // this ever sees it), or the initial load with no hash at all.
+      // `clearSelection()`, never a bare `state.selectTool(null)`: that
+      // helper forgets `shownTool` BEFORE telling the machine, which is the
+      // only reason `refreshTools`'s prune check does not mistake this for a
+      // files-no-longer-fit prune and fire that message instead (see the
+      // comment on `clearSelection`). Skipped entirely when nothing is
+      // selected, so a page load with an empty hash — the common case — does
+      // not force a needless extra render.
+      if (!opts.fromRouter) router.navigate(null);
+      if (snap.selected) clearSelection();
       return;
     }
 
     // Emits: `refreshTools` repaints the catalogue with the tick on this
     // card, and `syncWork` fills the work zone's head in and reveals it.
-    state.selectTool(id);
+    state.selectTool(tool.id);
+    if (!opts.fromRouter) router.navigate(tool.id);
     announce(`${tool.name} selected. ${tool.blurb}`);
 
     await mountOptions(tool);
@@ -533,13 +594,34 @@ export function mountShell(root: HTMLElement): ShellHandle {
   }
 
   // -------------------------------------------------------------- palette
-  /** Why `tool` can't run right now, or `null` when it can (Task 7). */
+  /**
+   * Why `tool` can't run right now, or `null` when it can (Task 7, made
+   * bucket-aware in Task 13).
+   *
+   * Reuses `runBlockedReason` (state.ts) rather than a second implementation
+   * of the same rule — the same one the work zone's Run button already
+   * builds its own label from, so there is exactly one wording for "why not"
+   * anywhere in the app, not two that could drift. That also settles the
+   * apostrophe: this file used to spell "doesn’t" with a curly one, inline;
+   * `runBlockedReason`'s copy uses a straight one. Reuse wins over keeping
+   * the old glyph — writing a second copy of the sentence just to preserve a
+   * curly quote would be the second implementation this exists to avoid.
+   *
+   * The old version refused everything until files were loaded
+   * ("Drop files first"), which is what made the palette a wall instead of a
+   * door: a tool that merely NEEDS files could not be picked ahead of them,
+   * even though picking it first and dropping files after is a completely
+   * ordinary flow (the grid's own "blocked" tier already treats a
+   * count-only shortfall this way). `runBlockedReason` already reports WHAT
+   * a tool needs — a count, a type — instead of refusing outright, and
+   * already never blocks a generator at all (it reads no file, so no file
+   * set is ever wrong for it). The check below is redundant with that one
+   * inside `runBlockedReason` but is kept here too, so the invariant reads
+   * at the call site and not only inside a function two files away.
+   */
   function unavailableReason(tool: ToolDef): string | null {
-    if (snap.entries.length === 0) return 'Drop files first — nothing is loaded yet.';
-    if (!toolsFor(mimes()).some((candidate) => candidate.id === tool.id)) {
-      return `${tool.name} doesn’t work with these files.`;
-    }
-    return null;
+    if (tool.kind === 'generate') return null;
+    return runBlockedReason(tool, mimes());
   }
 
   /**
@@ -583,6 +665,7 @@ export function mountShell(root: HTMLElement): ShellHandle {
   return {
     destroy(): void {
       unsubscribe();
+      router.destroy();
       job?.cancel();
       panel?.destroy();
       filesZone.destroy();

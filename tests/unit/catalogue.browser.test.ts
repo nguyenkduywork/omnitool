@@ -114,3 +114,96 @@ describe('createCatalogue — the all-empty warm message', () => {
     catalogue.destroy();
   });
 });
+
+// Task 13: reconciling state.ts's pruneSelection (which deliberately keeps a
+// generator selected straight through a file change — it never depended on
+// them) against applicabilityFor's bucketing (which just as deliberately
+// never lets a generator into primary, blocked, or utility — see
+// applicability.test.ts's "never lets a generator into any bucket"). Before
+// this, a generator selected cold and then made to survive a warm file set —
+// by dropping a file under it, or by picking one from the now bucket-aware
+// palette while already warm — left the grid showing no selection anywhere,
+// while the work zone kept it mounted and running.
+describe('createCatalogue — a persisted generator selection, warm', () => {
+  const GENERATOR: ToolDef = tool({
+    id: 'gen',
+    name: 'Generate QR code',
+    kind: 'generate',
+    accepts: [],
+    minInputs: 0,
+    maxInputs: 0,
+  });
+
+  it('shows the selected generator, ticked, in the warm grid even though it fits no bucket', () => {
+    const other = tool({ id: 'other' });
+    const catalogue = createCatalogue({
+      tools: [GENERATOR, other],
+      onPick: () => undefined,
+      onWarm: () => undefined,
+    });
+
+    catalogue.render({
+      phase: 'ready',
+      entries: [FILE],
+      selected: GENERATOR,
+      applicability: { primary: [other], blocked: [], utility: [] },
+      runBlockedReason: null,
+    });
+
+    const pill = catalogue.el.querySelector<HTMLElement>('.utilitypill[data-tool="gen"]');
+    expect(pill).not.toBeNull();
+    expect(pill?.classList.contains('is-selected')).toBe(true);
+    expect(pill?.getAttribute('aria-pressed')).toBe('true');
+    expect(catalogue.el.querySelector<HTMLElement>('.utility')?.hidden).toBe(false);
+
+    catalogue.destroy();
+  });
+
+  it('does not claim "no tool works" when only a persisted generator can run', () => {
+    const catalogue = createCatalogue({
+      tools: [GENERATOR],
+      onPick: () => undefined,
+      onWarm: () => undefined,
+    });
+
+    catalogue.render({
+      phase: 'ready',
+      entries: [FILE],
+      selected: GENERATOR,
+      applicability: { primary: [], blocked: [], utility: [] },
+      runBlockedReason: null,
+    });
+
+    expect(catalogue.el.querySelector<HTMLElement>('.catalogue__empty')?.hidden).toBe(true);
+
+    catalogue.destroy();
+  });
+
+  it('drops the pill again once the generator is deselected', () => {
+    const catalogue = createCatalogue({
+      tools: [GENERATOR],
+      onPick: () => undefined,
+      onWarm: () => undefined,
+    });
+
+    catalogue.render({
+      phase: 'ready',
+      entries: [FILE],
+      selected: GENERATOR,
+      applicability: { primary: [], blocked: [], utility: [] },
+      runBlockedReason: null,
+    });
+    expect(catalogue.el.querySelector('.utilitypill[data-tool="gen"]')).not.toBeNull();
+
+    catalogue.render({
+      phase: 'filtered',
+      entries: [FILE],
+      selected: null,
+      applicability: { primary: [], blocked: [], utility: [] },
+      runBlockedReason: null,
+    });
+    expect(catalogue.el.querySelector('.utilitypill[data-tool="gen"]')).toBeNull();
+
+    catalogue.destroy();
+  });
+});

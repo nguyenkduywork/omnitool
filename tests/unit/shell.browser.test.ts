@@ -53,6 +53,12 @@ let shell: ShellHandle;
 let observers: MutationObserver[];
 
 beforeEach(() => {
+  // Task 13: `mountShell` reads `location.hash` on mount (`router.start()`),
+  // so a hash a PRIOR test left behind would pre-select a tool before this
+  // test's own setup ever runs — reset before mounting, not only after, in
+  // case a test elsewhere in the suite (or a failed one that skipped its own
+  // cleanup) left one behind.
+  location.hash = '';
   root = document.createElement('div');
   document.body.append(root);
   observers = [];
@@ -63,6 +69,7 @@ afterEach(() => {
   for (const observer of observers) observer.disconnect();
   shell.destroy();
   root.remove();
+  location.hash = '';
 });
 
 /**
@@ -214,6 +221,47 @@ describe('the shell against the state machine', () => {
 
     expect(mounts()).toBe(1);
     expect(count('.run__options .options')).toBe(1);
+  });
+});
+
+// Task 13: the router wired into `select()`. THE CRITICAL PREREQUISITE
+// carried over from Task 12's review — `createRouter`'s own doc comment on
+// `lastWrittenHash` explains that a same-tick multi-write pattern (two
+// EXTERNAL hash writes landing back on the id already on screen, neither of
+// them this shell's own `router.navigate()` echo) makes `onRoute` fire
+// TWICE for the identical id. Never a wrong id, never a dropped one — just a
+// duplicate. `select(id, { fromRouter: true })`'s guard exists so that
+// second call is a total no-op: without it, the duplicate falls through to
+// `mountOptions()` a second time and rebuilds the options panel from its
+// schema defaults, silently discarding whatever the user had already typed.
+describe('a duplicate route for the tool already on screen', () => {
+  it('does not remount the options panel or discard what the user typed', async () => {
+    // Selected the way a real deep link (or Back/Forward) delivers it — an
+    // EXTERNAL hash write, not a click — so this exercises `router.start()`
+    // / the `hashchange` listener, not `select()`'s click path.
+    location.hash = '#/qr-generate';
+    await until('Run to take focus', () => document.activeElement === one('.run .btn--primary'));
+
+    const mounts = watchOptionMounts();
+    const input = one<HTMLInputElement>('.run__options input.field--text');
+    input.value = 'https://example.com/typed-by-the-user';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+
+    // Two more EXTERNAL writes, landing back on 'qr-generate', in the same
+    // synchronous turn. Both resulting `hashchange` events are handled only
+    // once `location.hash` has already settled at its FINAL value (all
+    // three assignments run synchronously before either event is
+    // dispatched), and the router reads the CURRENT hash, not a value
+    // carried on the event — so neither event ever reports 'pdf-merge': both
+    // report 'qr-generate', the same id twice, exactly the case above.
+    location.hash = '#/pdf-merge';
+    location.hash = '#/qr-generate';
+    await settle();
+
+    expect(mounts()).toBe(0);
+    expect(one<HTMLInputElement>('.run__options input.field--text').value).toBe(
+      'https://example.com/typed-by-the-user',
+    );
   });
 });
 
