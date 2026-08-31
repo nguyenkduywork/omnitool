@@ -1,8 +1,15 @@
-// src/ui/shell.ts — one screen, and the state machine behind it.
+// src/ui/shell.ts — one screen, driven by the state machine in ./state.
 //
 // The shell knows nothing about PDFs, images or archives. It knows how to:
 //   sniff what arrived -> ask the registry what applies -> render that tool's
 //   options -> run it -> show what came back.
+//
+// WHAT the screen should show is not decided here. `state.ts` holds the files,
+// the selection, the three applicability tiers and the reason Run is blocked,
+// and it is unit-testable under plain Node because it never touches the DOM.
+// This file subscribes once and does nothing but paint the snapshot it is
+// handed: every reader below goes through `snap`, and every mutation goes
+// through `state.*` and comes back as a notification.
 //
 // The product decision this file exists to serve is DROP FIRST, CHOOSE SECOND
 // (§7.1): tools are never offered before the files are in, and once they are in,
@@ -26,7 +33,7 @@
 // keeps the entry chunk inside the §1 budget.
 
 import { label, sniffType, type Applicability } from '../core/format';
-import { TOOLS, applicabilityFor, getTool, toolsFor } from '../core/registry';
+import { TOOLS, getTool, toolsFor } from '../core/registry';
 import type { Job, JobResult, OpErrorCode, ToolDef } from '../types';
 import { el, icon } from './dom';
 import { createDropzone } from './dropzone';
@@ -38,6 +45,7 @@ import { createPalette } from './palette';
 import { prefetchModule, prefetchTool } from './prefetch';
 import { createProgressRing } from './progress';
 import { createResults } from './results';
+import { createState } from './state';
 import { createThemeControl } from './theme';
 import { GROUP_ICON, GROUP_ORDER, GROUP_TITLE, toolIcon } from './toolicons';
 
@@ -69,15 +77,34 @@ function asFailure(error: unknown): { code: OpErrorCode; message: string; file?:
 
 export function mountShell(root: HTMLElement): ShellHandle {
   // ---------------------------------------------------------------- state
-  let entries: TrayEntry[] = [];
-  let selected: ToolDef | null = null;
+  // The machine owns the files, the selection and everything derived from
+  // them; `snap` is the last thing it said. Nothing below writes to it.
+  const state = createState(TOOLS);
+  let snap = state.snapshot();
+
+  // What the shell owns is the DOM: the mounted options panel, the running
+  // job, and the "what is already painted" guards that keep this file from
+  // rebuilding surfaces that have not changed.
   let options: Record<string, unknown> = {};
   let panel: OptionsHandle | null = null;
   let job: Job | null = null;
-  let running = false;
   let gridRevealed = false;
   let lastGridSignature = '';
   let lastFilesSignature = '';
+  /**
+   * The tool the run panel currently DESCRIBES — not a second copy of the
+   * selection. The machine drops a selection whose TYPE no longer fits all on
+   * its own (state.ts's `pruneSelection`), so by the time `refreshTools` sees
+   * the new snapshot the selection is already gone while its options panel is
+   * still mounted. This is what remembers it long enough to tear that down.
+   */
+  let shownTool: ToolDef | null = null;
+
+  const unsubscribe = state.subscribe((next) => {
+    snap = next;
+    refreshTools();
+    syncRunPanel();
+  });
 
   // ------------------------------------------------------------- chrome
   const live = el('div', 'sr-only');
@@ -129,9 +156,9 @@ export function mountShell(root: HTMLElement): ShellHandle {
 
   const tray: FileTrayHandle = createFileTray({
     onChange: (next) => {
-      // The tray has already mutated its own DOM; mirror, never re-seed.
-      entries = next;
-      refreshTools();
+      // The tray has already mutated its own DOM; mirror, never re-seed. The
+      // machine's notification is what repaints everything else.
+      state.setFiles(next);
     },
     announce,
   });
@@ -140,11 +167,12 @@ export function mountShell(root: HTMLElement): ShellHandle {
   const clearButton = el('button', 'btn btn--quiet btn--sm clearbtn', 'Remove all files');
   clearButton.type = 'button';
   clearButton.addEventListener('click', () => {
-    entries = [];
+    // Before the machine emits: the next intake is a first paint again, and
+    // `refreshTools` runs inside `clearFiles` rather than after it.
+    gridRevealed = false;
+    state.clearFiles();
     tray.setEntries([]);
     results.clear();
-    gridRevealed = false;
-    refreshTools();
     announce('All files removed.');
     showHero();
     // Never strand the keyboard on a button that just disappeared.
@@ -196,7 +224,10 @@ export function mountShell(root: HTMLElement): ShellHandle {
 
   const runButton = el('button', 'btn btn--primary');
   runButton.type = 'button';
-  runButton.append(icon('play'), el('span', undefined, 'Run'));
+  // Addressable, because when the run is blocked the REASON becomes the label:
+  // a disabled button with no explanation is the thing this overhaul removes.
+  const runLabel = el('span', undefined, 'Run');
+  runButton.append(icon('play'), runLabel);
 
   const cancelButton = el('button', 'btn btn--ghost', 'Cancel');
   cancelButton.type = 'button';
@@ -246,10 +277,11 @@ export function mountShell(root: HTMLElement): ShellHandle {
     }
     if (added.length === 0) return;
 
-    const wasEmpty = entries.length === 0;
-    entries = [...entries, ...added];
-    tray.setEntries(entries);
-    refreshTools();
+    const wasEmpty = snap.entries.length === 0;
+    // Emits, which is what refreshes the grid; the tray is the one surface the
+    // machine does not drive, so it is mirrored from the new snapshot.
+    state.addFiles(added);
+    tray.setEntries([...snap.entries]);
 
     // The first run is the only one that pays for the pipeline chunk; warm it
     // while the user is still reading the tool grid.
@@ -264,7 +296,7 @@ export function mountShell(root: HTMLElement): ShellHandle {
   }
 
   function mimes(): string[] {
-    return entries.map((entry) => entry.type);
+    return snap.entries.map((entry) => entry.type);
   }
 
   async function showWorkbench(): Promise<void> {
@@ -290,7 +322,7 @@ export function mountShell(root: HTMLElement): ShellHandle {
    */
   function gridSignature(app: Applicability): string {
     return [
-      entries.length,
+      snap.entries.length,
       app.primary.map((tool) => tool.id).join(','),
       app.blocked.map((blocked) => blocked.tool.id).join(','),
       app.utility.map((tool) => tool.id).join(','),
@@ -299,12 +331,13 @@ export function mountShell(root: HTMLElement): ShellHandle {
 
   /** Identity of the FILES, so an editor built from them can be kept in sync. */
   function filesSignature(): string {
-    return entries.map((entry) => `${entry.file.name}:${entry.file.size}`).join('|');
+    return snap.entries.map((entry) => `${entry.file.name}:${entry.file.size}`).join('|');
   }
 
   function refreshTools(): void {
-    const app: Applicability =
-      entries.length === 0 ? { primary: [], blocked: [], utility: [] } : applicabilityFor(mimes());
+    // The machine has already bucketed the tools for this file set; asking the
+    // registry again here would be a second, divergeable answer.
+    const app: Applicability = snap.applicability;
 
     const signature = gridSignature(app);
     if (signature === lastGridSignature) {
@@ -361,25 +394,31 @@ export function mountShell(root: HTMLElement): ShellHandle {
     }
     utilityWrap.hidden = app.utility.length === 0;
 
-    const subject = entries.length === 1 ? 'this file' : `these ${entries.length} files`;
+    const count = snap.entries.length;
+    const subject = count === 1 ? 'this file' : `these ${count} files`;
     const runnable = app.primary.length + app.utility.length;
     toolsCount.textContent =
       runnable === 0 ? '' : `${runnable === 1 ? '1 tool' : `${runnable} tools`} can run on ${subject}.`;
 
     toolsEmpty.hidden = runnable > 0;
-    if (runnable === 0 && entries.length > 0) {
+    if (runnable === 0 && count > 0) {
       toolsEmpty.textContent =
         'No tool works with this exact mix of files. Remove the odd one out — most tools want every file to be the same kind.';
     }
 
     // Keep the selection only while it is still valid for what is in the tray.
     // A blocked card is not selectable, so it is not in this list.
+    //
+    // The question is asked of `shownTool` as well as of the snapshot: a tool
+    // the machine has already pruned needs exactly the same teardown, and only
+    // the shell knows it was on screen a moment ago.
     const selectable = [...app.primary, ...app.utility];
-    if (selected && !selectable.some((tool) => tool.id === selected?.id)) {
+    const current = snap.selected ?? shownTool;
+    if (current && !selectable.some((tool) => tool.id === current.id)) {
       clearSelection();
       announce('The selected tool no longer fits these files, so it was cleared.');
-    } else if (selected) {
-      markSelected(selected.id);
+    } else if (snap.selected) {
+      markSelected(snap.selected.id);
       syncEditor();
     }
 
@@ -428,21 +467,43 @@ export function mountShell(root: HTMLElement): ShellHandle {
   }
 
   function clearSelection(): void {
-    selected = null;
     panel?.destroy();
     panel = null;
     options = {};
     lastFilesSignature = '';
-    runPanel.hidden = true;
     progressWrap.hidden = true;
+    // Forgotten BEFORE the machine is told, or the notification below would
+    // find a painted tool that is no longer selectable and clear it again.
+    shownTool = null;
     markSelected(null);
+    // Emits: `syncRunPanel` is what hides the panel.
+    state.selectTool(null);
+  }
+
+  /** The run panel is a pure function of the snapshot. */
+  function syncRunPanel(): void {
+    const tool = snap.selected;
+    shownTool = tool;
+    runPanel.hidden = tool === null;
+    if (!tool) return;
+
+    runHeading.textContent = tool.name;
+    runBlurb.textContent = tool.blurb;
+    runGlyph.replaceChildren(icon(toolIcon(tool)));
+    runPanel.dataset.kind = tool.group;
+
+    // The reason IS the label. Cancel and the progress ring stay with
+    // `setRunning`, which also has to decide where stranded focus goes.
+    const blocked = snap.runBlockedReason;
+    runButton.disabled = snap.phase === 'running' || blocked !== null;
+    runLabel.textContent = blocked ?? 'Run';
   }
 
   /** Build (or rebuild) the options surface for `tool`. */
   async function mountOptions(tool: ToolDef): Promise<void> {
     lastFilesSignature = filesSignature();
     // A preset reads the files' METADATA only — the sniffed type, not contents.
-    const sniffed = entries.map((entry) => ({
+    const sniffed = snap.entries.map((entry) => ({
       name: entry.file.name,
       size: entry.file.size,
       type: entry.type,
@@ -456,11 +517,11 @@ export function mountShell(root: HTMLElement): ShellHandle {
     // Probe the encoders BEFORE offering a format, so an unsupported choice is
     // disabled with the reason visible rather than offered and then failed (§5.2).
     const disabled = await disabledFormatChoices(tool.options);
-    if (selected?.id !== tool.id) return;
+    if (snap.selected?.id !== tool.id) return;
 
     const mounted = renderOptions({
       tool,
-      files: entries.map((entry) => entry.file),
+      files: snap.entries.map((entry) => entry.file),
       onChange: (next) => {
         options = next;
       },
@@ -479,47 +540,51 @@ export function mountShell(root: HTMLElement): ShellHandle {
    * the op options describing files that are no longer there.
    */
   function syncEditor(): void {
-    if (!selected?.editor || running) return;
+    const tool = snap.selected;
+    // Only a tool the run panel is ALREADY showing can be out of sync. A
+    // selection made this instant has not been painted yet, and mounting it
+    // here would race `select()`'s own mount and build the board twice.
+    if (!tool?.editor || shownTool?.id !== tool.id || snap.phase === 'running') return;
     const signature = filesSignature();
     if (signature === lastFilesSignature) return;
-    void mountOptions(selected);
+    void mountOptions(tool);
   }
 
   async function select(id: string): Promise<void> {
-    if (running) return;
+    if (snap.phase === 'running') return;
     const tool = getTool(id);
     if (!tool) return;
-    if (selected?.id === id) {
+    if (snap.selected?.id === id) {
       clearSelection();
       announce('Tool deselected.');
       return;
     }
 
-    selected = tool;
+    // Emits: `syncRunPanel` fills the head in and reveals the panel. The grid
+    // is not rebuilt by that (its content is unchanged), so the tick still has
+    // to be moved here.
+    state.selectTool(id);
     markSelected(id);
-    runHeading.textContent = tool.name;
-    runBlurb.textContent = tool.blurb;
-    runGlyph.replaceChildren(icon(toolIcon(tool)));
-    runPanel.dataset.kind = tool.group;
-    runPanel.hidden = false;
     progressWrap.hidden = true;
     announce(`${tool.name} selected. ${tool.blurb}`);
 
     await mountOptions(tool);
-    if (selected?.id !== id) return;
+    if (snap.selected?.id !== id) return;
+    // The e2e suite waits on this: Run taking focus is the app's own race-free
+    // "ready" signal, and it lands only once the options have mounted.
     runButton.focus();
   }
 
   // ---------------------------------------------------------------- run
   function setRunning(on: boolean): void {
-    running = on;
     // Disabling the focused element blurs it (moves focus to <body>) in every
     // browser — a keyboard user who just activated Run or Remove-all must not
     // be dropped onto nothing. Cancel is about to become the one live,
-    // meaningful control, so focus follows there instead.
+    // meaningful control, so focus follows there instead. Read BEFORE the
+    // machine emits, because that emit is what disables Run.
     const stranded =
       on && (document.activeElement === runButton || document.activeElement === clearButton);
-    runButton.disabled = on;
+    state.setRunning(on);
     cancelButton.hidden = !on;
     progressWrap.hidden = !on;
     clearButton.disabled = on;
@@ -527,15 +592,15 @@ export function mountShell(root: HTMLElement): ShellHandle {
   }
 
   async function start(): Promise<void> {
-    const tool = selected;
-    if (!tool || running) return;
+    const tool = snap.selected;
+    if (!tool || snap.phase === 'running') return;
 
-    const files = entries.map((entry) => entry.file);
+    const files = snap.entries.map((entry) => entry.file);
     // The sniffed type comes along so the results tray can tell whether an
     // input and an output are even the same kind of thing before it offers a
     // size comparison. entry.type is the magic-byte result, not the browser's
     // guess from the extension.
-    const inputs = entries.map((entry) => ({
+    const inputs = snap.entries.map((entry) => ({
       name: entry.file.name,
       size: entry.file.size,
       type: entry.type,
@@ -604,7 +669,7 @@ export function mountShell(root: HTMLElement): ShellHandle {
   // -------------------------------------------------------------- palette
   /** Why `tool` can't run right now, or `null` when it can (Task 7). */
   function unavailableReason(tool: ToolDef): string | null {
-    if (entries.length === 0) return 'Drop files first — nothing is loaded yet.';
+    if (snap.entries.length === 0) return 'Drop files first — nothing is loaded yet.';
     if (!toolsFor(mimes()).some((candidate) => candidate.id === tool.id)) {
       return `${tool.name} doesn’t work with these files.`;
     }
@@ -624,13 +689,13 @@ export function mountShell(root: HTMLElement): ShellHandle {
    * leaves it in.
    */
   async function runFromPalette(tool: ToolDef): Promise<void> {
-    if (running) return;
-    if (selected?.id !== tool.id) {
+    if (snap.phase === 'running') return;
+    if (snap.selected?.id !== tool.id) {
       await select(tool.id);
     } else {
       runPanel.hidden = false;
     }
-    if (selected?.id === tool.id && !tool.editor) {
+    if (snap.selected?.id === tool.id && !tool.editor) {
       await start();
     }
   }
@@ -653,6 +718,7 @@ export function mountShell(root: HTMLElement): ShellHandle {
 
   return {
     destroy(): void {
+      unsubscribe();
       job?.cancel();
       panel?.destroy();
       tray.destroy();
