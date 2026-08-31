@@ -737,6 +737,19 @@ html.is-dragging .hero__drop {
   gap: var(--s-6);
 }
 
+/* Every tier came up empty (rare: it needs every utility tool's COUNT to
+ * miss too, not just a type mismatch) — silence would read as "this app
+ * cannot do that", so it gets the same explained-not-vanished treatment as
+ * a single blocked card, just for the whole selection at once. */
+.catalogue__empty {
+  padding: var(--s-5);
+  border: 1px dashed var(--line-2);
+  border-radius: var(--r-lg);
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  text-wrap: pretty;
+}
+
 .toolgroup {
   display: grid;
   gap: var(--s-3);
