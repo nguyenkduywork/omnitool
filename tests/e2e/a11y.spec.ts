@@ -1,11 +1,17 @@
 // tests/e2e/a11y.spec.ts — accessibility that only a real browser can prove,
 // against the real production build (see playwright.config.ts's `webServer`).
 //
-// Two things live here. Most of the file is keyboard-only operation. The last
-// describe is about LEGIBILITY, and it is here for the same reason: `npm run
-// contrast` reads token pairs straight out of tokens.css, so it can prove
-// `--ink-2` on `--bg` and cannot see an `opacity` on an ancestor compositing
-// that same pair down to 3:1. Only a rendered page knows the difference.
+// Three things live here. Most of the file is keyboard-only operation, proven
+// against the shipped three-zone workbench (files / catalogue / work —
+// ui/zones/*.ts), which is always mounted and never a separate screen from
+// the landing hero (see shell.ts's `paint`). A short describe after it checks
+// that each zone forms its own labelled landmark, one region per zone rather
+// than the nested duplicate Task 9 originally shipped (see filetray.ts). The
+// last describe is about LEGIBILITY, and it is here for the same reason:
+// `npm run contrast` reads token pairs straight out of tokens.css, so it can
+// prove `--ink-2` on `--bg` and cannot see an `opacity` on an ancestor
+// compositing that same pair down to 3:1. Only a rendered page knows the
+// difference.
 //
 // WHY THIS EXISTS AS AN E2E TEST RATHER THAN A MANUAL CHECK
 //
@@ -240,6 +246,64 @@ test.describe('keyboard-only operation', () => {
       if (bad) invisible.push(bad);
     }
     expect(invisible).toEqual([]);
+  });
+
+  test('reaches a tool card, then its Run button, by keyboard alone', async ({ page }) => {
+    // Two PDFs, dropped before tabbing: `pdf-merge`'s Run only becomes a
+    // FOCUSABLE target of its own once it is enabled. A disabled <button> —
+    // which Run legitimately is whenever `runBlockedReason` is non-null (see
+    // zones/work.ts) — cannot take focus at all; that is native HTML
+    // behaviour, not a bug, so `runButton.focus()` in `select()` (shell.ts)
+    // is a silent no-op on a blocked tool and focus is left on the toolcard
+    // that was just activated. Proving the FOCUS MECHANIC itself — Tab to a
+    // card, Enter selects it, focus lands on Run — needs a tool that is
+    // actually ready to run once selected, which is what the files below
+    // are for.
+    await page
+      .locator('input[type="file"]')
+      .setInputFiles([fixturePath('small.pdf'), fixturePath('small.pdf')]);
+    await expect(page.locator('[aria-label*="Position"]').first()).toBeVisible({ timeout: 15_000 });
+
+    const toCard = await tabUntil(page, (info) => info.label?.startsWith('Merge PDFs') === true);
+    expect(toCard).toBeLessThan(40);
+
+    await page.keyboard.press('Enter');
+    // select() moves focus onto Run once the option panel has mounted.
+    await expect(page.getByRole('button', { name: 'Run' })).toBeFocused();
+    await expect(page.getByRole('button', { name: 'Run' })).toBeEnabled();
+  });
+});
+
+test.describe('landmarks', () => {
+  test('gives each zone a labelled landmark, with no duplicate "Files" region', async ({ page }) => {
+    // Ids as SHIPPED: zone 1 (`ui/zones/files.ts`) reuses filetray.ts's own
+    // `<h2 id="tray-heading">Files</h2>` rather than inventing a duplicate
+    // heading, and zone 3 (`ui/zones/work.ts`) keeps `run-heading` on the
+    // ZONE root, not the inner `.run` card — one heading labelling one
+    // landmark, not two nested ones sharing a name.
+    await expect(page.locator('aside[aria-labelledby="tray-heading"]')).toBeVisible();
+    await expect(page.locator('section[aria-labelledby="catalogue-heading"]')).toBeVisible();
+
+    // filetray.ts's own `<section class="tray">` used to carry this SAME
+    // `aria-labelledby`, which nested a `region` (the tray's own heading
+    // makes ANY named `<section>` one) inside the `complementary` landmark
+    // zone--files already is — landmark navigation announced "Files" twice
+    // for one visual area. This task's fix drops the attribute from the
+    // tray, so exactly one element in the whole page — the zone's own
+    // `<aside>` — carries it now, and the heading itself still exists,
+    // referenced by id, for both to point at.
+    await expect(page.locator('[aria-labelledby="tray-heading"]')).toHaveCount(1);
+
+    // Zone 3 paints nothing until a tool is picked (ui/zones/work.ts: "like
+    // the `<section class="run">` it replaces, there is no separate empty
+    // state") — with nothing selected its only child is `hidden` and the
+    // grid collapses to zero height, so `toBeVisible()` on the landmark
+    // itself would fail even though it is correctly in the accessibility
+    // tree. Picking the cold-reachable QR generator (Task 10's second door —
+    // no file needed) gives it real content before checking it is a
+    // landmark too.
+    await page.locator('.toolcard[data-tool="qr-generate"]').click();
+    await expect(page.locator('section[aria-labelledby="run-heading"]')).toBeVisible();
   });
 });
 

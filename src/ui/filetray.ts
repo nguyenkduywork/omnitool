@@ -81,8 +81,16 @@ function isThumbnailable(type: string): boolean {
 }
 
 export function createFileTray(init: FileTrayInit): FileTrayHandle {
+  // No `aria-labelledby` here: zone--files (ui/zones/files.ts) is the ONE
+  // landmark for this whole area and already carries
+  // `aria-labelledby="tray-heading"`, pointing at the `<h2>` below. A
+  // `<section>` only becomes a `region` landmark once it has an accessible
+  // name (an `aria-labelledby` of its own would give it one), so naming this
+  // section the same way would nest a second "Files" landmark inside the
+  // first — landmark navigation would announce two "Files" where one does
+  // the job. The heading itself stays right here: the aside references it by
+  // id, and it is still this tray's own visible caption either way.
   const root = el('section', 'tray');
-  root.setAttribute('aria-labelledby', 'tray-heading');
 
   const head = el('div', 'tray__head');
   const heading = el('h2', 'panel__title', 'Files');
