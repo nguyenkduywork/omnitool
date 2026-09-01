@@ -546,7 +546,31 @@ export function mountShell(root: HTMLElement): ShellHandle {
    *     user had already typed into the first one.
    */
   async function select(id: string | null, opts: { fromRouter?: boolean } = {}): Promise<void> {
-    if (snap.phase === 'running') return;
+    if (snap.phase === 'running') {
+      // I1: every CLICK path that could reach `select()` mid-run is already
+      // disabled while running — the catalogue's cards and pills
+      // (`zones/catalogue.ts`'s `syncRunning`), and the palette's own
+      // `snap.phase === 'running'` guards in `runFromPalette`/`commit` — so
+      // the only way this branch is still reached during a run is a ROUTE:
+      // Back/Forward, an edited address bar, or an external link. Those
+      // change `location.hash` in the browser itself, synchronously and
+      // unconditionally, before `onRoute` ever fires — nothing this app does
+      // can stop that. The old behaviour was to drop the route on the floor
+      // here, which left the address bar lying about what was on screen for
+      // as long as the run lasted, and — because nothing ever corrected it —
+      // for good afterwards too: the run ending does not touch the URL,
+      // so a hash a Back navigation left behind stayed wrong even once
+      // `select()` was reachable again. Re-asserting is the fix chosen over
+      // queuing the route for when the run ends: queuing would apply a
+      // navigation the user fired mid-run at the moment they are looking at
+      // the run's own results, which is a worse surprise than the address
+      // bar simply agreeing with the screen for the run's duration. A click
+      // path reaching here despite being disabled (there should be none) is
+      // deliberately left alone — `opts.fromRouter` is what tells the two
+      // apart, and only a route gets corrected.
+      if (opts.fromRouter) router.navigate(snap.selected?.id ?? null);
+      return;
+    }
     if (opts.fromRouter && id !== null && snap.selected?.id === id) return;
 
     // A click on the CURRENT tool deselects; a route never does (see above).
@@ -614,16 +638,31 @@ export function mountShell(root: HTMLElement): ShellHandle {
     const tool = snap.selected;
     if (!tool || snap.phase === 'running') return;
 
-    const files = snap.entries.map((entry) => entry.file);
+    // I3: a generator reads NO file — that is what `kind: 'generate'` means,
+    // and `runBlockedReason` (state.ts) already never blocks one on file
+    // count for exactly this reason. Before this guard, `files` below was
+    // built unconditionally from every entry in the tray, so running a
+    // generator (the QR code, `accepts: []`, `minInputs: 0`, `maxInputs: 0`)
+    // with something else loaded read that something else's FULL bytes —
+    // proved live by wrapping `File.prototype.arrayBuffer`: a PDF sitting in
+    // the tray got read and structure-cloned to the worker to draw a QR code
+    // that only ever looks at `options.text`. Nothing between here and the
+    // worker validates the count against `maxInputs`, so nothing else would
+    // have caught it. `inputs` (below) gets the same guard: a generator's
+    // results tray must not claim an input the run never touched.
+    const files = tool.kind === 'generate' ? [] : snap.entries.map((entry) => entry.file);
     // The sniffed type comes along so the results tray can tell whether an
     // input and an output are even the same kind of thing before it offers a
     // size comparison. entry.type is the magic-byte result, not the browser's
     // guess from the extension.
-    const inputs = snap.entries.map((entry) => ({
-      name: entry.file.name,
-      size: entry.file.size,
-      type: entry.type,
-    }));
+    const inputs =
+      tool.kind === 'generate'
+        ? []
+        : snap.entries.map((entry) => ({
+            name: entry.file.name,
+            size: entry.file.size,
+            type: entry.type,
+          }));
 
     setRunning(true);
     workZone.progress.reset();

@@ -171,6 +171,26 @@ export function createCatalogue(init: {
     }
   }
 
+  /**
+   * I1: a click on another tool mid-run used to reach `shell.ts`'s `select()`,
+   * which silently no-op'd on its `snap.phase === 'running'` guard — every
+   * OTHER control that a run makes meaningless (Run itself, Remove all files,
+   * the whole tray — see `zones/files.ts` and `filetray.ts`) already says so
+   * by going `disabled`; the grid alone stayed `disabled: false, tabIndex: 0`
+   * for the run's whole duration, silently swallowing the click instead.
+   * `.toolcard--blocked` cards are excluded deliberately: they are already
+   * `disabled` for an unrelated, PERMANENT reason (the wrong file count for
+   * THIS selection), and must not be quietly re-enabled the moment a run
+   * ends just because this loop stops touching them.
+   */
+  function syncRunning(running: boolean): void {
+    for (const node of root.querySelectorAll<HTMLButtonElement>(
+      '.toolcard:not(.toolcard--blocked), .utilitypill',
+    )) {
+      node.disabled = running;
+    }
+  }
+
   function gridSignature(snapshot: Snapshot): string {
     if (snapshot.entries.length === 0) return 'cold';
     const { primary, blocked, utility } = snapshot.applicability;
@@ -204,6 +224,14 @@ export function createCatalogue(init: {
     el: root,
     render(snapshot) {
       selectedId = snapshot.selected?.id ?? null;
+      // I1: computed once and applied on every exit path below (the
+      // early-return for an unchanged signature included) — see
+      // `syncRunning`'s own comment for why this cannot be folded into
+      // `gridSignature` (running/not-running never changes which tools are in
+      // which tier, so it must not force a full rebuild) or skipped on the
+      // fast path (a run can start or end without the grid's CONTENT changing
+      // at all, which is exactly when the early return below fires).
+      const running = snapshot.phase === 'running';
       // Independent of cold/warm and of the short-circuit below: a generator
       // (the QR code) is reachable — and selectable — straight from the cold
       // grid, with no files at all, so this cannot wait for the warm branch
@@ -217,6 +245,7 @@ export function createCatalogue(init: {
         // than the whole grid being torn down and rebuilt under whichever
         // card the click that caused this render just landed on.
         markSelected(selectedId);
+        syncRunning(running);
         return;
       }
       lastSignature = signature;
@@ -231,6 +260,7 @@ export function createCatalogue(init: {
         utilityWrap.hidden = true;
         empty.hidden = true;
         reveal();
+        syncRunning(running);
         return;
       }
 
@@ -240,6 +270,17 @@ export function createCatalogue(init: {
       const runnable = primary.length + utility.length;
 
       heading.textContent = 'Tools for these files';
+      // M1: `runnable === 0` (the blank-header branch) is DEFENSIVE ONLY
+      // against the current 29-tool registry — six tools declare
+      // `accepts: ['*']`, `minInputs: 1`, `maxInputs: null`, so with at least
+      // one file loaded the utility bucket alone already guarantees
+      // `runnable > 0` (`utility.length >= 1` whenever `primary.length ===
+      // 0`, since a `'*'` tool can never be TYPE-blocked and a single file
+      // always satisfies `minInputs: 1`/`maxInputs: null`). Left in, not
+      // deleted: a future tool with a bounded range (`maxInputs` some finite
+      // N greater than 1) could make `runnable === 0` reachable again — see
+      // the followups doc's "countReason's... unreachable" entry for the
+      // same shape of gap one layer down.
       count.textContent =
         runnable === 0 ? '' : `${runnable === 1 ? '1 tool' : `${runnable} tools`} can run on ${subject}.`;
 
@@ -287,6 +328,16 @@ export function createCatalogue(init: {
       // here reads as "this app cannot do that" — say so instead. Not true
       // when a persisted generator is sitting right there in the utility
       // row, still perfectly runnable.
+      //
+      // M1: DEFENSIVE ONLY against today's registry, for the same reason as
+      // `runnable === 0` above — `utility` cannot come up empty with at least
+      // one file loaded (six `'*'`-accepting tools, none of them ever
+      // TYPE-blocked or COUNT-blocked by a single file), so `allEmpty` can
+      // never actually be true right now. `tests/unit/catalogue.browser.test.ts`
+      // still exercises this branch directly, against a hand-built snapshot
+      // the real registry cannot produce — see that test file's own comment.
+      // Kept, not deleted: a registry with a bounded-range or narrower-than-
+      // '*' utility tool would make this reachable again.
       const allEmpty =
         primary.length === 0 && blocked.length === 0 && utility.length === 0 && !persistedGenerator;
       empty.hidden = !allEmpty;
@@ -296,6 +347,7 @@ export function createCatalogue(init: {
       }
 
       reveal();
+      syncRunning(running);
     },
     destroy() {
       root.replaceChildren();

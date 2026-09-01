@@ -182,7 +182,19 @@ describe('F3 — the hero survives a rapid select/deselect', () => {
 // F4 — the URL never desyncs from the selection.
 // ---------------------------------------------------------------------------
 describe('F4 — Remove all files does not leave a stale URL behind', () => {
-  it('resets the hash to the catalogue, and a later re-selection of the same tool is not swallowed', async () => {
+  // UPDATED for I2 (independent review pass #4): this test originally proved
+  // that "Remove all files" reset the hash to the catalogue. That behaviour
+  // is exactly what I2 found and fixed — `clearFiles()` used to null
+  // `selected` unconditionally, discarding a picked tool that the tray's own
+  // per-row `x` (ending at the same zero-files state via `setFiles([])`)
+  // left alone, and the catalogue-reset hash was a symptom of that, not a
+  // property worth keeping. `clearFiles()` now matches `setFiles([])`: an
+  // empty tray is a count shortfall (TOOL PICKED, spec §4.2), not a reason to
+  // drop the pick, so the hash has nothing to go stale ABOUT any more — it
+  // simply never moves. The property F4 exists to protect — the URL always
+  // matches what's actually selected, never left behind by this button — is
+  // asserted the same way, just against the corrected behaviour.
+  it('keeps the hash pointed at the still-selected tool, and a later file drop needs no re-selection', async () => {
     deliver([await fixture('small.pdf'), await fixture('small.pdf')]);
     await until('the files to land', () => count('.tray__item') === 2);
 
@@ -192,20 +204,21 @@ describe('F4 — Remove all files does not leave a stale URL behind', () => {
     one<HTMLButtonElement>('.clearbtn').click();
     await until('the tray to empty', () => count('.tray__item') === 0);
 
-    // Before the fix: `clearFiles()` never called `router.navigate(null)`,
-    // reached via `refreshTools`'s own prune-teardown — so the hash stayed
-    // `#/pdf-merge` after every file (and the selection) was gone.
-    expect(location.hash === '' || location.hash === '#/').toBe(true);
+    // I2: the pick survives — TOOL PICKED, not a fall-back to the catalogue —
+    // so the hash is still exactly right, not merely "not stale".
+    expect(location.hash).toBe('#/pdf-merge');
+    expect(one<HTMLElement>('#stage').dataset.phase).toBe('tool-picked');
+    expect(document.querySelector('.toolcard.is-selected[data-tool="pdf-merge"]')).not.toBeNull();
 
-    // The downstream consequence the review named: a stale hash makes
-    // `navigate()`'s own echo-guard (`location.hash === next`) swallow the
-    // NEXT genuine selection of that same tool. Bring files back and pick it
-    // again — the route must actually reach it, not silently no-op.
+    // Bringing files back needs no re-click — the selection never left, so
+    // there is no `navigate()` call here for a stale echo-guard to swallow
+    // (the original regression this test protects: a stale hash left behind
+    // by this button used to make `navigate()`'s own `location.hash === next`
+    // check swallow the NEXT genuine selection of that tool). Run simply
+    // becomes enabled once the files satisfy it, hash untouched throughout.
     deliver([await fixture('small.pdf'), await fixture('small.pdf')]);
     await until('the files to land again', () => count('.tray__item') === 2);
-    one<HTMLButtonElement>('.toolcard[data-tool="pdf-merge"]').click();
-
-    await until('the route to reach pdf-merge again', () => location.hash === '#/pdf-merge');
+    await until('Run to become enabled', () => !one<HTMLButtonElement>('.run .btn--primary').disabled);
     expect(location.hash).toBe('#/pdf-merge');
   });
 
@@ -387,5 +400,181 @@ describe('NB2 — the frozen remove control reads as disabled, not merely inert'
       "the phase to reach 'results'",
       () => one<HTMLElement>('#stage').dataset.phase === 'results',
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// I1 — a run freezes the catalogue AND the URL, not just the tray and
+// Run/Clear (independent review pass #4, both halves reproduced live against
+// the running dev app before either fix landed).
+// ---------------------------------------------------------------------------
+describe('I1 — the catalogue and the URL both hold through a run', () => {
+  /**
+   * A few real megabytes, compressed at the hardest level `gzip`'s own
+   * options offer, so the worker genuinely takes long enough for a
+   * `hashchange` (queued as its own browser task, same as any other) to be
+   * PROCESSED while `dataset.phase` is still `'running'` — a handful of
+   * fixture bytes finishes in well under one event-loop turn on real
+   * hardware and cannot be trusted to outlast anything, which is exactly the
+   * kind of race this suite avoids elsewhere by waiting on signals the app
+   * itself produces (see this file's own header comment). PDF-shaped so a
+   * `.toolcard` (not just a `.utilitypill`) is on screen to assert against
+   * too — `application/octet-stream` bytes leave every format-aware tool
+   * absent from the grid entirely (checked live: no `.toolcard` renders at
+   * all for a generic blob, only the utility pills).
+   */
+  function slowFile(): File {
+    const size = 8 * 1024 * 1024;
+    const bytes = new Uint8Array(size);
+    bytes.set(new TextEncoder().encode('%PDF-1.4\n'), 0);
+    let seed = 7;
+    for (let i = 16; i < size; i += 4) {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      bytes[i] = seed & 0xff;
+      bytes[i + 1] = (seed >> 8) & 0xff;
+      bytes[i + 2] = (seed >> 16) & 0xff;
+      bytes[i + 3] = (seed >> 24) & 0xff;
+    }
+    return new File([bytes], 'slow.pdf', { type: 'application/pdf' });
+  }
+
+  function setCompressionLevel(value: string): void {
+    const level = one<HTMLInputElement>('.run__options input[type="range"]');
+    level.value = value;
+    level.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  it('disables every other card and pill while a run is in flight, and lifts it once the run ends', async () => {
+    deliver([slowFile()]);
+    await until('the file to land', () => count('.tray__item') === 1);
+
+    one<HTMLButtonElement>('.utilitypill[data-tool="gzip"]').click();
+    await until('Run to take focus', () => document.activeElement === one('.run .btn--primary'));
+    setCompressionLevel('9');
+
+    // A card AND a pill, both genuinely live before the run — pdf-split
+    // never fits into gzip's own tier, and hash is a second, different
+    // utility tool.
+    const card = one<HTMLButtonElement>('.toolcard[data-tool="pdf-split"]');
+    const pill = one<HTMLButtonElement>('.utilitypill[data-tool="hash"]');
+    expect(card.disabled).toBe(false);
+    expect(pill.disabled).toBe(false);
+
+    one<HTMLButtonElement>('.run .btn--primary').click();
+    // Synchronous prefix guarantee (see NB2 above): the phase flip has
+    // already happened by the time `.click()` returns.
+    expect(one<HTMLElement>('#stage').dataset.phase).toBe('running');
+
+    // Before the fix: both stayed `disabled: false, tabIndex: 0` for the
+    // run's whole duration — a click here was a silent no-op, not a control
+    // that says it cannot act.
+    expect(card.disabled).toBe(true);
+    expect(pill.disabled).toBe(true);
+    card.click();
+    expect(one<HTMLElement>('.run__head h2').textContent).toBe('Gzip');
+    expect(location.hash).toBe('#/gzip');
+
+    await until(
+      "the phase to reach 'results'",
+      () => one<HTMLElement>('#stage').dataset.phase === 'results',
+    );
+    expect(card.disabled).toBe(false);
+    expect(pill.disabled).toBe(false);
+  });
+
+  it('re-asserts the URL when a route arrives mid-run, so it never desyncs — even after the run ends', async () => {
+    deliver([slowFile()]);
+    await until('the file to land', () => count('.tray__item') === 1);
+
+    one<HTMLButtonElement>('.utilitypill[data-tool="gzip"]').click();
+    await until('the route to update', () => location.hash === '#/gzip');
+    setCompressionLevel('9');
+
+    one<HTMLButtonElement>('.run .btn--primary').click();
+    expect(one<HTMLElement>('#stage').dataset.phase).toBe('running');
+
+    // A real Back navigation's own hashchange — same technique F4's second
+    // test above uses — landing on the catalogue while the job is still
+    // running.
+    location.hash = '';
+
+    // Before the fix: `select()`'s `if (snap.phase === 'running') return`
+    // dropped this route on the floor entirely, so the address bar stayed at
+    // the catalogue's hash for the rest of the run — and, because nothing
+    // ever ran afterwards to correct it, forever after too (reproduced live:
+    // `hash: '#/'`, work heading still `Gzip`, `aria-pressed: 'true'`, phase
+    // `results`). The fix re-asserts the moment the route arrives.
+    await until('the hash to re-assert to the running tool', () => location.hash === '#/gzip');
+    expect(one<HTMLElement>('#stage').dataset.phase).toBe('running');
+    expect(one<HTMLElement>('.run__head h2').textContent).toBe('Gzip');
+
+    await until(
+      "the phase to reach 'results'",
+      () => one<HTMLElement>('#stage').dataset.phase === 'results',
+    );
+    // The desync must not resurface once the run ends either.
+    expect(location.hash).toBe('#/gzip');
+    expect(one<HTMLElement>('.run__head h2').textContent).toBe('Gzip');
+    expect(one<HTMLButtonElement>('.utilitypill[data-tool="gzip"]').getAttribute('aria-pressed')).toBe(
+      'true',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// I3 — a generator reads no file, whatever else is loaded (independent
+// review pass #4, proved live by wrapping File.prototype.arrayBuffer against
+// the running dev app: a PDF sitting in the tray got read in full and
+// structure-cloned to the worker to run a tool declared `accepts: []`,
+// `minInputs: 0`, `maxInputs: 0`, whose op reads only `options.text`).
+// ---------------------------------------------------------------------------
+describe('I3 — a generator never reads a file it declares it cannot take', () => {
+  it('runs the QR generator with a PDF already loaded without ever reading that file', async () => {
+    const reads: string[] = [];
+    const original = File.prototype.arrayBuffer;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only File.prototype patch
+    (File.prototype as any).arrayBuffer = function (this: File) {
+      reads.push(this.name);
+      return original.call(this);
+    };
+
+    try {
+      deliver([await fixture('small.pdf')]);
+      await until('the file to land', () => count('.tray__item') === 1);
+
+      // A ROUTE, not a click: `applicabilityFor` structurally excludes every
+      // generator from all three warm-grid tiers (core/format.ts), so with a
+      // file already loaded the only ways to reach `qr-generate` are the
+      // bucket-aware palette or a direct route — this is the more dangerous
+      // of the two, because it is the one where a file that was ALREADY in
+      // the tray survives the switch, rather than a fresh deep link that
+      // never carries one at all.
+      location.hash = '#/qr-generate';
+      await until('Run to take focus', () => document.activeElement === one('.run .btn--primary'));
+
+      const input = one<HTMLInputElement>('.run__options input.field--text');
+      input.value = 'https://example.com';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+
+      // Only reads from Run onward count — intake's own sniff reads a
+      // `file.slice(...)` Blob, not the File itself, so it was never caught
+      // by this wrap in the first place, but clearing here keeps the
+      // assertion below about exactly one thing.
+      reads.length = 0;
+      one<HTMLButtonElement>('.run .btn--primary').click();
+
+      await until(
+        "the phase to reach 'results'",
+        () => one<HTMLElement>('#stage').dataset.phase === 'results',
+      );
+
+      // The property that matters is not what the QR code produced (that is
+      // qr-generate.op's own test's job) but that the file sitting in the
+      // tray, unrelated to this tool, is never touched at all.
+      expect(reads).toEqual([]);
+      expect(count('.card--failed')).toBe(0);
+    } finally {
+      File.prototype.arrayBuffer = original;
+    }
   });
 });

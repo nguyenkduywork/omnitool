@@ -1899,6 +1899,22 @@ html.is-dragging .hero__drop {
   color: var(--ink-2);
 }
 
+/* I1: a card or pill disabled because a RUN is in flight — temporary, and
+ * about the whole grid at once, unlike `.toolcard--blocked`'s permanent,
+ * per-card "doesn't fit" reason above (which stays legible by design and
+ * never uses opacity — see that rule's own comment). This is the same
+ * opacity/cursor treatment `.tray__nudge:disabled` / `.tray__remove:disabled`
+ * already use for a control frozen mid-run, not one that can never work:
+ * `:not(.toolcard--blocked)` keeps the two from fighting over the same
+ * button. `pointer-events: none` drops the hover lift too, so a card that
+ * cannot be clicked does not still invite the attempt. */
+.toolcard:disabled:not(.toolcard--blocked),
+.utilitypill:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 /* Spans the row, like .opt__reason: the note explains the CONTROL, and the
  * label column is 11rem wide, which would wrap it under the wrong thing. */
 .opt__because {

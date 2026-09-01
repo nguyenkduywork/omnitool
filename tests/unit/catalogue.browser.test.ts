@@ -6,11 +6,19 @@
 //
 // `createCatalogue` is exercised directly here, with hand-built snapshots,
 // rather than through the whole shell + real registry: the scenario under
-// test — every one of the three applicability tiers coming up empty — is
-// fiddly to provoke with real files against the real 29-tool registry, and
-// is not this test's business anyway. `applicabilityFor`'s own bucketing
-// rules are `core/format.test.ts`'s job; this only asks what the catalogue
-// PAINTS once handed a snapshot with all three buckets empty.
+// test — every one of the three applicability tiers coming up empty — is not
+// merely fiddly to provoke against the real 29-tool registry, it is
+// UNREACHABLE (M1, independent review pass #4): six tools declare
+// `accepts: ['*']`, `minInputs: 1`, `maxInputs: null`, so with at least one
+// file loaded the utility bucket alone already guarantees `allEmpty` can
+// never be true. The snapshots below are SYNTHETIC — built by hand
+// specifically to reach a branch the real app cannot drive it into today —
+// covering `.catalogue__empty` and the `runnable === 0` header defensively,
+// for the day a bounded-range or narrower-than-'*' utility tool makes the
+// branch reachable again (see catalogue.ts's own comments on both branches).
+// `applicabilityFor`'s own bucketing rules are `core/format.test.ts`'s job;
+// this only asks what the catalogue PAINTS once handed a snapshot with all
+// three buckets empty.
 
 import { describe, expect, it } from 'vitest';
 
