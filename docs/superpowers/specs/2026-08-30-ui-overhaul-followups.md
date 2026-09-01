@@ -60,10 +60,14 @@ dodging.
 ## 2. Real, small, safe to carry
 
 - **A route can install a type-mismatched transform the catalogue has no card for.**
-  `state.selectTool` applies no `typesMatch` check while `pruneSelection` does. Reachable
-  only via Back/Forward: the work zone shows *"X doesn't work with these files."* while
-  nothing is ticked in the catalogue. The generator half of this divergence was
-  reconciled in `zones/catalogue.ts`; the transform-shaped remnant is open.
+  `state.selectTool` applies no `typesMatch` check while `pruneSelection` does.
+  **Correction (independent review pass #4):** this was originally recorded as reachable
+  only via Back/Forward. It is not — `select()` applies no `typesMatch` check on ANY
+  route, so an address-bar edit or an external link reaches it exactly the same way:
+  the work zone shows *"X doesn't work with these files."* while nothing is ticked in
+  the catalogue. The generator half of this divergence was reconciled in
+  `zones/catalogue.ts`; the transform-shaped remnant is open. Still deferred — the
+  correction is to the reachability claim, not to the triage.
 - **Returning to the catalogue via Back/Forward announces nothing**, where
   click-to-deselect says *"Tool deselected."* Consistent with the existing "only
   explicit in-tab actions announce" philosophy, so a decision rather than a bug.
