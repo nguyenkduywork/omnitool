@@ -275,7 +275,15 @@ export function createCatalogue(init: {
       // COLD: the tool-first door. Every tool, generators included.
       if (snapshot.entries.length === 0) {
         heading.textContent = 'All tools';
-        count.textContent = `${init.tools.length} tools, in three families. Pick one, or drop files to narrow the list.`;
+        // The generator hint lives HERE, next to the tools it describes, not
+        // only in the work zone's placeholder. That placeholder sits after the
+        // catalogue in DOM order, so on one column a cold visitor scrolled
+        // past all 29 tools before reaching the one sentence that tells them a
+        // tool needing no files exists at all — the app's headline capability,
+        // announced where nobody reads it.
+        count.textContent =
+          `${init.tools.length} tools, in three families. Pick one, or drop files to narrow ` +
+          `the list. Most tools need files; the QR code generator does not.`;
         renderGroups(init.tools);
         blockedWrap.hidden = true;
         utilityWrap.hidden = true;

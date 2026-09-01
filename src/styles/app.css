@@ -765,6 +765,23 @@ html.is-dragging .hero__drop {
   [data-phase='results'] .catalogue__body {
     display: none;
   }
+
+  /* One column, no tool picked: the work zone holds nothing but its "Pick a
+   * tool to get started." placeholder, and it sits AFTER the 29-tool catalogue
+   * in DOM order — so it added a screenful of scroll to say what a catalogue
+   * of 29 tools directly above it already says. Its useful half, the hint that
+   * the QR generator needs no files, now lives in the catalogue's own cold
+   * header (zones/catalogue.ts) where it is actually read.
+   *
+   * Hidden with `display: none` rather than reordered on purpose: CSS `order`
+   * would move it visually while leaving it in the same place in the tab
+   * order, which is a worse bug than the scroll. Nothing is lost — the moment
+   * a tool IS picked the phase changes, this rule stops matching, and the zone
+   * comes back carrying the tool. */
+  [data-phase='browsing'] .zone--work,
+  [data-phase='filtered'] .zone--work {
+    display: none;
+  }
 }
 
 .catalogue__groups {

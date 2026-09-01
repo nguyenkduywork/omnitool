@@ -4,9 +4,10 @@ Open items found during the UI overhaul (2026-08-30) and deliberately deferred r
 than fixed, with the reasoning. Recorded because a deferred item nobody writes down is
 a silently discarded one.
 
-None of these block use of the app. Each was judged either genuinely separate work, or
-small enough to carry. User-facing behavioural limits live in the README instead — this
-file is engineering debt.
+**All items below are now closed.** They are kept as a record of what was found, what
+was decided, and why — two were resolved as intended rather than changed, and those
+distinctions are worth not losing. User-facing behavioural limits live in the README
+instead; this file is engineering debt.
 
 ## 1. Worth doing next
 
@@ -116,19 +117,28 @@ it stays fixed.
 - **`registry.*.ts` header comments** lost a pre-existing "Owned by the *group* tools
   task" line. **Closed, won't restore** — that note described the original build's task
   split, which no longer exists.
-- **Below 768px, a cold visitor scrolls past all 29 tools** before reaching the work
-  zone's placeholder. **Still open, deliberately.** Spec §4.3 specifies only the *picked*
-  fold, which ships. Fixing it means reordering the three-zone DOM, which changes tab
-  order and the grid's placement rules — a layout change wanting its own design pass and
-  its own a11y verification, not a carried one-liner.
+- **Below 768px, a cold visitor scrolled past all 29 tools** before reaching the work
+  zone's placeholder — and that placeholder carried the one sentence saying a tool
+  needing no files exists at all. **Done, without reordering the DOM:** the hint moved
+  into the catalogue's own cold header, next to the tools it describes and read at every
+  width; and with nothing left to show, the work zone is hidden at `<768px` while no tool
+  is picked. `display: none`, deliberately not CSS `order` — `order` moves an element
+  visually while leaving it where it was in the tab order, which is a worse bug than the
+  scroll. Verified live at 375px (zone gone, hint present) and that picking a tool brings
+  the zone straight back; desktop is untouched.
 
 ## 3. Test gaps
 
-- **No frame-level "no intermediate paint" test** for the hero handoff. **Still open,
-  deliberately.** Not meaningfully assertable here — no rAF-sampling or screenshot-diff
-  infrastructure, and a hand-rolled version would mostly measure compositing timing.
-  Mitigated structurally instead: `fadeHero` takes a single element, so animating an
-  already-visible target is unrepresentable rather than merely avoided.
+- **No frame-level "no intermediate paint" test** for the hero handoff. **Done** — and
+  the attempt found that the existing coverage was weaker than believed. A per-frame
+  sampler was added (computed style once per `requestAnimationFrame` across the
+  transition window, asserting the invariant "always at rest" plus a minimum sample
+  count, so a page delivering no frames fails instead of passing vacuously). Injecting a
+  one-frame flash to check it proved the sampler *and* every pre-existing point-sample
+  missed it: a value written synchronously and cleared in the next frame is gone before
+  the sampler's first callback, and the other assertions all `await` first. So a
+  synchronous, no-await read was added alongside it. Both were then verified red against
+  that injected flash and green with it removed.
 - **`countReason`'s "Takes at most N files" branch was unreachable** through the
   registry — every real tool has `min === max` or `max === null`, so no fixture could
   exercise it. **Done:** covered by four cases against a synthetic `ToolDef` with

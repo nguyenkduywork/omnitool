@@ -369,3 +369,89 @@ describe('the always-visible workbench never gets treated as an entrance', () =>
     expectWorkbenchAtRest();
   });
 });
+
+// The frame-level half of the same property, previously recorded in
+// docs/known-issues.md §3 as not assertable here.
+//
+// The tests above sample `.workbench` at two POINTS: right after the
+// transition is fired, and once it has settled. That catches a value that is
+// set and left, which is exactly what the old `morphToTray` did. It cannot
+// catch a value set and cleared BETWEEN those two reads — a one-frame flash
+// would slip through both.
+//
+// It turns out this is assertable after all, without rAF-sampling
+// infrastructure or screenshot diffing: sample the COMPUTED style once per
+// frame across the whole transition window and assert an INVARIANT (always at
+// rest) rather than a trajectory. Nothing here depends on how long a frame
+// takes or on when the compositor runs — only on the fact that no frame ever
+// observed the workbench moved.
+//
+// The sample count is asserted too. A hidden or throttled page delivers no
+// rAF callbacks at all, which would otherwise make this pass with zero
+// samples — a vacuous green of exactly the kind this suite has shipped
+// before.
+describe('the workbench is at rest on every frame, not just before and after', () => {
+  /** Computed opacity/transform of `.workbench`, once per frame, until `ms` elapses. */
+  async function sampleFrames(ms: number): Promise<{ opacity: string; transform: string }[]> {
+    const samples: { opacity: string; transform: string }[] = [];
+    const workbench = one<HTMLElement>('.workbench');
+    const deadline = performance.now() + ms;
+    await new Promise<void>((resolve) => {
+      const tick = (): void => {
+        const style = getComputedStyle(workbench);
+        samples.push({ opacity: style.opacity, transform: style.transform });
+        if (performance.now() >= deadline) resolve();
+        else requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+    return samples;
+  }
+
+  function expectEveryFrameAtRest(samples: { opacity: string; transform: string }[]): void {
+    // ~16ms a frame, so a 400ms window should yield well over a dozen. Ten is
+    // a floor generous enough to survive a slow CI runner while still failing
+    // a page that delivered no frames at all.
+    expect(samples.length).toBeGreaterThan(10);
+    for (const { opacity, transform } of samples) {
+      expect(opacity).toBe('1');
+      // 'none' or the identity matrix, never a translate/scale.
+      expect(transform === 'none' || transform === 'matrix(1, 0, 0, 1, 0, 0)').toBe(true);
+    }
+  }
+
+  /**
+   * Read the INLINE style with no `await` in between, in the same synchronous
+   * turn as whatever fired the transition.
+   *
+   * This is the assertion that actually catches a set-then-cleared flash, and
+   * it exists because the frame sampler below does NOT: a value written
+   * synchronously and cleared in the very next `requestAnimationFrame` is gone
+   * before the sampler's own first callback runs, and every other assertion in
+   * this file `await`s first. Verified by injecting exactly that flash into
+   * `paint()` — the sampler and the point-samples all stayed green, this went
+   * red.
+   */
+  function expectNoSynchronousFlash(): void {
+    const workbench = one<HTMLElement>('.workbench');
+    expect(workbench.style.opacity).toBe('');
+    expect(workbench.style.transform).toBe('');
+  }
+
+  it('never dips on any frame while a file lands cold', async () => {
+    const file = await fixture('small.pdf');
+    deliver([file]);
+    // No await before this: `deliver` -> `intake` -> `state.addFiles` ->
+    // `paint()` is synchronous up to here.
+    expectNoSynchronousFlash();
+
+    await until('the file to land', () => count('.tray__item') === 1);
+    expectEveryFrameAtRest(await sampleFrames(400));
+  });
+
+  it('never dips on any frame while a generator is picked cold', async () => {
+    one<HTMLButtonElement>('.toolcard[data-tool="qr-generate"]').click();
+    expectNoSynchronousFlash();
+    expectEveryFrameAtRest(await sampleFrames(400));
+  });
+});
