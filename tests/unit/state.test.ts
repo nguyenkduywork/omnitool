@@ -135,7 +135,18 @@ describe('createState', () => {
     expect(snap.runBlockedReason).toBe('Needs at least 2 files — you have 1.');
   });
 
-  it('clears files, selection and results together', () => {
+  // I2: `clearFiles()` used to null `selected` directly, unconditionally —
+  // the one call site in this file that did not route through
+  // `pruneSelection`. That gave "Remove all files" and removing every file
+  // one at a time (the tray's own per-row `x`, which ends at `setFiles([])`
+  // below) opposite outcomes for the exact same zero-files state: one kept
+  // TOOL PICKED (spec §4.2) waiting for files, the other discarded the pick
+  // and fell back to the cold hero. `clearFiles` now only clears files and
+  // results, exactly like `setFiles([])`, and leaves `selected` for
+  // `pruneSelection` to decide — an empty tray is a COUNT shortfall, never a
+  // TYPE mismatch, so it is left alone. This test and `setFiles([])`'s just
+  // below are now the same rule stated twice, not two different ones.
+  it('clears files and results, but leaves the selection for pruneSelection to decide', () => {
     const state = createState(TOOLS);
     state.addFiles([pdf(), pdf()]);
     state.selectTool('pdf-merge');
@@ -143,7 +154,10 @@ describe('createState', () => {
 
     state.clearFiles();
 
-    expect(state.snapshot()).toMatchObject({ phase: 'browsing', entries: [], selected: null });
+    const snap = state.snapshot();
+    expect(snap.entries).toHaveLength(0);
+    expect(snap.selected?.id).toBe('pdf-merge');
+    expect(snap.phase).toBe('tool-picked');
   });
 
   // Regression: setFiles used to leave hasResults untouched, so a reorder or
@@ -186,7 +200,9 @@ describe('createState', () => {
   });
 
   // setFiles([]) goes through the same count-shortfall-never-drops path as
-  // addFiles: pruneSelection's type check is gated on entries.length > 0.
+  // addFiles: pruneSelection's type check is gated on entries.length > 0. See
+  // clearFiles's own test above — the two are deliberately the same rule,
+  // exercised through both of the paths that reach zero files.
   it('setFiles([]) keeps the selection — an empty tray is a count shortfall, not a type mismatch', () => {
     const state = createState(TOOLS);
     state.selectTool('pdf-merge');

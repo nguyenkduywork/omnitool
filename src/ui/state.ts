@@ -177,9 +177,20 @@ export function createState(tools: readonly ToolDef[]): StateHandle {
       emit();
     },
     clearFiles() {
+      // I2: identical to `setFiles([])`, on purpose — an empty tray is a COUNT
+      // shortfall ("you have none"), never a TYPE mismatch, and
+      // `pruneSelection` already knows that (it is gated on `entries.length >
+      // 0`). Nulling `selected` unconditionally here, as this used to do, gave
+      // "Remove all files" and "remove every file one at a time" — the two
+      // routes to the exact same zero-files state — opposite outcomes: the
+      // tray's own per-row `x` left TOOL PICKED (spec §4.2) selected and
+      // waiting for files, while this button discarded the pick entirely and
+      // fell all the way back to the cold hero. Letting `pruneSelection`
+      // decide, the same as every other file-count change already does, makes
+      // both routes agree.
       entries = [];
-      selected = null;
       hasResults = false;
+      pruneSelection();
       emit();
     },
     selectTool(id) {
