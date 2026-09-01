@@ -73,12 +73,23 @@ describe('createRouter', () => {
     expect(calls).toEqual([null]);
   });
 
-  it('does not re-enter onRoute for the echo of its own unknown-id correction', async () => {
+  // NB1 (a later pass over the M2 fix above): the correction used to write
+  // `location.hash = fallback` directly, reusing `navigate()`'s echo-guard
+  // bookkeeping so the resulting `hashchange` didn't re-enter `onRoute` a
+  // second time. That write also PUSHED a new history entry, trapping the
+  // Back button (see the second test below) — the fix is
+  // `history.replaceState`, which fires no `hashchange` at all, so there is
+  // no echo left for this test to be about any more. Kept as a regression
+  // guard for the property that mattered either way: the correction must
+  // never cause a second, spurious `onRoute(null)` call, by whatever
+  // mechanism.
+  it('does not re-enter onRoute a second time for its own unknown-id correction', async () => {
     location.hash = '#/not-a-real-tool';
     // Let THIS assignment's own hashchange dispatch (to no listeners — the
     // router does not exist yet) before `createRouter` attaches one, so the
-    // assertion below is only ever about the CORRECTION's echo, not a second,
-    // unrelated hashchange this test's own setup happens to have queued.
+    // assertion below is only ever about anything the CORRECTION itself
+    // might cause, not a second, unrelated hashchange this test's own setup
+    // happens to have queued.
     await settle();
 
     const { calls, onRoute } = recorder();
@@ -89,9 +100,33 @@ describe('createRouter', () => {
 
     await settle();
 
-    // The correction's own hashchange, swallowed the same way navigate()'s
-    // own writes always are — not a second, spurious `onRoute(null)` call.
     expect(calls).toEqual([null]);
+  });
+
+  // NB1 (independent review pass #4, a later look at M2's own fix): the
+  // first version of the correction wrote `location.hash = fallback`, which
+  // always PUSHES a new session-history entry. Reproduced live: following a
+  // stale share link (`#/qr-code` after a rename) landed on the corrected
+  // catalogue, but `history.length` grew by TWO (the bogus entry, then the
+  // correction) instead of one, and because the bogus entry sat BEHIND the
+  // corrected one, pressing Back re-entered it — which got corrected again,
+  // trapping the user at the catalogue no matter how many times they
+  // pressed Back. `history.replaceState` swaps the current entry in place
+  // instead of growing the stack.
+  it('corrects an unknown tool id without pushing a new history entry (NB1)', () => {
+    location.hash = '#/not-a-real-tool';
+    const before = history.length;
+
+    const { calls, onRoute } = recorder();
+    router = createRouter({ isKnownTool: (id) => id === 'merge-pdfs', onRoute });
+    router.start();
+
+    expect(location.hash).toBe('#/');
+    expect(calls).toEqual([null]);
+    // The only growth here is the test's OWN `location.hash = ...` line
+    // above (simulating "arrived via a stale link") — the correction itself
+    // must add nothing on top of that.
+    expect(history.length).toBe(before);
   });
 
   it('navigate() writes the hash without re-entering onRoute for its own echo', async () => {

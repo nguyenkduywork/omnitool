@@ -89,19 +89,32 @@ export function createRouter(init: {
    * (the right SCREEN) with the URL still reading `#/not-a-real-tool` (the
    * wrong ADDRESS BAR) — a reload or a copied link would carry the same
    * bogus route forever. This is the router's own translation to fix, not
-   * `select()`'s: `hash <-> id` is what this file exists to own. The write
-   * below reuses `navigate()`'s exact `lastWrittenHash` bookkeeping so its
-   * own echo is swallowed the same way any other self-written hash is,
-   * rather than re-entering `onRoute` a second time for a route this
-   * function already answered.
+   * `select()`'s: `hash <-> id` is what this file exists to own.
+   *
+   * NB1 (a later pass over this same fix): the first version of this
+   * correction wrote `location.hash = fallback`, reusing `navigate()`'s
+   * `lastWrittenHash` echo-guard bookkeeping. That is wrong for a
+   * CORRECTION specifically — a plain hash write always PUSHES a new
+   * session-history entry, so the bogus route stayed sitting BEHIND the
+   * corrected one. Measured live: `history.length` went 39 -> 41 (the bogus
+   * entry, then the correction), and because Back moves toward the OLDER
+   * entry, a real Back press re-entered the bogus route, this function
+   * corrected it again, and the user was pinned at the catalogue no matter
+   * how many times they pressed Back — three consecutive presses all landed
+   * on `#/` with `history.length` still 41. Anyone following a stale share
+   * link (a renamed or removed tool) got a working catalogue fallback and a
+   * permanently broken Back button. `history.replaceState` swaps the
+   * CURRENT entry's URL in place instead of pushing a new one — no growth,
+   * so Back still leads to wherever the stale link's own history said it
+   * should. It also fires no `hashchange` at all (unlike a plain hash
+   * write), so there is no echo here for `lastWrittenHash` to swallow.
    */
   function read(): string | null {
     const id = toolIdFromHash(location.hash);
     if (id === null || init.isKnownTool(id)) return id;
     const fallback = hashForTool(null);
     if (location.hash !== fallback) {
-      lastWrittenHash = fallback;
-      location.hash = fallback;
+      history.replaceState(history.state, '', fallback);
     }
     return null;
   }
