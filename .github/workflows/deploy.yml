@@ -1,18 +1,22 @@
 name: Deploy
 
-# Build and publish dist/ to GitHub Pages, triggered manually from the
-# Actions tab. vite.config.ts already sets base: './' for relative,
-# host-agnostic asset paths, so no path rewriting is needed here — Pages
-# just serves dist/ as-is.
+# Build and publish dist/ to GitHub Pages. vite.config.ts already sets
+# base: './' for relative, host-agnostic asset paths, so no path rewriting is
+# needed here — Pages just serves dist/ as-is.
 #
-# Manual rather than on-push: GitHub Pages isn't available for a private
-# repo below GitHub Pro/Team/Enterprise, so triggering on every push to main
-# just fails every time. Run this by hand (Actions -> Deploy -> Run
-# workflow) once Pages is actually reachable — repo made public, or the
-# account's plan supports private Pages.
+# WHY workflow_run AND NOT A BARE `push`: this workflow builds and checks the
+# size budget, but it does NOT run typecheck, lint, or any test — CI does.
+# Triggering on push would race CI and could publish a commit CI is about to
+# fail. Waiting for CI to complete successfully on main means a red commit
+# never reaches the live site. workflow_dispatch stays for a re-deploy
+# without a new commit.
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
@@ -28,8 +32,17 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # A workflow_run fires on CI FAILURE too, so the conclusion has to be
+    # checked explicitly; a manual run has no workflow_run to inspect.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     steps:
+      # workflow_run defaults to the default branch's tip, which can already
+      # have moved past the commit CI green-lit. Pin to the exact SHA CI ran.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
 
       - uses: actions/setup-node@v4
         with:

@@ -181,9 +181,11 @@ for open engineering items.
 CI runs on every push and pull request: typecheck, lint, colour contrast, unit and
 browser tests, production build, size budget, and the full end-to-end suite.
 
-Publishing to GitHub Pages is a manual trigger — **Actions → Deploy → Run workflow**.
-`vite.config.ts` sets `base: './'`, so the build is host-agnostic and Pages serves
-`dist/` as-is.
+Publishing to GitHub Pages happens automatically once CI passes on `main` — deliberately
+gated on CI rather than on the push itself, so a commit CI is about to fail never
+reaches the live site. You can also re-deploy the current `main` by hand from
+**Actions → Deploy → Run workflow**. `vite.config.ts` sets `base: './'`, so the build is
+host-agnostic and Pages serves `dist/` as-is.
 
 ## Contributing
 
