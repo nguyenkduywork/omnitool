@@ -23,6 +23,20 @@ export type DropzoneHandle = {
   pick(): void;
   /** Put keyboard focus on the hero's own pick button. */
   focus(): void;
+  /**
+   * Put keyboard focus on the compact add-bar's own "Add files" button — the
+   * right target whenever the hero is (or stays) hidden. NB2, a later pass
+   * over I2: `shell.ts`'s `onClear` used to call `focus()` unconditionally,
+   * which is only correct once the tray actually goes fully cold (`browsing`
+   * — nothing loaded, nothing picked). With a tool still selected after I2's
+   * fix (TOOL PICKED, spec §4.2), the hero never un-hides — `focus()` was
+   * landing keyboard focus on a `display: none` button, and a real Tab press
+   * from there fell all the way to `<body>`, restarting the page's whole tab
+   * order. The add-bar is always mounted (it's part of the always-visible
+   * three-zone workbench), so its own button is a genuinely reachable target
+   * in every state this can be called from.
+   */
+  focusAddBar(): void;
   destroy(): void;
 };
 
@@ -209,6 +223,9 @@ export function createDropzone(init: {
     pick,
     focus(): void {
       pickButton.focus();
+    },
+    focusAddBar(): void {
+      addButton.focus();
     },
     destroy(): void {
       document.removeEventListener('dragenter', onDragEnter);

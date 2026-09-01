@@ -191,10 +191,25 @@ export function mountShell(root: HTMLElement): ShellHandle {
       tray.setEntries([]);
       workZone.results.clear();
       announce('All files removed.');
-      // The subscriber below un-hides the hero itself, synchronously, the
-      // instant `clearFiles()` emits a cold snapshot (see `wasCold` there) —
-      // this only has to move focus off a button that is about to vanish.
-      dropzone.focus();
+      // `state.clearFiles()` above emits synchronously — `snap` (this
+      // closure's own copy of the last snapshot, kept current by the
+      // `paint` subscriber) already reflects the result by the time this
+      // line runs. NB2, a later pass over I2: I2 changed what "no files"
+      // can mean here. `browsing` (nothing loaded, nothing picked) is the
+      // ONLY phase that un-hides the hero (see `paint`'s own `wasCold`/
+      // `cold` handling below) — with a tool still picked, `clearFiles`
+      // now leaves it TOOL PICKED (spec §4.2), the hero stays hidden, and
+      // `dropzone.focus()` would land keyboard focus on its `display: none`
+      // pick button (measured live: a real Tab press from there fell all
+      // the way to `<body>`, restarting the page's whole tab order). The
+      // always-mounted add-bar's own "Add files" button is genuinely
+      // reachable in that state, so it is the target whenever the tray
+      // does not go fully cold.
+      if (snap.phase === 'browsing') {
+        dropzone.focus();
+      } else {
+        dropzone.focusAddBar();
+      }
     },
   });
 
@@ -395,12 +410,20 @@ export function mountShell(root: HTMLElement): ShellHandle {
       // own — nothing routed through it — so this is NEVER a
       // router-originated call the way `select()`'s two sites below can be;
       // writing the URL back to the catalogue is always safe (and never a
-      // redundant echo) from here. Without this, "Remove all files" (which
-      // reaches this same branch — see `filesZone`'s `onClear`) left a stale
-      // `#/pdf-merge` behind: reload then restored a selection the user had
-      // just cleared, and the stale hash made `navigate()`'s own echo-guard
-      // (`location.hash === next`) swallow the NEXT genuine selection of
-      // that same tool.
+      // redundant echo) from here.
+      //
+      // Reachable today ONLY through a genuine TYPE mismatch — drop a file
+      // that no longer fits the selected tool — not through "Remove all
+      // files" any more: F4's original repro used that button, but I2
+      // (independent review pass #4) changed `clearFiles()` to clear files
+      // and results only, leaving `pruneSelection` to decide, and an empty
+      // tray never counts as a type mismatch (see `state.ts`'s own
+      // `pruneSelection`, gated on `entries.length > 0`). Losing this call
+      // site would still resurrect F4's original bug for the path that
+      // remains: reload resurrects a pruned tool, and the stale hash makes
+      // the NEXT genuine selection of that tool a no-op via `navigate()`'s
+      // own echo-guard (`location.hash === next`). Covered by
+      // `shell-fixes.browser.test.ts`'s NB3 (pass #4).
       router.navigate(null);
       announce('The selected tool no longer fits these files, so it was cleared.');
     }
@@ -547,11 +570,15 @@ export function mountShell(root: HTMLElement): ShellHandle {
    */
   async function select(id: string | null, opts: { fromRouter?: boolean } = {}): Promise<void> {
     if (snap.phase === 'running') {
-      // I1: every CLICK path that could reach `select()` mid-run is already
-      // disabled while running — the catalogue's cards and pills
-      // (`zones/catalogue.ts`'s `syncRunning`), and the palette's own
-      // `snap.phase === 'running'` guards in `runFromPalette`/`commit` — so
-      // the only way this branch is still reached during a run is a ROUTE:
+      // I1: every CLICK path that could reach `select()` mid-run is meant to
+      // be disabled while running — the catalogue's cards, pills and its
+      // narrow-layout "Change tool" button (`zones/catalogue.ts`'s
+      // `syncRunning` — a control missing from it is a silent no-op here,
+      // which is exactly what happened to "Change tool" until a later
+      // review pass caught it), and the palette's own `snap.phase ===
+      // 'running'` guards in `runFromPalette`/`commit`. As long as that
+      // holds, the only way this branch is still reached during a run is a
+      // ROUTE:
       // Back/Forward, an edited address bar, or an external link. Those
       // change `location.hash` in the browser itself, synchronously and
       // unconditionally, before `onRoute` ever fires — nothing this app does
@@ -650,6 +677,17 @@ export function mountShell(root: HTMLElement): ShellHandle {
     // worker validates the count against `maxInputs`, so nothing else would
     // have caught it. `inputs` (below) gets the same guard: a generator's
     // results tray must not claim an input the run never touched.
+    //
+    // The guard keys off `tool.kind === 'generate'`, not `tool.maxInputs ===
+    // 0` — exactly equivalent today, since `qr-generate` is the registry's
+    // only generator and its own `maxInputs` is 0, but not the same claim: a
+    // future generator that DOES take some bounded number of files (an
+    // `maxInputs` greater than 0) would silently get an empty `files` array
+    // here too, under `kind`. `kind: 'generate'` is what `runBlockedReason`
+    // above and `applicabilityFor` (core/format.ts) already both key off for
+    // "never depends on the files at all" — matching that existing meaning
+    // is deliberate, not an oversight, but it is worth a future generator
+    // author re-reading this guard rather than assuming it.
     const files = tool.kind === 'generate' ? [] : snap.entries.map((entry) => entry.file);
     // The sniffed type comes along so the results tray can tell whether an
     // input and an output are even the same kind of thing before it offers a

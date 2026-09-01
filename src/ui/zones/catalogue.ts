@@ -182,8 +182,19 @@ export function createCatalogue(init: {
    * `disabled` for an unrelated, PERMANENT reason (the wrong file count for
    * THIS selection), and must not be quietly re-enabled the moment a run
    * ends just because this loop stops touching them.
+   *
+   * `back` (the narrow layout's "Change tool" button, `.catalogue__back`) is
+   * included explicitly, not by the selector above: it is a fixed element
+   * created once, never rebuilt by `render()`, so a query for it would work
+   * too, but naming it directly is cheaper and cannot silently stop matching
+   * if its markup changes. Missing it here was itself a review finding: its
+   * own click handler reaches `init.onPick` -> `shell.ts`'s `select()` the
+   * same as any card, and below 768px `[data-phase='running']` hides
+   * `.catalogue__body` entirely (app.css) — so on a phone, mid-run, this was
+   * the ONLY zone-2 control left on screen, and it was live.
    */
   function syncRunning(running: boolean): void {
+    back.disabled = running;
     for (const node of root.querySelectorAll<HTMLButtonElement>(
       '.toolcard:not(.toolcard--blocked), .utilitypill',
     )) {

@@ -1,9 +1,11 @@
-// tests/unit/shell-fixes.browser.test.ts — regression coverage for the
-// final whole-branch review's F2, F3, F4, F5 and F6, plus NB2 from the
-// re-review of that fix wave (see
-// .superpowers/sdd/2026-08-30-ui-overhaul/progress.md,
-// .superpowers/sdd/2026-08-30-ui-overhaul/final-fix-report.md and
-// .superpowers/sdd/2026-08-30-ui-overhaul/nb-fix-report.md).
+// tests/unit/shell-fixes.browser.test.ts — regression coverage for the UI
+// overhaul's final whole-branch review (F2, F3, F4, F5, F6) and its
+// re-review (NB2), plus the fourth, independent review pass that came after
+// the overhaul had already merged (I1, I3, and the NB1-NB3 follow-ups on
+// I1/I2's own fixes). Each describe block below cites its own finding by
+// name; none of this depends on the reviews' own working notes, which lived
+// under the gitignored `.superpowers/` and are not a durable citation for
+// anyone who clones this repo.
 //
 // Real headless Chromium, the real registry, real fixture bytes through the
 // app's own hidden <input> — same technique as shell.browser.test.ts, which
@@ -79,6 +81,43 @@ function one<T extends Element>(selector: string): T {
   const found = root.querySelector<T>(selector);
   if (!found) throw new Error(`nothing matched ${selector}`);
   return found;
+}
+
+/**
+ * A few real megabytes, compressed at the hardest level `gzip`'s own options
+ * offer, so the worker genuinely takes long enough for a `hashchange`
+ * (queued as its own browser task, same as any other) to be PROCESSED while
+ * `dataset.phase` is still `'running'` — a handful of fixture bytes finishes
+ * in well under one event-loop turn on real hardware and cannot be trusted
+ * to outlast anything, which is exactly the kind of race this suite avoids
+ * elsewhere by waiting on signals the app itself produces (see this file's
+ * own header comment). PDF-shaped so a `.toolcard` (not just a
+ * `.utilitypill`) is on screen to assert against too —
+ * `application/octet-stream` bytes leave every format-aware tool absent
+ * from the grid entirely (checked live: no `.toolcard` renders at all for a
+ * generic blob, only the utility pills). Shared across the I1 and its
+ * follow-up describe blocks below, which all need a run that genuinely
+ * outlasts a synchronous assertion.
+ */
+function slowFile(): File {
+  const size = 8 * 1024 * 1024;
+  const bytes = new Uint8Array(size);
+  bytes.set(new TextEncoder().encode('%PDF-1.4\n'), 0);
+  let seed = 7;
+  for (let i = 16; i < size; i += 4) {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    bytes[i] = seed & 0xff;
+    bytes[i + 1] = (seed >> 8) & 0xff;
+    bytes[i + 2] = (seed >> 16) & 0xff;
+    bytes[i + 3] = (seed >> 24) & 0xff;
+  }
+  return new File([bytes], 'slow.pdf', { type: 'application/pdf' });
+}
+
+function setCompressionLevel(value: string): void {
+  const level = one<HTMLInputElement>('.run__options input[type="range"]');
+  level.value = value;
+  level.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
 // ---------------------------------------------------------------------------
@@ -409,41 +448,6 @@ describe('NB2 — the frozen remove control reads as disabled, not merely inert'
 // the running dev app before either fix landed).
 // ---------------------------------------------------------------------------
 describe('I1 — the catalogue and the URL both hold through a run', () => {
-  /**
-   * A few real megabytes, compressed at the hardest level `gzip`'s own
-   * options offer, so the worker genuinely takes long enough for a
-   * `hashchange` (queued as its own browser task, same as any other) to be
-   * PROCESSED while `dataset.phase` is still `'running'` — a handful of
-   * fixture bytes finishes in well under one event-loop turn on real
-   * hardware and cannot be trusted to outlast anything, which is exactly the
-   * kind of race this suite avoids elsewhere by waiting on signals the app
-   * itself produces (see this file's own header comment). PDF-shaped so a
-   * `.toolcard` (not just a `.utilitypill`) is on screen to assert against
-   * too — `application/octet-stream` bytes leave every format-aware tool
-   * absent from the grid entirely (checked live: no `.toolcard` renders at
-   * all for a generic blob, only the utility pills).
-   */
-  function slowFile(): File {
-    const size = 8 * 1024 * 1024;
-    const bytes = new Uint8Array(size);
-    bytes.set(new TextEncoder().encode('%PDF-1.4\n'), 0);
-    let seed = 7;
-    for (let i = 16; i < size; i += 4) {
-      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-      bytes[i] = seed & 0xff;
-      bytes[i + 1] = (seed >> 8) & 0xff;
-      bytes[i + 2] = (seed >> 16) & 0xff;
-      bytes[i + 3] = (seed >> 24) & 0xff;
-    }
-    return new File([bytes], 'slow.pdf', { type: 'application/pdf' });
-  }
-
-  function setCompressionLevel(value: string): void {
-    const level = one<HTMLInputElement>('.run__options input[type="range"]');
-    level.value = value;
-    level.dispatchEvent(new Event('input', { bubbles: true }));
-  }
-
   it('disables every other card and pill while a run is in flight, and lifts it once the run ends', async () => {
     deliver([slowFile()]);
     await until('the file to land', () => count('.tray__item') === 1);
@@ -576,5 +580,119 @@ describe('I3 — a generator never reads a file it declares it cannot take', () 
     } finally {
       File.prototype.arrayBuffer = original;
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// I1(a) follow-up — the narrow-layout "Change tool" button freezes too (a
+// second, later pass over I1: `zones/catalogue.ts`'s `syncRunning` disabled
+// every card and pill, but missed `.catalogue__back`'s own button, which
+// reaches `shell.ts`'s `select()` through the exact same `init.onPick` path
+// a card does — a silent no-op mid-run, on a control that is the ONLY
+// zone-2 element left on screen below 768px once app.css hides
+// `.catalogue__body` for `[data-phase='running']`).
+// ---------------------------------------------------------------------------
+describe('I1(a) follow-up — "Change tool" freezes with the rest of the catalogue', () => {
+  it('disables .catalogue__back\'s button while a run is in flight, and lifts it once the run ends', async () => {
+    deliver([slowFile()]);
+    await until('the file to land', () => count('.tray__item') === 1);
+
+    one<HTMLButtonElement>('.utilitypill[data-tool="gzip"]').click();
+    await until('Run to take focus', () => document.activeElement === one('.run .btn--primary'));
+    setCompressionLevel('9');
+
+    const back = one<HTMLButtonElement>('.catalogue__back button');
+    expect(back.disabled).toBe(false);
+
+    one<HTMLButtonElement>('.run .btn--primary').click();
+    expect(one<HTMLElement>('#stage').dataset.phase).toBe('running');
+
+    expect(back.disabled).toBe(true);
+    // Before the fix: still clickable here, and clicking it reached
+    // select() via init.onPick, which silently no-op'd on its own running
+    // guard — no visible change, nothing announced.
+    const headingBefore = one<HTMLElement>('.run__head h2').textContent;
+    back.click();
+    expect(one<HTMLElement>('.run__head h2').textContent).toBe(headingBefore);
+
+    await until(
+      "the phase to reach 'results'",
+      () => one<HTMLElement>('#stage').dataset.phase === 'results',
+    );
+    expect(back.disabled).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NB2 (independent review pass #4, a later look at I2's own fix) — Remove
+// all files must focus something actually reachable, not the hero's own
+// pick button when it stays hidden. Distinct from this file's EARLIER
+// "NB2" block above (the re-review of the final whole-branch review, about
+// the tray's frozen-control styling) — same label, two different review
+// passes' own numbering; see this file's header comment.
+// ---------------------------------------------------------------------------
+describe('NB2 (pass #4) — Remove all files focuses a reachable control', () => {
+  it('focuses the hero\'s pick button when the tray goes fully cold (no tool picked)', async () => {
+    deliver([await fixture('small.pdf')]);
+    await until('the file to land', () => count('.tray__item') === 1);
+
+    one<HTMLButtonElement>('.clearbtn').click();
+    await until('the tray to empty', () => count('.tray__item') === 0);
+
+    expect(one<HTMLElement>('#stage').dataset.phase).toBe('browsing');
+    expect(document.activeElement).toBe(one<HTMLButtonElement>('.hero .btn--primary'));
+  });
+
+  it('focuses the add-bar\'s "Add files" button when a tool is still picked (I2) — the hero stays hidden', async () => {
+    deliver([await fixture('small.pdf')]);
+    await until('the file to land', () => count('.tray__item') === 1);
+
+    one<HTMLButtonElement>('.toolcard[data-tool="pdf-split"]').click();
+    await until('Run to take focus', () => document.activeElement === one('.run .btn--primary'));
+
+    one<HTMLButtonElement>('.clearbtn').click();
+    await until('the tray to empty', () => count('.tray__item') === 0);
+
+    expect(one<HTMLElement>('#stage').dataset.phase).toBe('tool-picked');
+    // Before the fix: focus landed on the hero's own pick button, which
+    // stays `display: none` here (paint()'s cold/browsing morph is the
+    // ONLY thing that un-hides the hero, and TOOL PICKED never triggers
+    // it) — measured live, a real Tab press from there fell all the way to
+    // <body>, restarting the page's whole tab order.
+    const addButton = one<HTMLButtonElement>('.addbar button');
+    expect(document.activeElement).toBe(addButton);
+    expect(addButton.offsetParent).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NB3 (independent review pass #4) — refreshTools's own prune-teardown must
+// still reset the URL. This is the one remaining call site of shell.ts's
+// `router.navigate(null)` (in the branch reacting to state.ts pruning a
+// type-mismatched selection) after I2: the ORIGINAL F4 test asserted it via
+// the "Remove all files" path, but that path no longer reaches this branch
+// at all post-I2 (clearFiles no longer prunes — see the I2 commit), and
+// F4's rewrite asserts the OPPOSITE-shaped property (the hash stays, rather
+// than resets). Nothing else covers this call site.
+// ---------------------------------------------------------------------------
+describe('NB3 (pass #4) — a genuine type-mismatch prune still resets the URL', () => {
+  it('resets the hash to the catalogue when the machine prunes a type-mismatched selection', async () => {
+    deliver([await fixture('small.pdf')]);
+    await until('the file to land', () => count('.tray__item') === 1);
+
+    one<HTMLButtonElement>('.toolcard[data-tool="pdf-split"]').click();
+    await until('the route to update', () => location.hash === '#/pdf-split');
+
+    // A PNG next to the PDF: pdf-split's TYPE no longer fits — state.ts's
+    // pruneSelection drops the selection on its own, and refreshTools's own
+    // prune-teardown branch (shell.ts) is what calls router.navigate(null)
+    // in response. Deleting that call today would leave the whole suite
+    // green while resurrecting F4's original bug: reload resurrects a
+    // pruned tool, and the stale hash makes the next genuine reselection of
+    // that tool a no-op via navigate()'s own echo-guard.
+    deliver([await fixture('a.png')]);
+    await until('the selection to be pruned', () => count('.toolcard.is-selected') === 0);
+
+    expect(location.hash === '' || location.hash === '#/').toBe(true);
   });
 });
