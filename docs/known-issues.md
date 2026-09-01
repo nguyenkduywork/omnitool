@@ -104,34 +104,47 @@ it stays fixed.
 - **`registry.*.ts` header comments** lost a pre-existing "Owned by the *group* tools
   task" line. That note referred to the original build's task split and is long stale.
 
-## 3. Test gaps, each understood
+## 3. Test gaps
 
-- **No frame-level "no intermediate paint" test** for the hero handoff. Not
-  meaningfully assertable here — no rAF-sampling or screenshot-diff infrastructure, and
-  a hand-rolled version would mostly measure compositing timing. Mitigated structurally:
-  `fadeHero` takes a single element, so animating an already-visible target is
-  unrepresentable rather than merely avoided.
-- **`countReason`'s "Takes at most N files" branch is unreachable** with the current
-  registry — every tool has `min === max` or `max === null`. Hand-verified correct,
-  untested, and will matter the first time a bounded-range tool is added.
-- **`applicability.test.ts` asserts `qr-generate`'s `minInputs` but not
-  `maxInputs === 0`.** A regression reverting it to `null` would slip through.
-- **`preset.test.ts` never exercises `basename`'s two documented edge cases** — the
-  double extension (`holiday.tar.gz` → `holiday.tar`, the example in its own comment)
-  and a leading-dot name. Both hand-verified correct.
-- **`state.test.ts`'s first `derivePhase` case is tautological** — it hardcodes
-  `runBlocked: null` in its own input.
-- **`organize.spec.ts`'s comment promises to verify the op's output** but the test only
-  asserts a Download button appeared.
-- **`presetValues`/`presetBecause` are ignored on the `tool.editor` branch.** Harmless
-  today: no tool has both an editor and a preset.
-- **The `aria-describedby` compose branch is dead by construction** — nothing else sets
-  that attribute, so only the else-branch is live.
-- **`npm test`'s summary line is the only signal that the `browser` vitest project
-  actually ran** (independent review pass #4, M7). Nothing in the test run itself
-  asserts that the browser project's own suites — five of this branch's new test files
-  among them — contributed to the total; a run where that project silently produced
-  zero tests (as opposed to failing outright, which the reviewer confirmed it does: an
-  unbootable browser provider exits 1 with `Errors: 1 error`, not a quiet pass) would
-  still need a human to notice the count looked short. Cheap insurance, not acted on: a
-  CI step asserting `--project browser` reports at least its known-minimum test count.
+- **No frame-level "no intermediate paint" test** for the hero handoff. **Still open,
+  deliberately.** Not meaningfully assertable here — no rAF-sampling or screenshot-diff
+  infrastructure, and a hand-rolled version would mostly measure compositing timing.
+  Mitigated structurally instead: `fadeHero` takes a single element, so animating an
+  already-visible target is unrepresentable rather than merely avoided.
+- **`countReason`'s "Takes at most N files" branch was unreachable** through the
+  registry — every real tool has `min === max` or `max === null`, so no fixture could
+  exercise it. **Done:** covered by four cases against a synthetic `ToolDef` with
+  `min < max` (`applicability.test.ts`), including the singular "1 file" wording and
+  both ends of the valid range.
+- **`applicability.test.ts` did not assert `qr-generate`'s `maxInputs === 0`.**
+  **Done.** This is the field that keeps `shell.ts` from handing a generator every
+  loaded file, so reverting it to `null` now fails a test.
+- **`preset.test.ts` never exercised `basename`'s two documented edge cases.**
+  **Done:** the double extension (`holiday.tar.gz` → `holiday.tar`, the example in its
+  own comment) and leading-dot names (`.gitignore` kept whole, `.env.local` → `.env`).
+- **`state.test.ts`'s `derivePhase` cases hardcoded their `runBlocked` input.**
+  `derivePhase` only cares whether it is null, so hand-written strings would pass
+  forever even if it and `runBlockedReason` stopped agreeing — and the shell feeds one
+  into the other on every emit. **Done:** every case now routes through the real
+  `runBlockedReason`, plus one test asserting the two agree about when a run is
+  possible.
+- **`organize.spec.ts` promised to verify the op's output** but only asserted a
+  Download button appeared. **Done:** it now downloads the real bytes and asserts the
+  emitted PDF has exactly 2 pages, so the board's reorder-and-delete genuinely reaching
+  the op is measured rather than assumed.
+- **`presetValues`/`presetBecause` are ignored on the `tool.editor` branch.** An editor
+  derives its options from the files itself, so this is fine — but it fails SILENTLY,
+  dropping the preset with no error. **Done:** a registry invariant test asserts no tool
+  declares both, so creating that combination goes red and forces a decision instead of
+  quietly losing the preset.
+- **The `aria-describedby` compose branch was dead by construction** — nothing else set
+  that attribute, so the append-to-existing arm was unreachable and therefore
+  untrustworthy. **Done:** extracted as `composeDescribedBy` and unit-tested on both
+  arms. That also fixed a latent bug the inline version had — it would have listed the
+  same id twice on a re-render.
+- **`npm test`'s summary line was the only signal that the `browser` vitest project
+  actually ran** (independent review pass #4, M7). Twelve suites live only in that
+  project — anything touching `OffscreenCanvas`, real DOM, or real key events. **Done:**
+  a CI step asserts `--project browser` reports at least 150 passing tests (it reports
+  200 today), so a project that silently contributed nothing is a red build rather than
+  a total that merely looks short.

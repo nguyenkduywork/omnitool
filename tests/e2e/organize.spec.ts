@@ -13,10 +13,13 @@
 // simply stopped existing — and only on rendered cards, so clicking a page
 // that had not scrolled into view yet still worked. Nothing short of
 // "interact with a card whose thumbnail has rendered" catches that.
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { expect, test } from '@playwright/test';
+import { PDFDocument } from 'pdf-lib';
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures');
 
@@ -115,8 +118,24 @@ test.describe('pdf-organize board', () => {
     await expect(page.locator('.pdf-organize__status')).toContainText('2 of 3');
 
     await page.getByRole('button', { name: 'Run' }).click();
-    await expect(page.getByRole('button', { name: 'Download' }).first()).toBeVisible({
-      timeout: 30_000,
-    });
+    const downloadButton = page.getByRole('button', { name: 'Download' }).first();
+    await expect(downloadButton).toBeVisible({ timeout: 30_000 });
+
+    // Decode the REAL downloaded bytes. A visible Download button only proves
+    // the run finished, not that the board's order and deletion reached the
+    // op — which is the whole claim this test makes. small.pdf has 3 pages
+    // (tests/fixtures/make-fixtures.mjs); one was deleted, so the output must
+    // have exactly 2.
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      downloadButton.click(),
+    ]);
+    const savePath = path.join(
+      mkdtempSync(path.join(tmpdir(), 'omnitool-organize-')),
+      'organized.pdf',
+    );
+    await download.saveAs(savePath);
+    const doc = await PDFDocument.load(readFileSync(savePath));
+    expect(doc.getPageCount()).toBe(2);
   });
 });

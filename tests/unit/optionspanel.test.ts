@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { coerceOptionValue, defaultOptions } from '../../src/ui/optionspanel';
+import { composeDescribedBy, coerceOptionValue, defaultOptions } from '../../src/ui/optionspanel';
 import type { OptionSchema } from '../../src/types';
 
 const SCHEMA: OptionSchema = {
@@ -111,5 +111,33 @@ describe('coerceOptionValue', () => {
       scale: { kind: 'range', label: 'Scale', min: 0, max: 1, step: 0.1, default: 0.5 },
     };
     expect(coerceOptionValue(stepped.scale!, '0.30000000000000004')).toBe(0.3);
+  });
+});
+
+// `aria-describedby` is a space-separated list of ids, so the preset note has
+// to be APPENDED. Nothing else in the app sets that attribute, so the
+// append-to-existing path was previously an inline ternary arm no caller
+// could reach — untestable, and therefore untrustworthy. It is a named
+// function now, and both arms are exercised here.
+describe('composeDescribedBy', () => {
+  it('is just the id when there was no description', () => {
+    expect(composeDescribedBy(null, 'note-1')).toBe('note-1');
+    expect(composeDescribedBy('', 'note-1')).toBe('note-1');
+  });
+
+  it('appends to an existing description rather than replacing it', () => {
+    expect(composeDescribedBy('hint-1', 'note-1')).toBe('hint-1 note-1');
+    expect(composeDescribedBy('hint-1 hint-2', 'note-1')).toBe('hint-1 hint-2 note-1');
+  });
+
+  // Rendering twice must not grow the list — the old inline version would
+  // have produced "note-1 note-1".
+  it('does not list the same id twice', () => {
+    expect(composeDescribedBy('note-1', 'note-1')).toBe('note-1');
+    expect(composeDescribedBy('hint-1 note-1', 'note-1')).toBe('hint-1 note-1');
+  });
+
+  it('tolerates the irregular whitespace a hand-written attribute can carry', () => {
+    expect(composeDescribedBy('  hint-1   hint-2  ', 'note-1')).toBe('hint-1 hint-2 note-1');
   });
 });

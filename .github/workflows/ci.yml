@@ -38,6 +38,25 @@ jobs:
       - name: Test
         run: npm run test
 
+      # `npm run test` above runs BOTH vitest projects and reports one total.
+      # If the headless-Chromium project ever produced zero tests instead of
+      # failing, that total would just look short and a human would have to
+      # notice — and 12 of this repo's suites live only in that project
+      # (anything touching OffscreenCanvas, real DOM, or real key events).
+      # A floor on its own count turns "silently ran nothing" into a red build.
+      # Raise MIN when the browser suite grows; it is a floor, not an equality.
+      - name: Assert the browser test project actually ran
+        shell: bash
+        run: |
+          MIN=150
+          out=$(npx vitest run --project browser --reporter=basic 2>&1) || { echo "$out"; exit 1; }
+          count=$(printf '%s' "$out" | grep -oE '[0-9]+ passed' | tail -1 | grep -oE '[0-9]+')
+          echo "browser project reported ${count:-0} passing tests (floor $MIN)"
+          if [ -z "$count" ] || [ "$count" -lt "$MIN" ]; then
+            echo "::error::browser vitest project reported ${count:-0} tests, expected >= $MIN"
+            exit 1
+          fi
+
       - name: Build
         run: npm run build
 

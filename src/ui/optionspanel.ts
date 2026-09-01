@@ -73,6 +73,22 @@ function tidy(value: number): number {
  * `raw` is whatever the DOM handed over: a string from every `<input>` and
  * `<select>`, a boolean from a checkbox's `.checked`.
  */
+/**
+ * Add `id` to an `aria-describedby` token list without dropping what is
+ * already there, and without listing `id` twice.
+ *
+ * `aria-describedby` is a SPACE-SEPARATED LIST of ids, so overwriting it
+ * would silently drop any description a control already had. Nothing else in
+ * this app sets the attribute today, which is exactly why this lives here as
+ * a named, tested function rather than as an inline ternary whose
+ * append-to-existing arm no caller could reach — a defensive branch that
+ * cannot be exercised is a branch nobody can trust.
+ */
+export function composeDescribedBy(existing: string | null, id: string): string {
+  const tokens = (existing ?? '').split(/\s+/).filter(Boolean);
+  return tokens.includes(id) ? tokens.join(' ') : [...tokens, id].join(' ');
+}
+
 export function coerceOptionValue(def: OptionDef, raw: string | number | boolean): unknown {
   switch (def.kind) {
     case 'toggle':
@@ -328,8 +344,12 @@ export function renderOptions(init: RenderOptionsInit): OptionsHandle {
       // name, edit text, small" and never says where "small" came from. Composed
       // onto any existing description rather than replacing it.
       const field = control.querySelector<HTMLElement>('input, select, textarea');
-      const described = field?.getAttribute('aria-describedby');
-      field?.setAttribute('aria-describedby', described ? `${described} ${note.id}` : note.id);
+      if (field) {
+        field.setAttribute(
+          'aria-describedby',
+          composeDescribedBy(field.getAttribute('aria-describedby'), note.id),
+        );
+      }
     }
 
     // Every blocked choice states WHY, in the panel, next to the control.

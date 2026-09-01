@@ -84,6 +84,22 @@ describe('archive-name presets', () => {
     expect(because.name).toBeUndefined();
   });
 
+  // basename() strips exactly ONE extension, and its own comment uses
+  // holiday.tar.gz as the example — so that example is worth asserting rather
+  // than only documenting.
+  it('strips one extension only, so a double extension keeps the inner one', () => {
+    expect(preset('zip-create', [file('holiday.tar.gz', 'application/gzip')]).values.name).toBe(
+      'holiday.tar',
+    );
+  });
+
+  // A leading-dot name is all extension and no stem. The `dot <= 0` guard is
+  // what stops it collapsing to an empty archive name.
+  it('keeps a leading-dot name whole rather than emptying it', () => {
+    expect(preset('zip-create', [file('.gitignore', 'text/plain')]).values.name).toBe('.gitignore');
+    expect(preset('tar-create', [file('.env.local', 'text/plain')]).values.name).toBe('.env');
+  });
+
   it('keeps a dotless name whole', () => {
     expect(preset('zip-create', [file('Makefile', 'text/plain')]).values.name).toBe('Makefile');
   });

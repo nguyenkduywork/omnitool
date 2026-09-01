@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { TOOLS, getTool } from '../../src/core/registry';
 import { createState, derivePhase, runBlockedReason } from '../../src/ui/state';
 import type { FileEntry } from '../../src/ui/state';
+import type { ToolDef } from '../../src/types';
 
 function entry(name: string, type: string): FileEntry {
   return { file: new File([new Uint8Array([1, 2, 3])], name, { type }), type };
@@ -12,57 +13,85 @@ const PDF = 'application/pdf';
 const pdf = (n = 'a.pdf'): FileEntry => entry(n, PDF);
 
 describe('derivePhase — spec §4.2', () => {
-  // `runBlocked` is runBlockedReason()'s answer for the same inputs. Passing
-  // it in rather than recomputing keeps derivePhase a pure fold with no
-  // opinion about WHY a tool is blocked.
-  const base = {
-    fileCount: 0,
-    selected: null,
-    runBlocked: 'Pick a tool first.' as string | null,
-    running: false,
-    hasResults: false,
-  };
   const merge = getTool('pdf-merge')!;
 
+  /**
+   * `runBlocked` comes from the REAL `runBlockedReason` for the same inputs,
+   * never a hand-written string. derivePhase only cares whether it is null,
+   * so a literal would pass forever even if the two functions stopped
+   * agreeing — which is the one thing worth pinning here, since the shell
+   * feeds one into the other on every emit.
+   */
+  function phaseFor(input: {
+    mimes?: string[];
+    selected?: ToolDef | null;
+    running?: boolean;
+    hasResults?: boolean;
+  }) {
+    const mimes = input.mimes ?? [];
+    const selected = input.selected ?? null;
+    return derivePhase({
+      fileCount: mimes.length,
+      selected,
+      runBlocked: runBlockedReason(selected, mimes),
+      running: input.running ?? false,
+      hasResults: input.hasResults ?? false,
+    });
+  }
+
   it('is browsing with nothing loaded and nothing picked', () => {
-    expect(derivePhase(base)).toBe('browsing');
+    expect(phaseFor({})).toBe('browsing');
   });
 
   it('is filtered once files land with no tool picked', () => {
-    expect(derivePhase({ ...base, fileCount: 2 })).toBe('filtered');
+    expect(phaseFor({ mimes: [PDF, PDF] })).toBe('filtered');
   });
 
   it('is tool-picked when a file tool is chosen with no files', () => {
-    expect(
-      derivePhase({ ...base, selected: merge, runBlocked: 'Needs at least 2 files — you have none.' }),
-    ).toBe('tool-picked');
+    expect(phaseFor({ selected: merge })).toBe('tool-picked');
   });
 
   // The QR fix, as one transition: a generator is never blocked, so it is READY.
   it('goes straight to ready for a generator with no files', () => {
-    expect(
-      derivePhase({ ...base, selected: getTool('qr-generate')!, runBlocked: null }),
-    ).toBe('ready');
+    expect(phaseFor({ selected: getTool('qr-generate')! })).toBe('ready');
   });
 
   it('is ready once the picked tool has what it needs', () => {
-    expect(derivePhase({ ...base, fileCount: 2, selected: merge, runBlocked: null })).toBe('ready');
+    expect(phaseFor({ mimes: [PDF, PDF], selected: merge })).toBe('ready');
   });
 
   it('stays tool-picked while anything still blocks the run', () => {
-    expect(
-      derivePhase({ ...base, fileCount: 1, selected: merge, runBlocked: 'Needs at least 2 files — you have 1.' }),
-    ).toBe('tool-picked');
-    // A type mismatch holds it back exactly the same way.
-    expect(
-      derivePhase({ ...base, fileCount: 2, selected: merge, runBlocked: "Merge PDFs doesn't work with these files." }),
-    ).toBe('tool-picked');
+    // Too few files.
+    expect(phaseFor({ mimes: [PDF], selected: merge })).toBe('tool-picked');
+    // A type mismatch holds it back exactly the same way — and this case only
+    // reaches derivePhase as non-null because runBlockedReason says so.
+    expect(phaseFor({ mimes: [PDF, 'image/png'], selected: merge })).toBe('tool-picked');
   });
 
   it('reports running and results', () => {
-    const ready = { ...base, fileCount: 2, selected: merge, runBlocked: null };
-    expect(derivePhase({ ...ready, running: true })).toBe('running');
-    expect(derivePhase({ ...ready, hasResults: true })).toBe('results');
+    const ready = { mimes: [PDF, PDF], selected: merge };
+    expect(phaseFor({ ...ready, running: true })).toBe('running');
+    expect(phaseFor({ ...ready, hasResults: true })).toBe('results');
+  });
+
+  // The coupling itself, stated once: every case above depends on these two
+  // agreeing, so a change to either that broke the pairing would surface here
+  // rather than silently turning the cases above into no-ops.
+  it('agrees with runBlockedReason about when a run is possible', () => {
+    const cases: { mimes: string[]; selected: ToolDef | null }[] = [
+      { mimes: [], selected: null },
+      { mimes: [], selected: merge },
+      { mimes: [], selected: getTool('qr-generate')! },
+      { mimes: [PDF], selected: merge },
+      { mimes: [PDF, PDF], selected: merge },
+      { mimes: [PDF, 'image/png'], selected: merge },
+    ];
+    for (const { mimes, selected } of cases) {
+      const blocked = runBlockedReason(selected, mimes);
+      const phase = phaseFor({ mimes, selected });
+      // 'ready' is reachable if and only if nothing blocks the run.
+      expect(phase === 'ready').toBe(blocked === null && selected !== null);
+    }
   });
 });
 

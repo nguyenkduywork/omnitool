@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { TOOLS, getTool } from '../../src/core/registry';
 import { applicabilityFor, countReason, typesMatch } from '../../src/core/format';
+import type { ToolDef } from '../../src/types';
 
 describe('every tool declares a kind', () => {
   it('assigns exactly one kind to each of the 29 tools', () => {
@@ -16,6 +17,11 @@ describe('every tool declares a kind', () => {
     expect(generators.map((t) => t.id)).toEqual(['qr-generate']);
     expect(generators[0]?.accepts).toEqual([]);
     expect(generators[0]?.minInputs).toBe(0);
+    // Pinned too: a generator takes NO files, so the ceiling matters as much
+    // as the floor. Reverting this to `null` would let `shell.ts`'s run path
+    // hand a generator every loaded file again — the bug that made running
+    // the QR tool read a 64 KB PDF it never looks at.
+    expect(generators[0]?.maxInputs).toBe(0);
   });
 
   // The two must not drift: a utility IS a tool that takes any bytes.
@@ -27,6 +33,18 @@ describe('every tool declares a kind', () => {
       'base64', 'file-join', 'file-split', 'gzip', 'hash', 'tar-create', 'zip-create',
     ]);
     expect(universal).toEqual(utilities);
+  });
+
+  // `renderOptions` only threads `presetValues`/`presetBecause` into the
+  // DECLARATIVE schema path; the bespoke-`editor` branch (crop box, page
+  // board) ignores them, because an editor derives its options from the files
+  // itself. That is fine while no tool declares both — but it fails SILENTLY,
+  // dropping the preset with no error. So the invariant is asserted here
+  // instead: adding a tool with both makes this red, forcing a decision about
+  // what should happen rather than letting the preset quietly vanish.
+  it('never declares both a bespoke editor and a preset on the same tool', () => {
+    const both = TOOLS.filter((tool) => tool.editor && tool.preset).map((tool) => tool.id);
+    expect(both).toEqual([]);
   });
 
   it('leaves the remaining 21 as transforms, including the extractors', () => {
@@ -54,6 +72,42 @@ describe('countReason', () => {
 
   it('says "none" rather than "0"', () => {
     expect(countReason(getTool('pdf-merge')!, 0)).toBe('Needs at least 2 files — you have none.');
+  });
+
+  // The "Takes at most N" branch is unreachable through the registry: every
+  // real tool has min === max or max === null, so no fixture can exercise it.
+  // It is still live code the moment anyone adds a bounded-range tool, so it
+  // gets a synthetic ToolDef rather than staying the one untested branch.
+  describe('a bounded range with min < max — no such tool exists yet', () => {
+    const ranged = (minInputs: number, maxInputs: number): ToolDef => ({
+      id: 'ranged',
+      name: 'Ranged',
+      blurb: '',
+      group: 'data',
+      kind: 'transform',
+      accepts: ['*'],
+      minInputs,
+      maxInputs,
+      load: () => Promise.reject(new Error('not used')),
+    });
+
+    it('names the ceiling when there are too many', () => {
+      expect(countReason(ranged(2, 4), 5)).toBe('Takes at most 4 files — you have 5.');
+    });
+
+    it('says "file" singular when the ceiling is 1', () => {
+      expect(countReason(ranged(0, 1), 2)).toBe('Takes at most 1 file — you have 2.');
+    });
+
+    it('still reports the floor when there are too few', () => {
+      expect(countReason(ranged(2, 4), 1)).toBe('Needs at least 2 files — you have 1.');
+    });
+
+    it('is null anywhere inside the range, including both ends', () => {
+      expect(countReason(ranged(2, 4), 2)).toBeNull();
+      expect(countReason(ranged(2, 4), 3)).toBeNull();
+      expect(countReason(ranged(2, 4), 4)).toBeNull();
+    });
   });
 });
 
