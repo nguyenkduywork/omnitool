@@ -13,6 +13,8 @@ import { fileURLToPath } from 'node:url';
 
 import { expect, test } from '@playwright/test';
 
+import { tabUntil } from './keyboard';
+
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures');
 const fixturePath = (name: string): string => path.join(FIXTURES, name);
 
@@ -155,4 +157,39 @@ test('falls back to the catalogue for an unknown tool id, and corrects the addre
   // reload or a copied link would carry `#/not-a-real-tool` right back.
   // Spec §4.4 promises the catalogue, address bar included.
   await expect(page).toHaveURL(/#\/$|\/$/);
+});
+
+test.describe('the brand is the way home', () => {
+  test('returns to the catalogue on click, without discarding the files', async ({ page }) => {
+    await page
+      .locator('input[type=file]')
+      .setInputFiles([fixturePath('small.pdf'), fixturePath('small.pdf')]);
+    await page.locator('.toolcard[data-tool="pdf-merge"]').click();
+    await expect(page).toHaveURL(/#\/pdf-merge$/);
+
+    await page.locator('.brand').click();
+
+    await expect(page).toHaveURL(/#\/$/);
+    await expect(page.locator('.toolcard.is-selected')).toHaveCount(0);
+    // The files are the user's own data; a logo click is not a request to
+    // throw them away, so the tray survives and the catalogue stays narrowed.
+    await expect(page.locator('.tray__item')).toHaveCount(2);
+  });
+
+  test('is a real link, reachable and activatable by keyboard alone', async ({ page }) => {
+    await page.locator('.toolcard[data-tool="qr-generate"]').click();
+    await expect(page).toHaveURL(/#\/qr-generate$/);
+
+    // An <a href> rather than a button precisely so this works with no
+    // keydown handler of our own — Enter activation is the browser's.
+    const brand = page.locator('.brand');
+    await expect(brand).toHaveAttribute('href', '#/');
+    const stops = await tabUntil(page, (info) => info.label?.trim() === 'omnitool');
+    expect(stops).toBeLessThan(40);
+    await expect(brand).toBeFocused();
+
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(/#\/$/);
+    await expect(page.locator('.toolcard.is-selected')).toHaveCount(0);
+  });
 });

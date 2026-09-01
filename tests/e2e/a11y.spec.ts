@@ -35,6 +35,8 @@ import { fileURLToPath } from 'node:url';
 
 import { expect, test, type Page } from '@playwright/test';
 
+import { tabUntil } from './keyboard';
+
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures');
 
 function fixturePath(name: string): string {
@@ -49,26 +51,6 @@ function fixturePath(name: string): string {
  * Returns the number of tabs taken so a regression that buries a control 40
  * stops deep is visible in the assertion, not just "it eventually worked".
  */
-async function tabUntil(
-  page: Page,
-  matches: (info: { role: string | null; label: string | null; tag: string }) => boolean,
-  limit = 40,
-): Promise<number> {
-  for (let i = 1; i <= limit; i++) {
-    await page.keyboard.press('Tab');
-    const info = await page.evaluate(() => {
-      const el = document.activeElement as HTMLElement | null;
-      return {
-        role: el?.getAttribute('role') ?? null,
-        label: el?.getAttribute('aria-label') ?? el?.textContent?.trim().slice(0, 60) ?? null,
-        tag: el?.tagName ?? 'NONE',
-      };
-    });
-    if (matches(info)) return i;
-  }
-  throw new Error(`no element matched within ${limit} Tab presses`);
-}
-
 /** The tray's accessible labels, in DOM order — this is the merge order. */
 function trayLabels(page: Page): Promise<string[]> {
   return page.evaluate(() =>

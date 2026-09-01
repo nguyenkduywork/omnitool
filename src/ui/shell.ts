@@ -130,7 +130,21 @@ export function mountShell(root: HTMLElement): ShellHandle {
   }
 
   const topbar = el('header', 'topbar');
-  const brand = el('div', 'brand');
+  // An <a href="#/">, not a button: this is navigation to a real address, so
+  // it should behave like one — Enter works without a keydown handler,
+  // middle-click and ⌘/Ctrl-click open a new tab, and the browser shows the
+  // destination on hover. The hash change is picked up by `router`'s own
+  // `hashchange` listener and arrives as `select(null, { fromRouter: true })`,
+  // the same path Back to the catalogue already takes, so there is nothing to
+  // wire up here.
+  //
+  // It returns to the CATALOGUE, deliberately not to the empty landing screen:
+  // the files on the tray are the user's own data, and a logo click is not a
+  // request to throw them away. With files loaded this lands on the catalogue
+  // narrowed to them; the hero comes back when the tray is emptied.
+  const brand = el('a', 'brand');
+  brand.href = '#/';
+  brand.title = 'omnitool — back to all tools';
   const brandMark = el('span', 'brand__mark');
   brandMark.append(icon('spark'));
   brand.append(brandMark, el('span', 'brand__name', 'omnitool'));

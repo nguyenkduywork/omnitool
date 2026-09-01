@@ -150,13 +150,39 @@ button {
   margin-inline: auto;
 }
 
+/* An <a> since it navigates (see shell.ts), so the link defaults need
+ * neutralising and it needs to read as interactive: the mark lifts and the
+ * wordmark warms on hover, and it takes the same focus ring as every other
+ * control. `width: fit-content` keeps the hit area on the logo itself rather
+ * than stretching across the topbar's free space. */
 .brand {
   display: flex;
   align-items: center;
   gap: var(--s-2);
+  width: fit-content;
   font-size: var(--fs-md);
   font-weight: 620;
   letter-spacing: var(--tracking-tight);
+  color: inherit;
+  text-decoration: none;
+  border-radius: var(--r-sm);
+}
+
+.brand:hover .brand__name {
+  color: var(--accent);
+}
+
+.brand:hover .brand__mark {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.brand__name,
+.brand__mark {
+  transition:
+    color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
 }
 
 .brand__mark {
