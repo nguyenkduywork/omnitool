@@ -473,15 +473,19 @@ export function mountShell(root: HTMLElement): ShellHandle {
 
   /** Build (or rebuild) the options surface for `tool`. */
   async function mountOptions(tool: ToolDef): Promise<void> {
-    lastFilesSignature = filesSignature();
     // A preset reads the files' METADATA only — the sniffed type, not contents.
-    const sniffed = snap.entries.map((entry) => ({
-      name: entry.file.name,
-      size: entry.file.size,
-      type: entry.type,
-    }));
-    const preset = tool.preset?.(sniffed);
-    options = defaultOptions(tool.options, preset?.values);
+    const sniffed = (): { name: string; size: number; type: string }[] =>
+      snap.entries.map((entry) => ({
+        name: entry.file.name,
+        size: entry.file.size,
+        type: entry.type,
+      }));
+
+    // Seeded BEFORE the await purely so a Run clicked during the encoder probe
+    // sends the schema defaults rather than an empty object — the panel is
+    // already on screen by now (`selectTool`'s emit revealed it), so Run is
+    // reachable for the length of the probe.
+    options = defaultOptions(tool.options, tool.preset?.(sniffed())?.values);
 
     panel?.destroy();
     panel = null;
@@ -490,6 +494,17 @@ export function mountShell(root: HTMLElement): ShellHandle {
     // disabled with the reason visible rather than offered and then failed (§5.2).
     const disabled = await disabledFormatChoices(tool.options);
     if (snap.selected?.id !== tool.id) return;
+
+    // Re-read everything derived from the FILES on this side of the await. An
+    // intake landing during the probe used to leave the panel mounted with a
+    // caption computed from files that were already gone — "from the first
+    // file" naming a file no longer in the tray — and, worse, with
+    // `lastFilesSignature` set to that same stale list, so `syncEditor` saw no
+    // change and nothing ever corrected it. The signature has to be recorded
+    // for what actually got rendered, which is only knowable here.
+    lastFilesSignature = filesSignature();
+    const preset = tool.preset?.(sniffed());
+    options = defaultOptions(tool.options, preset?.values);
 
     const mounted = renderOptions({
       tool,
@@ -631,7 +646,16 @@ export function mountShell(root: HTMLElement): ShellHandle {
       // page load with an empty hash — the common case — does not force a
       // needless extra render.
       if (!opts.fromRouter) router.navigate(null);
-      if (snap.selected) clearSelection();
+      if (snap.selected) {
+        clearSelection();
+        // Announced on EVERY route to the catalogue, not just clicks. A
+        // route-driven SELECT already announced (below), and click-to-deselect
+        // announces above — leaving Back/Forward as the one navigation that
+        // changed what is on screen and said nothing, which is precisely the
+        // silence this overhaul exists to remove. Phrased for the mechanism
+        // that got here: the user pressed Back, they did not click a tool off.
+        announce('Back to all tools. No tool selected.');
+      }
       return;
     }
 

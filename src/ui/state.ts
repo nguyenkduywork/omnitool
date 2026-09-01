@@ -193,6 +193,28 @@ export function createState(tools: readonly ToolDef[]): StateHandle {
       pruneSelection();
       emit();
     },
+    /**
+     * Installs `id` WITHOUT the type check `pruneSelection` applies. The
+     * asymmetry is deliberate, not an oversight — the two answer different
+     * questions:
+     *
+     *   pruneSelection: "the files changed under a tool the user already
+     *     picked; should it survive?" No — its options now describe files
+     *     that are not there, and the user did not ask for this.
+     *   selectTool: "the user just asked for this tool." Honour it. A route
+     *     to `#/pdf-merge` with a PNG loaded then shows the tool with
+     *     `runBlockedReason`'s own "Merge PDFs doesn't work with these
+     *     files.", Run disabled, and "Change tool" as the way out.
+     *
+     * Refusing instead would drop the request on the floor and send the user
+     * back to a catalogue that never explains why their bookmark did not
+     * open. An honest, self-explaining screen beats a silently ignored
+     * navigation, so the catalogue having no card for it is accepted: the
+     * work zone is what does the explaining.
+     *
+     * Pinned by "honours a type-mismatched selection rather than refusing it"
+     * in tests/unit/state.test.ts, so changing it is a decision.
+     */
     selectTool(id) {
       selected = id === null ? null : (tools.find((tool) => tool.id === id) ?? null);
       hasResults = false;

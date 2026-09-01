@@ -72,37 +72,55 @@ dodging.
 landmark test, which now asserts the name changes on selection instead of asserting
 it stays fixed.
 
-## 2. Real, small, safe to carry
+## 2. Behaviour and consistency
 
 - **A route can install a type-mismatched transform the catalogue has no card for.**
-  `state.selectTool` applies no `typesMatch` check while `pruneSelection` does.
-  **Correction (independent review pass #4):** this was originally recorded as reachable
-  only via Back/Forward. It is not — `select()` applies no `typesMatch` check on ANY
-  route, so an address-bar edit or an external link reaches it exactly the same way:
-  the work zone shows *"X doesn't work with these files."* while nothing is ticked in
-  the catalogue. The generator half of this divergence was reconciled in
-  `zones/catalogue.ts`; the transform-shaped remnant is open. Still deferred — the
-  correction is to the reachability claim, not to the triage.
-- **Returning to the catalogue via Back/Forward announces nothing**, where
-  click-to-deselect says *"Tool deselected."* Consistent with the existing "only
-  explicit in-tab actions announce" philosophy, so a decision rather than a bug.
-- **"N tools can run on these files" undercounts a persisted generator** — the header
-  reads 7 beside 8 pills. Off by one; the blank-header case is unreachable.
-- **Below 768px, a cold visitor scrolls past all 29 tools** before reaching the work
-  zone's placeholder. Spec §4.3 specifies only the *picked* fold, which ships.
+  **Resolved as intended, not changed.** `selectTool` and `pruneSelection` answer
+  different questions, so the asymmetry is deliberate: `pruneSelection` drops a tool
+  when the files change *underneath* one you already picked (its options would describe
+  files that are gone, and you never asked for that), while `selectTool` honours a tool
+  you just asked for. A route to `#/pdf-merge` with a PNG loaded therefore shows the
+  tool with *"Merge PDFs doesn't work with these files."*, Run disabled, and "Change
+  tool" as the way out. Refusing instead would drop the request on the floor and return
+  you to a catalogue that never explains why your bookmark did not open. Now documented
+  on `selectTool` and pinned by two tests, so changing it is a decision rather than a
+  drift.
+- **Returning to the catalogue via Back/Forward announced nothing**, where
+  click-to-deselect says *"Tool deselected."* **Done:** every route to the catalogue now
+  announces *"Back to all tools. No tool selected."* Route-driven *selection* already
+  announced, which left Back/Forward as the one navigation that changed the screen and
+  said nothing — the exact silence this overhaul exists to remove. Verified live via
+  live-region mutation records.
+- **"N tools can run on these files" undercounted a persisted generator** — the header
+  read one short of the pills actually on screen. **Done:** verified live, the header now
+  reads 12 beside 12 controls and 13 once a generator is selected.
 - **`HERO_EXIT_DURATION_MS` (120) and `--dur-fast` (120ms) are independent literals.**
-  Documented in-code with each pointing at the other; a runtime `getComputedStyle` read
-  was judged not worth the round trip. They can drift.
-- **`router.destroy()` does not reset `lastWrittenHash`.** Inert — the listener is
-  already removed.
-- **`navigate()`'s JSDoc** ("push a route without re-entering `onRoute`") overstates
-  slightly: under same-tick multi-write patterns `onRoute` can fire a harmless
-  duplicate with the same id. `select()` is idempotent to it by design.
-- **A narrow race in `mountOptions`.** If the file list changes during the
-  `disabledFormatChoices` await, the panel mounts with a caption computed from the
-  pre-await files. The next emit retracts it, but nothing forces one.
+  `fadeHero` resolves on a JS timeout while the visual is a CSS transition, so the two
+  must agree. **Done:** a unit test reads `tokens.css` and asserts they match, plus that
+  the reduced-motion override is still effectively instant. A runtime
+  `getComputedStyle` read is still judged not worth the round trip.
+- **`router.destroy()` did not reset `lastWrittenHash`.** **Done** — inert either way,
+  but a torn-down handle holding stale state misleads whoever reuses the module.
+- **`navigate()`'s JSDoc overstated its guarantee.** **Done:** it now says what is
+  actually true — the echo guard is per-write, so two writes in the same tick can
+  surface one duplicate `onRoute` with the same id, which is why consumers only need to
+  be idempotent.
+- **A narrow race in `mountOptions`.** **Done.** Everything derived from the files is now
+  read on the far side of the `disabledFormatChoices` await. Previously an intake landing
+  during the encoder probe mounted a caption computed from files that were already gone
+  — *"from the first file"* naming a file no longer in the tray — and set
+  `lastFilesSignature` to that same stale list, so `syncEditor` saw no change and nothing
+  ever corrected it. The pre-await `defaultOptions` seed is kept deliberately: the panel
+  is already on screen during the probe, so a Run clicked then must still send the schema
+  defaults rather than an empty object.
 - **`registry.*.ts` header comments** lost a pre-existing "Owned by the *group* tools
-  task" line. That note referred to the original build's task split and is long stale.
+  task" line. **Closed, won't restore** — that note described the original build's task
+  split, which no longer exists.
+- **Below 768px, a cold visitor scrolls past all 29 tools** before reaching the work
+  zone's placeholder. **Still open, deliberately.** Spec §4.3 specifies only the *picked*
+  fold, which ships. Fixing it means reordering the three-zone DOM, which changes tab
+  order and the grid's placement rules — a layout change wanting its own design pass and
+  its own a11y verification, not a carried one-liner.
 
 ## 3. Test gaps
 

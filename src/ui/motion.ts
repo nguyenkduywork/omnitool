@@ -187,7 +187,7 @@ export function revealTools(cards: readonly HTMLElement[]): Promise<void> {
  * `DURATION.fast` above: that token is animejs's own vocabulary, used only by
  * tweens `animate()` drives, and the two happen to differ (180ms vs 120ms).
  */
-const HERO_EXIT_DURATION_MS = 120;
+export const HERO_EXIT_DURATION_MS = 120;
 
 /**
  * The hero dissolving away as the `browsing` phase ends. Before Task 10 this

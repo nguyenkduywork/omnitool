@@ -288,7 +288,11 @@ export function createCatalogue(init: {
       // WARM: the three tiers.
       const { primary, blocked, utility } = snapshot.applicability;
       const subject = snapshot.entries.length === 1 ? 'this file' : `these ${snapshot.entries.length} files`;
-      const runnable = primary.length + utility.length;
+      // A persisted generator is rendered as a pill below but sits in none of
+      // the three buckets, so counting only the buckets read one short of the
+      // pills actually on screen ("7 tools can run" beside 8 of them).
+      const persistedGeneratorCount = snapshot.selected?.kind === 'generate' ? 1 : 0;
+      const runnable = primary.length + utility.length + persistedGeneratorCount;
 
       heading.textContent = 'Tools for these files';
       // M1: `runnable === 0` (the blank-header branch) is DEFENSIVE ONLY

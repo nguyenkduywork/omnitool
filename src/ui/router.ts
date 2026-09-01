@@ -30,7 +30,14 @@ export function hashForTool(id: string | null): string {
 }
 
 export type RouterHandle = {
-  /** Push a route without re-entering `onRoute`. */
+  /**
+   * Push a route. The router swallows the `hashchange` its own write causes,
+   * so this does not re-enter `onRoute` for the value just written — but the
+   * guard is per-write, not a blanket suppression: two writes landing in the
+   * same tick can still surface one duplicate `onRoute` with the SAME id.
+   * Never a wrong id and never a dropped one, so consumers only need to be
+   * idempotent — `shell.ts`'s `select()` is, deliberately.
+   */
   navigate(id: string | null): void;
   /** Read the current URL and fire `onRoute` once. */
   start(): void;
@@ -142,6 +149,10 @@ export function createRouter(init: {
     },
     destroy() {
       window.removeEventListener('hashchange', onHashChange);
+      // Nothing reads it once the listener is gone, but leaving a stale hash
+      // in a torn-down handle is the kind of asymmetry that misleads whoever
+      // next reuses this module.
+      lastWrittenHash = null;
     },
   };
 }

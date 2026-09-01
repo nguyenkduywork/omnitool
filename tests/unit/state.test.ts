@@ -144,6 +144,36 @@ describe('createState', () => {
     expect(state.snapshot().selected).toBeNull();
   });
 
+  // The selectTool/pruneSelection asymmetry, pinned so it stays a DECISION.
+  // pruneSelection drops a transform whose type stopped matching; selectTool
+  // installs one anyway, because the user just asked for it — a route to
+  // #/pdf-merge with a PNG loaded should say why it cannot run, not silently
+  // bounce back to the catalogue. See selectTool's own comment in state.ts.
+  it('honours a type-mismatched selection rather than refusing it', () => {
+    const state = createState(TOOLS);
+    state.addFiles([entry('a.png', 'image/png')]);
+    state.selectTool('pdf-merge');
+
+    const snap = state.snapshot();
+    expect(snap.selected?.id).toBe('pdf-merge');
+    // ...and the screen has something true to say about it.
+    expect(snap.runBlockedReason).toBe("Merge PDFs doesn't work with these files.");
+    expect(snap.phase).toBe('tool-picked');
+  });
+
+  // The other half of the same rule: what selectTool installs, a later FILE
+  // change still prunes. Asking for a tool is honoured; files shifting under
+  // one you already have is not the same request.
+  it('still prunes that same selection once the files change again', () => {
+    const state = createState(TOOLS);
+    state.addFiles([entry('a.png', 'image/png')]);
+    state.selectTool('pdf-merge');
+    expect(state.snapshot().selected?.id).toBe('pdf-merge');
+
+    state.setFiles([entry('b.png', 'image/png')]);
+    expect(state.snapshot().selected).toBeNull();
+  });
+
   // A generator survives any file change: it never depended on them.
   it('keeps a generator selected when the files change under it', () => {
     const state = createState(TOOLS);
