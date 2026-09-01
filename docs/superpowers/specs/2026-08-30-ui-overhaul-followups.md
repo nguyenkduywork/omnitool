@@ -112,3 +112,11 @@ dodging.
   today: no tool has both an editor and a preset.
 - **The `aria-describedby` compose branch is dead by construction** — nothing else sets
   that attribute, so only the else-branch is live.
+- **`npm test`'s summary line is the only signal that the `browser` vitest project
+  actually ran** (independent review pass #4, M7). Nothing in the test run itself
+  asserts that the browser project's own suites — five of this branch's new test files
+  among them — contributed to the total; a run where that project silently produced
+  zero tests (as opposed to failing outright, which the reviewer confirmed it does: an
+  unbootable browser provider exits 1 with `Errors: 1 error`, not a quiet pass) would
+  still need a human to notice the count looked short. Cheap insurance, not acted on: a
+  CI step asserting `--project browser` reports at least its known-minimum test count.
