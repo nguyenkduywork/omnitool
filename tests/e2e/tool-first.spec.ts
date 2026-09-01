@@ -139,7 +139,9 @@ test('opens a deep link straight into the tool, with no files attached', async (
   await expect(page.locator('.tray__item')).toHaveCount(0);
 });
 
-test('falls back to the catalogue for an unknown tool id', async ({ page }) => {
+test('falls back to the catalogue for an unknown tool id, and corrects the address bar too', async ({
+  page,
+}) => {
   // Same reasoning as the deep-link test above: force a genuine fresh load
   // (router.start(), not the hashchange listener) so this actually covers
   // the id-validation `router.start()` runs on boot, not just the listener
@@ -147,4 +149,10 @@ test('falls back to the catalogue for an unknown tool id', async ({ page }) => {
   await page.goto('/#/not-a-real-tool');
   await page.reload();
   await expect(page.locator('.toolcard')).toHaveCount(29);
+
+  // M2: the SCREEN already fell back correctly (the assertion above), but
+  // before the fix the bogus hash stayed in the address bar forever — a
+  // reload or a copied link would carry `#/not-a-real-tool` right back.
+  // Spec §4.4 promises the catalogue, address bar included.
+  await expect(page).toHaveURL(/#\/$|\/$/);
 });

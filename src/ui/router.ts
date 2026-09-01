@@ -71,10 +71,39 @@ export function createRouter(init: {
   // `hashchange` is compared against a value, not raced against a clock.
   let lastWrittenHash: string | null = null;
 
+  /**
+   * The tool id the CURRENT hash names, or null for the catalogue — and, for
+   * an unknown id, correcting the address bar to match rather than leaving it
+   * behind (M2, independent review pass #4).
+   *
+   * Spec §4.4 says an unknown tool id falls back to the catalogue, which this
+   * already did for the SCREEN — `isKnownTool` folded it to `null` before
+   * this function returned. But nothing ever corrected the URL: `select()`'s
+   * own `router.navigate(null)` (shell.ts) is gated on `!opts.fromRouter`,
+   * because a route already AT the catalogue's hash must not write again
+   * (see that guard's own comment — an unconditional write there is what
+   * broke Back/Forward the first time this codebase tried it). A route
+   * naming something INVALID was never genuinely "already at" the
+   * catalogue's hash, so that gate was silently wrong for this one case:
+   * reproduced live, `/#/not-a-real-tool` + reload left 29 cards on screen
+   * (the right SCREEN) with the URL still reading `#/not-a-real-tool` (the
+   * wrong ADDRESS BAR) — a reload or a copied link would carry the same
+   * bogus route forever. This is the router's own translation to fix, not
+   * `select()`'s: `hash <-> id` is what this file exists to own. The write
+   * below reuses `navigate()`'s exact `lastWrittenHash` bookkeeping so its
+   * own echo is swallowed the same way any other self-written hash is,
+   * rather than re-entering `onRoute` a second time for a route this
+   * function already answered.
+   */
   function read(): string | null {
     const id = toolIdFromHash(location.hash);
-    // An unknown id falls back to the catalogue rather than a blank screen.
-    return id !== null && init.isKnownTool(id) ? id : null;
+    if (id === null || init.isKnownTool(id)) return id;
+    const fallback = hashForTool(null);
+    if (location.hash !== fallback) {
+      lastWrittenHash = fallback;
+      location.hash = fallback;
+    }
+    return null;
   }
 
   const onHashChange = (): void => {

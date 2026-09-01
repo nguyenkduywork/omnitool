@@ -55,6 +55,45 @@ describe('createRouter', () => {
     expect(calls).toEqual([null]);
   });
 
+  // M2 (independent review pass #4): the test above proves the SCREEN falls
+  // back correctly; it says nothing about the ADDRESS BAR. Before the fix,
+  // `read()` folded an unknown id to `null` for `onRoute` alone and left
+  // `location.hash` exactly as it found it — reproduced live, a reload at
+  // `/#/not-a-real-tool` kept 29 cards on screen (right) with the URL still
+  // reading `#/not-a-real-tool` (wrong). Spec §4.4 promises the catalogue,
+  // and a stale hash left behind is not that.
+  it('corrects an unknown tool id in the hash back to the catalogue', () => {
+    location.hash = '#/not-a-real-tool';
+    const { calls, onRoute } = recorder();
+    router = createRouter({ isKnownTool: (id) => id === 'merge-pdfs', onRoute });
+
+    router.start();
+
+    expect(location.hash).toBe('#/');
+    expect(calls).toEqual([null]);
+  });
+
+  it('does not re-enter onRoute for the echo of its own unknown-id correction', async () => {
+    location.hash = '#/not-a-real-tool';
+    // Let THIS assignment's own hashchange dispatch (to no listeners — the
+    // router does not exist yet) before `createRouter` attaches one, so the
+    // assertion below is only ever about the CORRECTION's echo, not a second,
+    // unrelated hashchange this test's own setup happens to have queued.
+    await settle();
+
+    const { calls, onRoute } = recorder();
+    router = createRouter({ isKnownTool: (id) => id === 'merge-pdfs', onRoute });
+
+    router.start();
+    expect(calls).toEqual([null]);
+
+    await settle();
+
+    // The correction's own hashchange, swallowed the same way navigate()'s
+    // own writes always are — not a second, spurious `onRoute(null)` call.
+    expect(calls).toEqual([null]);
+  });
+
   it('navigate() writes the hash without re-entering onRoute for its own echo', async () => {
     const { calls, onRoute } = recorder();
     router = createRouter({ isKnownTool: () => true, onRoute });
