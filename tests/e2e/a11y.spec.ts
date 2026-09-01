@@ -249,31 +249,12 @@ test.describe('keyboard-only operation', () => {
   });
 
   test('reaches a tool card, then its Run button, by keyboard alone', async ({ page }) => {
-    // Two PDFs, dropped before tabbing: `pdf-merge`'s Run only becomes a
-    // FOCUSABLE target of its own once it is enabled. A disabled <button> —
-    // which Run legitimately is whenever `runBlockedReason` is non-null (see
-    // zones/work.ts) — cannot take focus at all; that is native HTML
-    // behaviour, not a bug, so `runButton.focus()` in `select()` (shell.ts)
-    // is a silent no-op on a blocked tool and focus is left on the toolcard
-    // that was just activated. Proving the FOCUS MECHANIC itself — Tab to a
-    // card, Enter selects it, focus lands on Run — needs a tool that is
-    // actually ready to run once selected, which is what the files below
-    // are for.
-    //
-    // KNOWN COVERAGE GAP, recorded here rather than fixed: because this
-    // rescoped scenario picks a tool that is already runnable, it does NOT
-    // exercise "the reason IS the button label" (see the comment on
-    // `runLabel` in zones/work.ts) for a sequential-Tab keyboard user. A
-    // disabled <button> cannot receive focus at all — native HTML behaviour —
-    // so a keyboard user who selects a BLOCKED tool never lands on Run and
-    // never has its label read to them by focus. The reason is still
-    // visually on the button, so a sighted keyboard-only user can read it;
-    // the gap is specifically someone who relies on focus to read (e.g. a
-    // magnifier that follows focus). Closing it means moving Run (and the
-    // blocked cards) from `disabled` to `aria-disabled`, which changes
-    // activation semantics and was deliberately deferred rather than bolted
-    // onto the last task of Stage 3 — this is a known trade, not an
-    // oversight.
+    // Two PDFs, dropped before tabbing: `pdf-merge`'s Run is already enabled
+    // once selected, which is what proves the FOCUS MECHANIC itself — Tab to
+    // a card, Enter selects it, focus lands on Run — independent of whatever
+    // Run's own label happens to say. The BLOCKED case (the reason IS the
+    // label) has its own test right below, now that Run can actually be
+    // reached by focus while blocked — see that test's comment.
     await page
       .locator('input[type="file"]')
       .setInputFiles([fixturePath('small.pdf'), fixturePath('small.pdf')]);
@@ -286,6 +267,37 @@ test.describe('keyboard-only operation', () => {
     // select() moves focus onto Run once the option panel has mounted.
     await expect(page.getByRole('button', { name: 'Run' })).toBeFocused();
     await expect(page.getByRole('button', { name: 'Run' })).toBeEnabled();
+  });
+
+  test('reaches a BLOCKED Run by keyboard alone, with the reason as what focus reads', async ({
+    page,
+  }) => {
+    // Cold, no files at all: "Merge PDFs" is a plain, enabled toolcard (the
+    // blocked TIER in the test above only exists once files are loaded and a
+    // type fits but a count doesn't — zones/catalogue.ts). Picking it here
+    // leaves Run itself blocked, on a file count of zero.
+    const toCard = await tabUntil(page, (info) => info.label?.startsWith('Merge PDFs') === true);
+    expect(toCard).toBeLessThan(40);
+
+    await page.keyboard.press('Enter');
+
+    // Before the followups doc's `disabled` -> `aria-disabled` fix, a
+    // blocked Run was natively `disabled` — unfocusable, native HTML
+    // behaviour — so `select()`'s own `runButton.focus()` (shell.ts) was a
+    // silent no-op and focus stayed on the card that was just activated. Run
+    // is `aria-disabled` now, so it stays in the tab order: this actually
+    // lands, and its accessible name is the REASON, not "Run" — exactly what
+    // a keyboard user, or anyone else who reads by following focus (a screen
+    // magnifier, say), needs.
+    const run = page.getByRole('button', { name: /needs at least 2 files/i });
+    await expect(run).toBeFocused();
+    await expect(run).toBeDisabled();
+
+    // Still explicitly refuses to act: aria-disabled trades away the
+    // browser's free enforcement of that, so the click handler has to refuse
+    // by hand (zones/work.ts's `handleRunClick`) — Enter must not start a run.
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#stage')).toHaveAttribute('data-phase', 'tool-picked');
   });
 });
 
@@ -316,17 +328,19 @@ test.describe('landmarks', () => {
   // test that only ever checks the warm state (as an earlier version of this
   // test did, by picking a tool before asserting anything) cannot catch a
   // regression that is specific to cold.
-  test('names and paints zone 3 even before a tool is picked', async ({ page }) => {
+  test('names and paints zone 3 even before a tool is picked, then takes on the tool\'s own name', async ({
+    page,
+  }) => {
     // COLD: `ui/zones/work.ts`'s `<h2>` inside `.run` is empty here (it only
     // gets `tool.name` once something is selected — see `render`), so the
-    // zone root is named with a stable `aria-label` instead of
-    // `aria-labelledby` pointing at that heading. `getByRole('region', {
-    // name })` is the accessible-name-based way to prove that: it fails
-    // outright if the name resolves empty, which `toBeVisible()` on a raw
-    // `[aria-labelledby]` selector would not have caught (the ATTRIBUTE was
-    // always present — the TEXT it pointed at was the empty part).
-    const zone = page.getByRole('region', { name: 'Selected tool' });
-    await expect(zone).toBeVisible();
+    // zone root is named with `aria-label` instead of `aria-labelledby`
+    // pointing at that heading. `getByRole('region', { name })` is the
+    // accessible-name-based way to prove that: it fails outright if the name
+    // resolves empty, which `toBeVisible()` on a raw `[aria-labelledby]`
+    // selector would not have caught (the ATTRIBUTE was always present — the
+    // TEXT it pointed at was the empty part).
+    const cold = page.getByRole('region', { name: 'Selected tool' });
+    await expect(cold).toBeVisible();
 
     // The restored placeholder copy — cut in Task 9 on the assumption a later
     // task's layout might need it, never revisited once Task 10's permanent
@@ -335,18 +349,26 @@ test.describe('landmarks', () => {
     // only child was `hidden` and the grid item collapsed to zero height, so
     // the column beside the catalogue was bare page background for as long
     // as the app sat in its own default state.
-    await expect(zone.getByText('Pick a tool to get started.')).toBeVisible();
+    await expect(cold.getByText('Pick a tool to get started.')).toBeVisible();
     await expect(
-      zone.getByText('Some tools need files; the QR code generator does not.'),
+      cold.getByText('Some tools need files; the QR code generator does not.'),
     ).toBeVisible();
 
     // WARM: picking the cold-reachable QR generator (Task 10's second
-    // door — no file needed) proves the SAME landmark carries real tool
-    // content once something is selected, and that the name did not need to
-    // change to do it.
+    // door — no file needed) proves the SAME element carries real tool
+    // content once something is selected. Unlike the earlier, static
+    // `aria-label`, the followups doc's dynamic-label fix means the NAME
+    // changes too, from the generic "Selected tool" to the tool's own name —
+    // so `getByRole` has to look for a different name now, not the same
+    // locator as the cold assertion above.
     await page.locator('.toolcard[data-tool="qr-generate"]').click();
-    await expect(zone).toBeVisible();
-    await expect(zone.getByRole('heading', { name: 'Generate QR code' })).toBeVisible();
+    const warm = page.getByRole('region', { name: 'Generate QR code' });
+    await expect(warm).toBeVisible();
+    await expect(warm.getByRole('heading', { name: 'Generate QR code' })).toBeVisible();
+    // The generic name is GONE, not merely joined by a second, more specific
+    // one — every tool must get its own name during landmark navigation,
+    // never the same "Selected tool, region" for all of them.
+    await expect(page.getByRole('region', { name: 'Selected tool' })).toHaveCount(0);
   });
 });
 

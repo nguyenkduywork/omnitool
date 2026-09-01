@@ -126,7 +126,17 @@ export function createCatalogue(init: {
     const warm = (): void => init.onWarm(tool);
     node.addEventListener('pointerenter', warm);
     node.addEventListener('focus', warm);
-    node.addEventListener('click', () => init.onPick(tool.id));
+    // `aria-disabled`, checked fresh at click time rather than at listener
+    // registration: a blocked card's `aria-disabled="true"` is set by the
+    // caller AFTER this returns (see the blocked-tier loop below), and this
+    // same builder is shared with primary cards, which never set it at all.
+    // See the followups doc's "disabled -> aria-disabled" entry — a blocked
+    // card stays FOCUSABLE so its reason is reachable, but must still refuse
+    // to act, which a real `disabled` attribute used to do for free.
+    node.addEventListener('click', () => {
+      if (node.getAttribute('aria-disabled') === 'true') return;
+      init.onPick(tool.id);
+    });
 
     painted.push(node);
     return node;
@@ -179,8 +189,8 @@ export function createCatalogue(init: {
    * by going `disabled`; the grid alone stayed `disabled: false, tabIndex: 0`
    * for the run's whole duration, silently swallowing the click instead.
    * `.toolcard--blocked` cards are excluded deliberately: they are already
-   * `disabled` for an unrelated, PERMANENT reason (the wrong file count for
-   * THIS selection), and must not be quietly re-enabled the moment a run
+   * `aria-disabled` for an unrelated, PERMANENT reason (the wrong file count
+   * for THIS selection), and must not be quietly re-enabled the moment a run
    * ends just because this loop stops touching them.
    *
    * `back` (the narrow layout's "Change tool" button, `.catalogue__back`) is
@@ -301,7 +311,7 @@ export function createCatalogue(init: {
       for (const { tool, reason } of blocked) {
         const node = card(tool);
         node.classList.add('toolcard--blocked');
-        node.disabled = true;
+        node.setAttribute('aria-disabled', 'true');
         node.append(el('span', 'toolcard__reason', reason));
         blockedGrid.append(node);
       }

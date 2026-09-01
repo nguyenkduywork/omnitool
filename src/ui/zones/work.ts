@@ -14,18 +14,21 @@
 //
 // The ZONE ROOT is the landmark, not the inner `.run` card, so there is
 // exactly one landmark here rather than two nested ones. Its accessible name
-// is a plain `aria-label="Selected tool"` — deliberately NOT `aria-labelledby`
-// pointing at the `<h2>` in `.run__head`, because that heading only gets text
-// once a tool is picked (see `render`): with nothing selected `.run` is
-// `hidden` and the heading is empty, which would leave the region with an
-// EMPTY accessible name at the app's own default, cold state — exactly the
-// state a screen-reader user meets first through the second entry door.
-// `aria-label` is stable across cold and warm alike, so the region always has
-// something to say for itself. The card itself carries no `aria-labelledby`
-// of its own, so this is the only "Selected tool"/tool-name naming in play —
-// no second heading duplicating the landmark's own name (contrast
-// `zones/files.ts`, where reusing `filetray.ts`'s own heading was the
-// carry-forward fix, not a pattern to repeat here).
+// is a dynamic `aria-label` — 'Selected tool' cold, the tool's own name once
+// one is picked (see `render`) — deliberately NOT `aria-labelledby` pointing
+// at the `<h2>` in `.run__head`, because that heading only gets text once a
+// tool is picked: with nothing selected `.run` is `hidden` and the heading is
+// empty, which would leave the region with an EMPTY accessible name at the
+// app's own default, cold state — exactly the state a screen-reader user
+// meets first through the second entry door. `aria-label` covers that cold
+// state the same way a static string would, but also carries the tool's name
+// through landmark navigation once one is picked, rather than every tool
+// announcing as the same generic "Selected tool, region". The card itself
+// carries no `aria-labelledby` of its own, so this is the only "Selected
+// tool"/tool-name naming in play — no second heading duplicating the
+// landmark's own name (contrast `zones/files.ts`, where reusing
+// `filetray.ts`'s own heading was the carry-forward fix, not a pattern to
+// repeat here).
 
 import { el, icon } from '../dom';
 import { createProgressRing, type ProgressHandle } from '../progress';
@@ -88,10 +91,20 @@ export function createWorkZone(init: { onRun: () => void; onCancel: () => void }
   runButton.type = 'button';
   // Addressable, because when the run is blocked the REASON becomes the
   // label: a disabled button with no explanation is the thing this overhaul
-  // exists to remove.
+  // exists to remove. `aria-disabled`, not the native `disabled` attribute —
+  // see the followups doc's "disabled -> aria-disabled" entry — so the
+  // button STAYS focusable and the reason is reachable by anyone who relies
+  // on focus to read it (a screen-magnifier user, for instance), rather than
+  // only by a screen reader's virtual cursor. That trades away the free
+  // browser behaviour a real `disabled` button gets, so the click handler
+  // below has to re-implement it explicitly.
   const runLabel = el('span', undefined, 'Run');
   runButton.append(icon('play'), runLabel);
-  runButton.addEventListener('click', init.onRun);
+  function handleRunClick(): void {
+    if (runButton.getAttribute('aria-disabled') === 'true') return;
+    init.onRun();
+  }
+  runButton.addEventListener('click', handleRunClick);
 
   const cancel = el('button', 'btn btn--ghost', 'Cancel');
   cancel.type = 'button';
@@ -123,6 +136,10 @@ export function createWorkZone(init: { onRun: () => void; onCancel: () => void }
       const tool = snapshot.selected;
       empty.hidden = tool !== null;
       panel.hidden = tool === null;
+      // Unconditional, unlike `heading.textContent` below: the landmark needs
+      // a name in BOTH branches, not only once a tool is picked, so it cannot
+      // wait behind the early return this function takes when `tool` is null.
+      root.setAttribute('aria-label', tool ? tool.name : 'Selected tool');
 
       // Run's disabled state (and Cancel's / the ring's visibility) is
       // settled BEFORE the early return below. With no tool the panel is
@@ -143,7 +160,7 @@ export function createWorkZone(init: { onRun: () => void; onCancel: () => void }
       // showing it would be a false sentence next to a spinning Cancel.
       const running = snapshot.phase === 'running';
       const blocked = tool === null || running ? null : snapshot.runBlockedReason;
-      runButton.disabled = running || blocked !== null;
+      runButton.setAttribute('aria-disabled', String(running || blocked !== null));
       cancel.hidden = !running;
       progressWrap.hidden = !running;
       if (!tool) return;
@@ -155,7 +172,7 @@ export function createWorkZone(init: { onRun: () => void; onCancel: () => void }
       runLabel.textContent = blocked ?? 'Run';
     },
     destroy() {
-      runButton.removeEventListener('click', init.onRun);
+      runButton.removeEventListener('click', handleRunClick);
       cancel.removeEventListener('click', init.onCancel);
     },
   };

@@ -154,7 +154,10 @@ describe('F2 — the palette invites rather than refuses', () => {
     await until('Run to report what it needs', () =>
       /needs at least 2 files/i.test(one<HTMLButtonElement>('.run .btn--primary').textContent ?? ''),
     );
-    expect(one<HTMLButtonElement>('.run .btn--primary').disabled).toBe(true);
+    // `aria-disabled`, not the native attribute (see the followups doc's
+    // "disabled -> aria-disabled" entry) — Run stays focusable so the reason
+    // above is reachable by focus, not only by reading the button's label.
+    expect(one<HTMLButtonElement>('.run .btn--primary').getAttribute('aria-disabled')).toBe('true');
   });
 
   it('still refuses a genuine TYPE mismatch, and stays open to explain it', async () => {
@@ -257,7 +260,10 @@ describe('F4 — Remove all files does not leave a stale URL behind', () => {
     // becomes enabled once the files satisfy it, hash untouched throughout.
     deliver([await fixture('small.pdf'), await fixture('small.pdf')]);
     await until('the files to land again', () => count('.tray__item') === 2);
-    await until('Run to become enabled', () => !one<HTMLButtonElement>('.run .btn--primary').disabled);
+    await until(
+      'Run to become enabled',
+      () => one<HTMLButtonElement>('.run .btn--primary').getAttribute('aria-disabled') === 'false',
+    );
     expect(location.hash).toBe('#/pdf-merge');
   });
 
@@ -694,5 +700,112 @@ describe('NB3 (pass #4) — a genuine type-mismatch prune still resets the URL',
     await until('the selection to be pruned', () => count('.toolcard.is-selected') === 0);
 
     expect(location.hash === '' || location.hash === '#/').toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Follow-ups (docs/superpowers/specs/2026-08-30-ui-overhaul-followups.md),
+// "Worth doing next" — three small gaps the overhaul's own final review found
+// and deliberately deferred.
+// ---------------------------------------------------------------------------
+
+// `disabled` -> `aria-disabled` for Run and blocked tool cards. A native
+// `disabled` button cannot take focus at all, so when the REASON a tool
+// cannot run IS the control — Run's own label, or a blocked card's
+// `.toolcard__reason` — a screen-magnifier user (or anyone else who reads by
+// following focus) could never reach it. `aria-disabled` keeps the control in
+// the tab order; the trade is that the browser no longer refuses activation
+// for free, so each click handler now has to refuse explicitly (see
+// zones/work.ts's `handleRunClick` and zones/catalogue.ts's `card()`).
+describe('followups — Run and blocked tool cards stay focusable when disabled', () => {
+  it('a blocked Run is aria-disabled, still focusable, and a click does not start a run', async () => {
+    one<HTMLButtonElement>('.toolcard[data-tool="pdf-merge"]').click();
+    await until('Run to report what it needs', () =>
+      /needs at least 2 files/i.test(one<HTMLButtonElement>('.run .btn--primary').textContent ?? ''),
+    );
+
+    const run = one<HTMLButtonElement>('.run .btn--primary');
+    expect(run.getAttribute('aria-disabled')).toBe('true');
+    // NOT the native attribute — that would make the next line's `.focus()`
+    // a silent no-op, exactly the gap this follow-up closes.
+    expect(run.disabled).toBe(false);
+
+    run.focus();
+    expect(document.activeElement).toBe(run);
+
+    run.click();
+    // Still 'tool-picked', never 'running': the click handler's own guard
+    // refused to act, the same as a real `disabled` button would have done
+    // for free.
+    expect(one<HTMLElement>('#stage').dataset.phase).toBe('tool-picked');
+  });
+
+  it('a blocked tool card is aria-disabled, still focusable, and a click does not select it', async () => {
+    deliver([await fixture('small.pdf'), await fixture('small.pdf')]);
+    await until('the files to land', () => count('.tray__item') === 2);
+
+    // pdf-organize's TYPE fits (PDF) but it wants exactly one file; with two
+    // loaded it sits in the "Not for this selection" tier, `.toolcard--blocked`.
+    await until('the blocked tier to render', () => count('.toolcard--blocked') > 0);
+    const card = one<HTMLButtonElement>('.toolcard--blocked[data-tool="pdf-organize"]');
+    expect(card.getAttribute('aria-disabled')).toBe('true');
+    expect(card.disabled).toBe(false);
+
+    card.focus();
+    expect(document.activeElement).toBe(card);
+
+    card.click();
+    expect(card.classList.contains('is-selected')).toBe(false);
+    expect(one<HTMLElement>('#stage').dataset.phase).toBe('filtered');
+  });
+});
+
+// The file tray's hint copy during a run. `.tray__hint` used to keep
+// advertising drag/arrow-button/arrow-key reordering verbatim while every
+// control it describes was frozen (`opacity: 0.3`, `cursor: not-allowed`) —
+// nothing silently no-op'd, but the hint kept lying about what was available.
+describe('followups — the file tray hint swaps its copy while a run is in flight', () => {
+  it('replaces the reorder instructions during a run and restores them once it ends', async () => {
+    deliver([await fixture('small.pdf'), await fixture('small.pdf')]);
+    await until('the files to land', () => count('.tray__item') === 2);
+
+    const hint = one<HTMLElement>('.tray__hint');
+    expect(hint.textContent).toMatch(/drag a file/i);
+
+    one<HTMLButtonElement>('.toolcard[data-tool="pdf-merge"]').click();
+    await until('Run to take focus', () => document.activeElement === one('.run .btn--primary'));
+
+    one<HTMLButtonElement>('.run .btn--primary').click();
+    // Synchronous prefix guarantee (see NB2/I1 above): the freeze has already
+    // happened by the time `.click()` returns.
+    expect(one<HTMLElement>('#stage').dataset.phase).toBe('running');
+    expect(hint.textContent).toMatch(/paused/i);
+    expect(hint.textContent).not.toMatch(/drag a file/i);
+
+    await until(
+      "the phase to reach 'results'",
+      () => one<HTMLElement>('#stage').dataset.phase === 'results',
+    );
+    expect(hint.textContent).toMatch(/drag a file/i);
+  });
+});
+
+// The work zone's landmark loses the tool name. `zones/work.ts`'s root used
+// to carry a static `aria-label="Selected tool"`, so every tool announced as
+// the same generic region during landmark navigation once picked.
+describe('followups — the work zone landmark carries the selected tool\'s name', () => {
+  it('reads "Selected tool" cold, the tool\'s own name once picked, and reverts on deselect', async () => {
+    const zone = one<HTMLElement>('.zone--work');
+    expect(zone.getAttribute('aria-label')).toBe('Selected tool');
+
+    one<HTMLButtonElement>('.toolcard[data-tool="qr-generate"]').click();
+    await until('Run to take focus', () => document.activeElement === one('.run .btn--primary'));
+    expect(zone.getAttribute('aria-label')).toBe('Generate QR code');
+
+    // Click-to-deselect (catalogue.ts's card() click handler, via shell.ts's
+    // select()) — back to the generic label, not stuck on the last tool.
+    one<HTMLButtonElement>('.toolcard[data-tool="qr-generate"]').click();
+    await until('the selection to clear', () => count('.toolcard.is-selected') === 0);
+    expect(zone.getAttribute('aria-label')).toBe('Selected tool');
   });
 });

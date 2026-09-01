@@ -37,6 +37,15 @@ Two qualifications kept this out of the overhaul:
 var(--ring) }`, added pre-emptively in anticipation of this. It is dead until the
 switch happens.
 
+**Done:** `runButton` (`zones/work.ts`) and blocked tool cards (`zones/catalogue.ts`)
+now carry `aria-disabled` instead of `disabled`, so both stay in the tab order; each
+one's own click handler checks the attribute and refuses to act when it reads
+`'true'`, which is the "explicitly prevented from acting" half the qualification
+above asked for. `app.css`'s pre-emptive `.toolcard--blocked:focus-visible` rule (and
+the equivalent added for `.btn[aria-disabled='true']`) are live now, not dead.
+Covered by the "followups" describe blocks in `tests/unit/shell-fixes.browser.test.ts`
+and by `tests/e2e/a11y.spec.ts`'s "reaches a BLOCKED Run by keyboard alone" test.
+
 ### The file tray's hint copy during a run
 
 `.tray__hint` reads *"Drag a file, use the arrow buttons, or focus a file and press
@@ -44,6 +53,10 @@ the arrow keys."* All three are frozen while a job runs. The controls now
 **look** disabled (`opacity: 0.3`, `cursor: not-allowed`), so nothing silently
 no-ops — but the hint still advertises them. A small change in `src/ui/filetray.ts`
 to swap or hide the text while frozen.
+
+**Done:** `filetray.ts` swaps `.tray__hint`'s text to a frozen-specific message in
+`setRunning`, restoring the idle copy once the run ends. Covered by
+`tests/unit/shell-fixes.browser.test.ts`.
 
 ### The work zone's landmark loses the tool name
 
@@ -56,6 +69,11 @@ A dynamic `aria-label` — `tool ? tool.name : 'Selected tool'`, set in `render(
 way `heading.textContent` already is — keeps a name in every state *and* the tool's
 name when there is one. One line, and it avoids both risks the original choice was
 dodging.
+
+**Done:** exactly the fix sketched above. Covered by
+`tests/unit/shell-fixes.browser.test.ts` and by `tests/e2e/a11y.spec.ts`'s zone-3
+landmark test, which now asserts the name changes on selection instead of asserting
+it stays fixed.
 
 ## 2. Real, small, safe to carry
 

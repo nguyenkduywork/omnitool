@@ -111,11 +111,15 @@ export function createFileTray(init: FileTrayInit): FileTrayHandle {
   const count = el('span', 'tray__count');
   head.append(heading, count);
 
-  const hint = el(
-    'p',
-    'tray__hint',
-    'Order matters for merging. Drag a file, use the arrow buttons, or focus a file and press the arrow keys.',
-  );
+  // Swapped for `HINT_FROZEN` while a job runs (see `setRunning` below) —
+  // every control this describes is frozen then too (`opacity: 0.3`,
+  // `cursor: not-allowed`), so advertising them as available would be a false
+  // sentence sitting right next to controls that visibly say otherwise.
+  const HINT_IDLE =
+    'Order matters for merging. Drag a file, use the arrow buttons, or focus a file and press the arrow keys.';
+  const HINT_FROZEN = 'Reordering is paused while this tool runs.';
+
+  const hint = el('p', 'tray__hint', HINT_IDLE);
   hint.id = 'tray-hint';
 
   const list = el('ul', 'tray__list');
@@ -372,6 +376,7 @@ export function createFileTray(init: FileTrayInit): FileTrayHandle {
     setRunning(on: boolean): void {
       if (frozen === on) return;
       frozen = on;
+      hint.textContent = frozen ? HINT_FROZEN : HINT_IDLE;
       syncOrder();
     },
     destroy(): void {
