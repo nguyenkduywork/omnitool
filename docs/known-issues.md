@@ -1,15 +1,12 @@
-# UI Overhaul — Known Follow-ups
+# Known issues
 
-- **Date:** 2026-08-30
-- **Branch:** `feat/ui-overhaul`
-- **Spec:** [2026-08-30-ui-overhaul-design.md](./2026-08-30-ui-overhaul-design.md)
+Open items found during the UI overhaul (2026-08-30) and deliberately deferred rather
+than fixed, with the reasoning. Recorded because a deferred item nobody writes down is
+a silently discarded one.
 
-Everything the overhaul's own reviews found and deliberately did **not** fix, triaged
-by the final whole-branch review. Recorded here because a deferred item nobody wrote
-down is a silently discarded one.
-
-Nothing below blocks the overhaul. Each was judged either genuinely separate work, or
-small enough to carry.
+None of these block use of the app. Each was judged either genuinely separate work, or
+small enough to carry. User-facing behavioural limits live in the README instead — this
+file is engineering debt.
 
 ## 1. Worth doing next
 

@@ -5,83 +5,45 @@
 ![Node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen)
 ![TypeScript](https://img.shields.io/badge/typescript-strict-3178c6)
 
-Everyday file tools — merge PDFs, convert and resize images, zip, hash, and
-reformat data — that run entirely inside your browser tab.
+Everyday file tools — merge PDFs, convert and resize images, zip, hash, and reformat
+data — that run entirely inside your browser tab.
 
-**No file you open in omnitool ever leaves your device. There is no server.**
-Every operation — merging, converting, hashing, zipping — runs in a Web Worker
-on your own machine. omnitool makes zero network calls at runtime: no uploads,
-no analytics, no telemetry, no CDN fetches. You could disconnect from the
-internet after the page has loaded and every tool would keep working exactly
-the same. Open your browser's network tab if you want to see for yourself — it
-will stay empty.
+**No file you open ever leaves your device.** There is no server. Every operation runs
+in a Web Worker on your own machine, and the app makes no network calls at runtime: no
+uploads, no analytics, no telemetry, no CDN fetches. Open your browser's network tab
+and it stays empty. Disconnect from the internet after the page loads and every tool
+keeps working.
 
-Open source, MIT licensed.
+## Use it online
 
-## Contents
+**<https://nguyenkduywork.github.io/omnitool/>**
 
-- [How it works](#how-it-works)
-- [Getting around](#getting-around)
-- [The tools](#the-tools)
-- [Requirements](#requirements)
-- [Getting started](#getting-started)
-- [Scripts](#scripts)
-- [Project structure](#project-structure)
-- [Testing](#testing)
-- [Deployment](#deployment)
-- [Known limitations (honest, on purpose)](#known-limitations-honest-on-purpose)
-- [Contributing](#contributing)
-- [Add a tool in 20 lines](#add-a-tool-in-20-lines)
-- [License](#license)
+Nothing to install and nothing to sign up for. Open the page and drop a file on it.
 
-## How it works
+- **Install it as an app.** A service worker precaches the app shell, so your browser
+  will offer to install omnitool from the address bar. Once installed it runs in its
+  own window and works offline.
+- **It works offline after the first visit.** Tool code is cached the first time you
+  use each tool; a reload with the network off keeps working.
+- **Every tool has its own address.** `…/#/pdf-merge` is bookmarkable and shareable,
+  and the back button moves between a tool and the catalogue. Files are never in the
+  URL, so a link you share opens the tool empty — it can never carry your data.
 
-A **tool registry** plus a **Web Worker pipeline**. Drop files in; omnitool
-sniffs their real type from magic bytes (never trusting a file extension);
-the registry is filtered down to the tools that apply; you pick one and run
-it in a worker, off the main thread. Results come back as real bytes you can
-download individually or as a zip. Nothing about this shape depends on a
-network round trip, which is exactly the point.
+## Using it
 
-## Getting around
+Two ways in, both first-class:
 
-**Two doors, both first-class.** Drop your files and the tool list narrows to
-what can actually run on them — drop two PDFs and you get PDF tools. Or pick a
-tool first and bring the files after; the tool tells you what it needs instead
-of refusing. Tools that need no files at all, like the QR code generator, just
-open and run.
+- **Drop files first.** Drag them anywhere in the window, paste with `Ctrl/Cmd+V`, or
+  use Choose files. The tool list narrows to what can actually run on them.
+- **Pick a tool first.** Choose from the catalogue and bring the files after — the tool
+  tells you what it needs rather than refusing. Tools that need no files at all, like
+  the QR code generator, just open and run.
 
-- **Drag, paste, or pick.** Drop files anywhere in the window, paste with
-  `Ctrl/Cmd+V`, or use the Choose files button.
-- **Every tool has its own address.** `#/pdf-merge` is bookmarkable and
-  shareable, and the back button moves between a tool and the catalogue rather
-  than leaving the app. Files are never in the URL — a link you share opens the
-  tool empty.
-- **Tools that don't fit are explained, not hidden.** A tool that works on your
-  file type but wants a different number of them stays visible and says so
-  ("Needs exactly 1 file — you have 2"). A tool for a different format entirely
-  is simply absent, so the list stays scannable.
-- **Tools that work on any bytes** — zip, hash, Base64, gzip — sit in a quiet
-  row of their own rather than competing with the tools that understand your
-  format.
-- **Order matters for merging**, so the file tray is reorderable — drag a row,
-  use its arrow buttons, or focus a row and press the arrow keys (`Home`/`End`
-  jump to the ends, `Delete` removes). The buttons exist because drag needs a
-  mouse and arrow keys need a keyboard, and a phone has neither.
-- **`Ctrl/Cmd+K`** opens a command palette: type a few letters, press Enter,
-  and the tool runs. If a tool can't apply to the files you have, the palette
-  says why instead of failing silently.
-- **Fully keyboard operable**, with visible focus rings, `aria-live`
-  announcements for reordering and job progress, and WCAG AA contrast in both
-  light and dark themes. This is covered by tests
-  (`tests/e2e/a11y.spec.ts`), not just intent.
-- **Respects `prefers-reduced-motion`** — every animation becomes an instant
-  state change, and nothing functional depends on an animation finishing.
+`Ctrl/Cmd+K` searches the tools. The file tray is reorderable, which matters for
+merging — drag a row, use its arrow buttons, or focus a row and press the arrow keys.
 
-**Installable and offline.** A service worker precaches the app shell and
-caches each tool's code chunk after first use, so a second visit is instant
-and you can reload with the network off and keep working. Install it as an app
-from your browser's address bar if you want it out of a tab.
+Fully keyboard operable, with visible focus rings, `aria-live` announcements, and WCAG
+AA contrast in both light and dark themes — covered by tests, not just intent.
 
 ## The tools
 
@@ -100,7 +62,7 @@ from your browser's address bar if you want it out of a tab.
 **Images**
 | Tool | What it does |
 | --- | --- |
-| Convert image | PNG, JPEG, WebP, or AVIF (see the AVIF note below) |
+| Convert image | PNG, JPEG, WebP, or AVIF (see Limitations) |
 | Resize image | By exact dimensions or by percentage, with optional aspect lock |
 | Compress image | Re-encode at a lower quality, same format |
 | Crop image | Draw a crop box on a visual editor, in the image's own pixels |
@@ -126,20 +88,10 @@ from your browser's address bar if you want it out of a tab.
 | Generate QR code | Turn text or a URL into a QR code, PNG or SVG |
 | Clean up text | Sort, deduplicate, trim, and normalise the lines of a text file |
 
-## Requirements
+## Run it locally
 
-**To use the app:** a current version of Chrome, Edge, Firefox, or Safari.
-omnitool relies on standard, evergreen browser APIs — Web Workers,
-`OffscreenCanvas`, `createImageBitmap`, and a service worker for the
-installable/offline behaviour — and nothing beyond them; there's no
-browser-specific code path. The CI suite runs the full app (unit, browser,
-and end-to-end tests) against headless Chromium on every change, so that
-combination is the most exhaustively verified.
-
-**To build or develop it:** Node.js ≥ 20 (enforced by `package.json`'s
-`engines` field) and npm.
-
-## Getting started
+**Prerequisites:** [Node.js](https://nodejs.org) 20 or newer, and npm. Nothing else —
+no database, no API keys, no environment configuration.
 
 ```bash
 git clone https://github.com/nguyenkduywork/omnitool.git
@@ -148,332 +100,95 @@ npm install
 npm run dev
 ```
 
-Then open the printed local URL. There's no environment configuration, no
-API keys, and no backend to stand up — the dev server is the entire stack.
+Then open the URL it prints (`http://localhost:5173` by default).
 
-## Scripts
+To check a production build instead:
+
+```bash
+npm run build
+npm run preview
+```
+
+## Commands
 
 | Command | What it does |
 | --- | --- |
-| `npm run dev` | Start the local dev server (Vite) |
+| `npm run dev` | Start the dev server with hot reload |
 | `npm run build` | Production build to `dist/` |
 | `npm run preview` | Serve the production build locally |
 | `npm run typecheck` | `tsc --noEmit`, strict mode |
-| `npm run lint` | ESLint, including the import-boundary rules in [CONTRIBUTING.md](./CONTRIBUTING.md) |
-| `npm run test` | Vitest — unit tests plus headless-Chromium browser tests |
+| `npm run lint` | ESLint, including the import-boundary rules |
+| `npm test` | Unit tests — Node plus headless Chromium |
 | `npm run test:e2e` | Playwright, against a real production build |
-| `npm run contrast` | Recomputes every ink/surface colour pairing in `src/styles/tokens.css` against WCAG AA, in both themes |
-| `npm run size` | Verifies the CI-enforced initial-load size budget (see [CONTRIBUTING.md](./CONTRIBUTING.md)) |
-| `npm run make-fixtures` | Regenerates the committed binary test fixtures in `tests/fixtures/` |
-| `npm run bench` | Re-runs the performance claims and their correctness checks (see [scripts/bench](./scripts/bench/README.md)) |
+| `npm run contrast` | Check every colour pairing against WCAG AA, both themes |
+| `npm run size` | Verify the initial-load size budget |
+| `npm run bench` | Re-run the performance measurements |
+| `npm run make-fixtures` | Regenerate the binary test fixtures |
 
-Before opening a PR, run the same gate CI runs:
+Before opening a pull request, run the same gate CI runs:
 
 ```bash
-npm run typecheck && npm run lint && npm run test && npm run build && npm run size && npm run test:e2e
+npm run typecheck && npm run lint && npm test && npm run build && npm run size && npm run test:e2e
 ```
 
-## Project structure
+Playwright needs its browsers once: `npx playwright install --with-deps chromium`.
 
-```
-src/
-  types.ts          # the whole contract: Op, OpInput/Output, OpError, ToolDef — dependency-free
-  core/              # registry, Web Worker pipeline, pool — never imports from ui/
-  tools/
-    pdf/             # one *.op.ts (+ optional *.editor.ts) per tool, DOM-free, pure functions
-    image/
-    data/
-  ui/                # DOM, dropzone, results tray, command palette, animation
-    state.ts         #   the state machine — DOM-free, unit-tested under Node
-    router.ts        #   hash <-> tool id
-    zones/           #   files · catalogue · work
-  styles/            # design tokens (tokens.css) + component styles (app.css)
-tests/
-  unit/              # vitest — plain Node for pure ops, headless Chromium for canvas/OffscreenCanvas ops
-  e2e/               # Playwright, against a production build
-  fixtures/          # real, format-valid binary fixtures (see make-fixtures.mjs) — never placeholders
-docs/superpowers/     # the original design spec and implementation plan this app was built from
-```
+## Requirements
 
-The dependency direction is strict and lint-enforced: `ui/` → `core/` →
-`types.ts`, and `tools/**` imports only `types.ts` and its own npm
-dependencies — never `core/` or `ui/`. That's what makes "copy one file, add
-one registry line" a true description of adding a tool; see
-[Add a tool in 20 lines](#add-a-tool-in-20-lines).
+A current version of Chrome, Edge, Firefox, or Safari. omnitool uses standard evergreen
+browser APIs — Web Workers, `OffscreenCanvas`, `createImageBitmap`, and a service worker
+— with no browser-specific code paths. CI runs the full suite against headless Chromium
+on every change, so that combination is the most exhaustively verified.
 
-## Testing
+## Limitations
 
-Every op ships with the **four-test rule** from
-[CONTRIBUTING.md](./CONTRIBUTING.md#2-the-four-test-rule): a happy path, a
-typed error (a real `OpErrorCode`, never a bare `Error`), cancellation via
-`AbortSignal`, and monotonic progress ending at exactly `1`. Ops that touch
-`OffscreenCanvas`, `createImageBitmap`, or `convertToBlob` run under a
-headless-Chromium Vitest project (`*.browser.test.ts`) since those APIs
-don't exist in plain Node; everything else runs fast under Node.
+Behaviour worth knowing before you rely on it. See [docs/known-issues.md](docs/known-issues.md)
+for open engineering items.
 
-End-to-end coverage (`tests/e2e/`) drives a real production build with
-Playwright: golden flows for each tool family, the accessibility suite
-(keyboard-only operation, focus visibility, `aria-live` announcements), and
-the PDF page board's bespoke editor. The image crop and rotate editors are
-instead covered by the headless-Chromium Vitest suite above, which checks
-their previews pixel-for-pixel against the op each one drives.
+- **AVIF export does not work in any browser today.** Canvas silently returns a PNG
+  when asked for AVIF, so omnitool probes the real encoder at startup and disables the
+  option with the reason shown, rather than handing you PNG bytes named `.avif`.
+- **Shrink PDF re-encodes images, and only some of them.** It targets 8-bit RGB and
+  grayscale JPEG images inside the PDF. JPEG 2000, CCITT, JBIG2, CMYK and stencil masks
+  are left alone, so a PDF dominated by fonts or vectors will barely move. It never
+  claims a reduction it did not achieve — if the result would be larger, you get the
+  original back.
+- **Resize, Compress, Crop, Rotate and Watermark re-encode the image.** A quarter turn
+  costs a little quality, and the quality slider is what it costs; PNG output ignores it
+  because PNG is lossless. Formats the browser can decode but not encode — GIF, BMP,
+  TIFF, SVG — come back as PNG, and the filename changes with them.
+- **Strip metadata covers JPEG, PNG and WebP only.** Those are the containers whose
+  metadata can be cut without touching a pixel. Anything else is refused by name rather
+  than quietly re-encoded. The ICC colour profile is kept unless you ask for it too.
+- **Clean PDF metadata is not redaction.** It empties the document's Info dictionary and
+  purges XMP, then sweeps what it unlinked. It does not touch page content: text, images
+  and their EXIF, annotations, form values, attachments and bookmarks all survive. A PDF
+  with your name printed on page one still has your name on page one.
+- **A watermark is a label, not a lock.** It paints text into the pixels, so it can be
+  cropped off or painted over. It marks provenance, it does not protect anything.
+- **Clean up text sorts in code-unit order, not your locale's** — uppercase before
+  lowercase, digits before letters, like `sort` under `LC_ALL=C`. It reads UTF-8 only.
+- **Extract images gets the pictures out, not every picture.** JPEG streams come out
+  byte for byte and raw pixels are wrapped losslessly in PNG. JPEG 2000, fax formats,
+  indexed palettes, stencil masks and predictor-encoded data are skipped and named in
+  the report with the reason.
+- **A batch with one bad file costs a re-run.** An op can only signal failure by
+  throwing, so the worker drops the bad input and re-runs on what is left in order to
+  report the good outputs honestly. Cost is roughly `(bad files + 1) ×` the work.
 
 ## Deployment
 
-CI (`.github/workflows/ci.yml`) runs on every push and pull request:
-typecheck, lint, colour-contrast check, unit/browser tests, production
-build, size-budget check, and the full e2e suite.
+CI runs on every push and pull request: typecheck, lint, colour contrast, unit and
+browser tests, production build, size budget, and the full end-to-end suite.
 
-Publishing to GitHub Pages (`.github/workflows/deploy.yml`) is
-**manually triggered** (Actions → Deploy → Run workflow), not automatic on
-push. GitHub Pages isn't available for a private repository below
-GitHub Pro/Team/Enterprise, so this is intentional rather than a leftover —
-run it by hand once the repo is public or on a plan that supports private
-Pages.
-
-## Known limitations (honest, on purpose)
-
-- **AVIF encoding does not actually work in any browser today.** Canvas's
-  `convertToBlob({ type: 'image/avif' })` doesn't throw for an unsupported
-  encoder — it silently hands back a PNG instead. omnitool probes the real
-  encoder at runtime (attempts a tiny encode and checks the blob's *actual*
-  type against what was requested) and disables the AVIF option in the UI,
-  with the reason shown, rather than ever labelling a PNG's bytes `.avif`.
-  `'avif'` stays in the option schema because the probe makes offering it
-  safe — it just comes back disabled in every browser we've tested. Genuine
-  AVIF output needs a WASM encoder (e.g. `@jsquash/avif`), which is a
-  deliberate v2 cut, not an oversight.
-- **"Shrink PDF" re-encodes images inside the PDF — it is not general-purpose
-  PDF compression.** It targets DCTDecode (JPEG) image XObjects that are
-  8-bit RGB or grayscale. JPEG 2000, CCITT, JBIG2, CMYK images, and stencil
-  masks are left untouched. If a PDF's size is dominated by fonts, vector
-  content, or one of those untouched formats, don't expect this tool to move
-  the needle — and it will never claim a reduction it didn't actually
-  achieve: if the re-encoded output would be larger than the original, it
-  returns the original unchanged and says so.
-- **Rotating a JPEG re-encodes it.** A quarter turn through canvas decodes
-  the picture to pixels and encodes them again, so it costs a little quality;
-  the tool's quality slider is what that costs you, and PNG output ignores it
-  because PNG is lossless either way. A genuinely lossless 90° JPEG rotate
-  means transposing DCT coefficient blocks (what `jpegtran` does), which needs
-  a JPEG codec omnitool does not carry. Rotating by 0 with no mirror hands
-  back the original bytes rather than re-encoding for nothing. The tool's live
-  preview is a claim about **orientation only** — it never re-encodes, so it
-  cannot show you what the quality slider costs, and it says so rather than
-  implying the result will look pixel-for-pixel like the preview. A format the
-  browser can decode but not *encode* — GIF, BMP, TIFF, SVG — comes back as a
-  PNG, and the filename moves with it: rotating `holiday.gif` gives you
-  `holiday.png`, never PNG bytes still wearing a `.gif` name. The same holds
-  for Resize, Compress, Crop and Watermark, which all re-encode through the
-  same canvas. "Compress image" is the one exception, and deliberately so:
-  when the re-encoded bytes are **not** smaller it hands back the original
-  file, so that one keeps its original name and mime — bytes that were never
-  re-encoded must not be labelled with the format they would have become.
-- **"Strip metadata" covers JPEG, PNG and WebP, and nothing else.** Those are
-  the containers whose metadata can be cut out without touching a pixel: it
-  removes JPEG APP1/APP3-13/APP15 and COM segments, PNG `tEXt`/`zTXt`/`iTXt`/
-  `eXIf`/`tIME` chunks, and WebP `EXIF`/`XMP ` chunks (clearing the VP8X flag
-  bits that announced them). Anything else — GIF, AVIF, TIFF — is refused by
-  name rather than quietly re-encoded, and the ICC colour profile is kept
-  unless you ask for it too, because dropping it can change how the image
-  looks. Every run writes a `metadata-report.txt` saying what came out of
-  which file.
-- **"Clean PDF metadata" is not redaction.** It empties the document's Info
-  dictionary — every key, not just the ones we thought to name — and purges the
-  XMP metadata streams and `/PieceInfo` trees from the catalog and from each
-  page. Unlinking a key is not removing what it pointed at — an unlinked object
-  is still sitting there in the bytes — so anything it unlinks is swept
-  afterwards, and that sweep follows indirect values and nested structures (an
-  `/Author` stored as an indirect string, a `/PieceInfo` with its payload two
-  levels down) while leaving alone anything the document still points at. The
-  tests grep the output bytes for each payload rather than trusting a getter. What it does *not* touch is content: text on the page, images
-  embedded in it and any EXIF inside them, annotations, form-field values,
-  attachments and bookmarks all survive. A PDF whose first page has your name
-  on it still has your name on it. Every run writes a
-  `pdf-metadata-report.txt`, and a PDF that carried no metadata comes back as
-  its original bytes rather than re-saved.
-- **A watermark is a label, not a lock.** "Watermark image" paints text into
-  the pixels, which means it can be cropped off, painted over, or removed by
-  anyone who cares to — it marks provenance or state ("DRAFT"), it does not
-  protect anything. It also re-encodes, with the same cost as rotating: a JPEG
-  goes through the encoder a second time, and the quality slider is what that
-  costs you. Text size is a percentage of the image's shorter side rather than
-  a pixel size, so one setting reads the same on a screenshot and on a 6000px
-  photograph.
-- **"Clean up text" sorts in code-unit order, not your locale's.**
-  `localeCompare` answers differently in different runtimes and under different
-  locales, and a tool whose output depends on where it ran is not one you can
-  check into a repository — so uppercase sorts before lowercase and digits
-  before letters, exactly like `sort` under `LC_ALL=C`. It also reads UTF-8
-  only: anything else is refused by name rather than mangled into replacement
-  characters.
-- **"Extract images" gets the pictures out, not every picture.** A
-  `/DCTDecode` stream's bytes already *are* a JPEG file, so those come out
-  byte for byte — a copy, not a decode and re-encode, which is why there is no
-  quality setting to get wrong. Raw pixels (`/FlateDecode`, 8 bits per
-  component, grayscale or RGB, including ICC-wrapped RGB) are wrapped in a PNG,
-  which is lossless too. Everything else is **left alone and named in the
-  report with the reason**: JPEG 2000, CCITT and JBIG2 fax images, indexed
-  palettes, 1-bit stencil masks, filter chains, and anything predictor-encoded
-  — for that last one, the PDF library undoes the compression but not the
-  predictor, and writing those bytes into a PNG would hand you a file that
-  opens and looks like garbage. An image with a soft mask comes out opaque, and
-  the report says so for that image — and the mask itself is not written out as
-  a file of its own, since it is an alpha channel rather than a picture, and
-  every RGBA image placed in a PDF makes one. The same picture drawn on forty
-  pages is extracted once, named for the first page it appears on. This is not the same
-  tool as **PDF to images**, which rasterises whole pages at a DPI you pick.
-- **A batch with a bad file costs a re-run.** The op contract has no channel
-  for an op to report "this one input failed, keep going" — its only way to
-  signal a failure is to throw, naming the file. So when one input in a
-  batch is bad, the worker drops it and **re-runs the whole op** on what's
-  left, to still report the good outputs honestly instead of failing the
-  whole batch. This is correct (a partial success is reported as partial,
-  and an all-bad batch rejects rather than lying) and terminating (the
-  remaining set shrinks every pass), but it isn't free: cost is roughly
-  `(bad_files + 1) × full work`. Worst case is a few bad inputs positioned
-  late — 50 images with the last 2 corrupt does about 3× the necessary work.
-  Fixing this properly means letting an op return per-input outcomes instead
-  of throwing, which touches every tool and is deliberately deferred to v2
-  rather than made as a mid-flight change to a frozen contract.
-- **Splitting a file gives you pieces, not documents.** Part 1 of a PDF is not
-  a PDF; the parts are plain byte slices and only mean something once Join
-  file parts puts them back. Join refuses parts that are out of sequence
-  rather than producing a silently corrupt file.
-- Audio/video conversion, OCR, and Office formats (`.docx`/`.xlsx`/`.pptx`)
-  are out of scope — see the design spec's non-goals. Reading a PDF's text
-  layer was tried and removed too: it only ever worked on PDFs that already
-  contained text, and making it useful on scans meant carrying an OCR engine,
-  which is more machinery than this project wants.
+Publishing to GitHub Pages is a manual trigger — **Actions → Deploy → Run workflow**.
+`vite.config.ts` sets `base: './'`, so the build is host-agnostic and Pages serves
+`dist/` as-is.
 
 ## Contributing
 
-Contributions are welcome. Before sending a PR, read
-[CONTRIBUTING.md](./CONTRIBUTING.md) — it covers the three things that are
-mechanically enforced (import boundaries, the four-test rule, and the size
-budget) rather than left to reviewer taste, plus the commands CI runs so you
-can catch a failure locally first. Commit messages follow
-[Conventional Commits](https://www.conventionalcommits.org/).
-
-## Add a tool in 20 lines
-
-Every tool is one function behind the same signature — no framework hooks,
-no base class to extend. Here is a genuinely new one, start to finish. It
-reverses the characters in a text file.
-
-**1. The op** — `src/tools/data/text-reverse.op.ts`. This is the *entire*
-file; it only imports from `src/types.ts`, per the import rules in
-CONTRIBUTING.md.
-
-```ts
-import { OpError, type Op, type OpOutput } from '../../types';
-
-const textReverse: Op = async (inputs, _options, ctx) => {
-  if (inputs.length === 0) {
-    throw new OpError('InvalidOptions', 'text-reverse needs at least one file');
-  }
-
-  const outputs: OpOutput[] = [];
-  for (let i = 0; i < inputs.length; i++) {
-    const input = inputs[i]!;
-    if (ctx.signal.aborted) throw new OpError('Cancelled', 'Cancelled');
-
-    let text: string;
-    try {
-      text = new TextDecoder('utf-8', { fatal: true }).decode(input.buffer);
-    } catch {
-      throw new OpError('CorruptFile', `${input.name} is not valid UTF-8 text`, input.name);
-    }
-
-    const reversed = [...text].reverse().join('');
-    outputs.push({ name: input.name, type: 'text/plain', buffer: new TextEncoder().encode(reversed).buffer });
-    ctx.onProgress((i + 1) / inputs.length);
-  }
-  return outputs;
-};
-
-export default textReverse;
-```
-
-**2. The registry entry** — one object appended to `PDF_TOOLS`'s sibling
-array for its group, `src/core/registry.data.ts` (see §5 of the
-implementation plan for why each tool group owns its own registry module):
-
-```ts
-{
-  id: 'text-reverse',
-  name: 'Reverse text',
-  blurb: 'Reverse the characters in a text file.',
-  group: 'data',
-  accepts: ['text/plain', 'text/csv', 'application/json'],
-  minInputs: 1,
-  maxInputs: null,
-  load: () => import('../tools/data/text-reverse.op'),
-},
-```
-
-**3. The loader-map line** — one entry in `DATA_LOADERS`, in
-`src/core/workers/loaders.data.ts`, so the worker can resolve the tool id to
-the op:
-
-```ts
-'text-reverse': () => import('../../tools/data/text-reverse.op'),
-```
-
-**4. The test** — `tests/unit/data.test.ts` (or its own file), covering the
-four cases every op needs per CONTRIBUTING.md: happy path, a typed error,
-cancellation, and progress.
-
-```ts
-import { describe, expect, it } from 'vitest';
-import textReverse from '../../src/tools/data/text-reverse.op';
-import type { OpContext } from '../../src/types';
-
-function input(name: string, text: string) {
-  return { name, type: 'text/plain', buffer: new TextEncoder().encode(text).buffer };
-}
-function ctx(signal: AbortSignal = new AbortController().signal) {
-  const seen: number[] = [];
-  return { seen, ctx: { onProgress: (f: number) => seen.push(f), signal } satisfies OpContext };
-}
-
-describe('text-reverse', () => {
-  it('reverses the characters of a text file', async () => {
-    const [out] = await textReverse([input('a.txt', 'abc')], {}, ctx().ctx);
-    expect(new TextDecoder().decode(out!.buffer)).toBe('cba');
-  });
-
-  it('raises CorruptFile on invalid UTF-8', async () => {
-    const bad = { name: 'bad.txt', type: 'text/plain', buffer: new Uint8Array([0xff, 0xfe, 0xfd]).buffer };
-    await expect(textReverse([bad], {}, ctx().ctx)).rejects.toMatchObject({ code: 'CorruptFile' });
-  });
-
-  it('raises Cancelled when the signal is already aborted', async () => {
-    const controller = new AbortController();
-    controller.abort();
-    await expect(
-      textReverse([input('a.txt', 'abc')], {}, ctx(controller.signal).ctx),
-    ).rejects.toMatchObject({ code: 'Cancelled' });
-  });
-
-  it('reports monotonic progress ending at 1', async () => {
-    const { ctx: c, seen } = ctx();
-    await textReverse([input('a.txt', 'ab'), input('b.txt', 'cd')], {}, c);
-    expect(seen).toEqual([0.5, 1]);
-  });
-});
-```
-
-That's it — no router, no manual chunk config, nothing else to wire up. Vite
-code-splits the op into its own lazily-loaded chunk automatically, and the
-tool appears in the UI for exactly the file types listed in `accepts` the
-moment its registry entry exists.
-
-*(This example is compile-verified against the real, current
-`src/types.ts` contract and actually executes correctly — see
-CONTRIBUTING.md if you want to check it yourself; it isn't shipped as a real
-tool here, to keep this README's example self-contained and out of the way
-of the actual registry.)*
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for the import-boundary rules, the per-tool
+test requirements, the size budget, and how performance claims are measured.
 
 ## License
 

@@ -704,7 +704,7 @@ describe('NB3 (pass #4) — a genuine type-mismatch prune still resets the URL',
 });
 
 // ---------------------------------------------------------------------------
-// Follow-ups (docs/superpowers/specs/2026-08-30-ui-overhaul-followups.md),
+// Follow-ups (docs/known-issues.md),
 // "Worth doing next" — three small gaps the overhaul's own final review found
 // and deliberately deferred.
 // ---------------------------------------------------------------------------

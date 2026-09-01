@@ -1,6 +1,6 @@
 // eslint.config.js — encodes the §1 import-boundary rules (flat config, ESM).
 //
-// Rules enforced here (see docs/superpowers/plans/2026-08-29-omnitool.md §1):
+// Rules enforced here (see CONTRIBUTING.md):
 //   1. src/tools/** may import only from src/types.ts and its declared npm engine —
 //      never from src/core/** or src/ui/**.
 //   2. src/core/** must never import from src/ui/**.

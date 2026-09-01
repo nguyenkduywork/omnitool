@@ -1,6 +1,6 @@
 // tests/e2e/preset-seam.spec.ts — the preset -> op seam (F7 of the UI
 // overhaul's final whole-branch review — see
-// docs/superpowers/specs/2026-08-30-ui-overhaul-followups.md for what that
+// docs/known-issues.md for what that
 // review left deferred; F7 itself was fixed, not deferred, so it has no
 // entry there, but the review's own working notes lived under the
 // gitignored `.superpowers/` and are not a durable citation).

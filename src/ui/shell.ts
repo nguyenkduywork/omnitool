@@ -28,7 +28,7 @@
 //
 // This supersedes v1's §7.1 ("drop first, choose second") and §7.2 ("one
 // screen, no navigation") — see the superseding note at the top of §7 in
-// docs/superpowers/specs/2026-08-29-omnitool-design.md. Navigation is real
+// the original design spec (see the git history). Navigation is real
 // now: every tool gets its own bookmarkable, shareable hash URL (./router.ts),
 // and picking one cold from the catalogue is a route, exactly like a deep
 // link. What survives from "one screen": the hero dropzone still dissolves
