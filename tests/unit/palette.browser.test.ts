@@ -33,16 +33,24 @@ const TOOLS: ToolDef[] = [
 let outsideButton: HTMLButtonElement;
 let handle: PaletteHandle;
 let announced: string[];
+/** Has a non-null `unavailableReason` — may or may not also `refuses`. */
 let unavailable: Set<string>;
+/** The subset of `unavailable` that is a hard TYPE mismatch: `refuses` is
+ *  true and `commit()` stays open instead of selecting. Every other
+ *  `unavailable` tool is an INVITE — see the "inviting rather than
+ *  refusing" describe block below. */
+let refusing: Set<string>;
 let ran: ToolDef[];
 
 function setup(): void {
   announced = [];
   unavailable = new Set();
+  refusing = new Set();
   ran = [];
   handle = createPalette({
     tools: TOOLS,
     unavailableReason: (t) => (unavailable.has(t.id) ? `${t.name} does not fit.` : null),
+    refuses: (t) => refusing.has(t.id),
     announce: (message) => announced.push(message),
     onRun: (t) => ran.push(t),
   });
@@ -217,8 +225,9 @@ describe('running a tool', () => {
     expect(ran).toEqual([TOOLS[2]]);
   });
 
-  it('Enter on an unavailable tool stays open, announces, and shows the reason visibly — never a silent failure', () => {
+  it('Enter on a REFUSED tool stays open, announces, and shows the reason visibly — never a silent failure', () => {
     unavailable.add('merge');
+    refusing.add('merge');
     handle.open();
     fire(input(), 'Enter');
 
@@ -229,12 +238,53 @@ describe('running a tool', () => {
     expect(handle.el.textContent).toContain('does not fit');
   });
 
-  it('marks an unavailable row visibly in the list itself', () => {
+  it('marks a REFUSED row visibly in the list itself', () => {
     unavailable.add('hash');
+    refusing.add('hash');
     handle.open();
     const hashRow = rows().find((row) => row.textContent?.includes('Hash'));
     expect(hashRow?.classList.contains('is-unavailable')).toBe(true);
     expect(hashRow?.textContent).toMatch(/not for these files/i);
+  });
+
+  // F2 of the final-branch review: the palette used to refuse ANY non-null
+  // `unavailableReason`, including "needs at least 2 files" with zero files
+  // loaded — the exact wall spec §4.5 exists to remove ("a tool needing
+  // files that are not loaded reports what it needs rather than refusing").
+  // `refuses` is what the fix hinges on: `unavailable` alone (a reason
+  // exists) must NOT be enough to stop `commit()`.
+  describe('inviting rather than refusing (F2)', () => {
+    it('Enter on an unavailable-but-not-refused tool closes the palette and runs it anyway', () => {
+      unavailable.add('merge'); // has a reason ("needs 2 files")...
+      // ...but is not in `refusing`: not a type mismatch, just not ready yet.
+      handle.open();
+      fire(input(), 'Enter');
+
+      expect(handle.isOpen()).toBe(false);
+      expect(ran).toEqual([TOOLS[0]]);
+      // Never refused, so never the refusal announcement/note either.
+      expect(announced.some((message) => message.includes('does not fit'))).toBe(false);
+    });
+
+    it('clicking an unavailable-but-not-refused row runs it too, not just Enter', () => {
+      unavailable.add('hash');
+      handle.open();
+      rows()
+        .find((row) => row.textContent?.includes('Hash'))
+        ?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+
+      expect(ran).toEqual([TOOLS[2]]);
+    });
+
+    it('marks the row with the softer "needs files" tag, not "not for these files", and never is-unavailable', () => {
+      unavailable.add('hash');
+      handle.open();
+      const hashRow = rows().find((row) => row.textContent?.includes('Hash'));
+
+      expect(hashRow?.classList.contains('is-unavailable')).toBe(false);
+      expect(hashRow?.textContent).toMatch(/needs files/i);
+      expect(hashRow?.textContent).not.toMatch(/not for these files/i);
+    });
   });
 
   it('Enter with no matches at all does nothing (nothing to commit)', () => {

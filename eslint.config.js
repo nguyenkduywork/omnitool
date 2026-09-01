@@ -127,6 +127,17 @@ export default tseslint.config(
   // 3b. src/ui/state.ts is the shell's logic, and it is unit-tested under
   //     plain Node. Touching the DOM here would silently make that
   //     impossible, so the rule is enforced rather than documented.
+  //
+  //     The global ban alone has a hole: `import { el } from './dom'` (or
+  //     any other src/ui/* sibling) reaches the DOM just as effectively as
+  //     `document` typed inline, without ever naming a banned global —
+  //     easily the most natural way anyone would actually break this
+  //     constraint by accident, since state.ts already sits IN src/ui/ and
+  //     "just import the helper next door" is the obvious move. Every
+  //     relative import from this specific file can only resolve to another
+  //     src/ui/* module (its own real dependencies, `../core/format` and
+  //     `../types`, are neither), so banning `./*`/`./**` closes that
+  //     specifically, without touching this file's genuine imports.
   {
     files: ['src/ui/state.ts'],
     rules: {
@@ -135,6 +146,18 @@ export default tseslint.config(
         { name: 'document', message: 'src/ui/state.ts must stay DOM-free.' },
         { name: 'window', message: 'src/ui/state.ts must stay DOM-free.' },
         { name: 'HTMLElement', message: 'src/ui/state.ts must stay DOM-free.' },
+      ],
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['./*', './**'],
+              message:
+                'src/ui/state.ts must stay DOM-free — a relative import from this file can only resolve to another src/ui/* module, which is exactly the DOM the global ban above exists to keep out.',
+            },
+          ],
+        },
       ],
     },
   },

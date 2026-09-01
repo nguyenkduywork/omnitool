@@ -57,7 +57,14 @@ export function createFilesZone(init: {
       const has = snapshot.entries.length > 0;
       init.tray.el.hidden = !has;
       clear.hidden = !has;
-      clear.disabled = snapshot.phase === 'running';
+      const running = snapshot.phase === 'running';
+      clear.disabled = running;
+      // Freezes the tray's own remove/reorder/drag controls for the same
+      // reason "Remove all files" is already disabled above: a running job
+      // already captured its file list, so nothing these controls do can
+      // reach it — only let what's on screen drift from what's actually
+      // running (see filetray.ts's `setRunning` doc comment).
+      init.tray.setRunning(running);
     },
     hasClearFocus: () => document.activeElement === clear,
     destroy() {

@@ -131,8 +131,18 @@ export function createWorkZone(init: { onRun: () => void; onCancel: () => void }
       // `null` here means Run's disabled state tracks ONLY `running` once
       // the selection is gone, so clearing it mid-run does not leave Run
       // stuck disabled behind the hidden panel once the run ends.
+      //
+      // Forced to `null` while RUNNING too, for a related reason: F1's fix
+      // (state.ts's `pruneSelection`) deliberately lets the file set change
+      // underneath a live selection while a job runs, rather than tearing
+      // the card down — which means `runBlockedReason` can start describing
+      // a mismatch mid-run purely because a file was added or removed. Run
+      // is already disabled by `running` alone at that point (see the very
+      // next line), so nothing is lost by not also swapping its LABEL to a
+      // reason that has nothing to do with the job actually in flight —
+      // showing it would be a false sentence next to a spinning Cancel.
       const running = snapshot.phase === 'running';
-      const blocked = tool === null ? null : snapshot.runBlockedReason;
+      const blocked = tool === null || running ? null : snapshot.runBlockedReason;
       runButton.disabled = running || blocked !== null;
       cancel.hidden = !running;
       progressWrap.hidden = !running;

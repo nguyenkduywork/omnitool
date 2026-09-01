@@ -12,10 +12,12 @@
 //
 // The dialog never decides whether a tool CAN run — that is business logic
 // the shell owns (it alone knows the loaded files). The shell hands the
-// palette two callbacks: `unavailableReason` (why not, or null) and `onRun`
-// (what to do once the answer is "yes"). This keeps the palette reusable and
-// unit-testable on its own, the same separation `filetray.ts`/`dropzone.ts`
-// already use for the rest of the shell's chrome.
+// palette three callbacks: `unavailableReason` (why not, or null — shown
+// either way), `refuses` (whether that "why not" is a hard enough reason to
+// actually refuse — see its own doc comment), and `onRun` (what to do once
+// the answer is "yes"). This keeps the palette reusable and unit-testable on
+// its own, the same separation `filetray.ts`/`dropzone.ts` already use for
+// the rest of the shell's chrome.
 
 import type { ToolDef } from '../types';
 import { el, icon, iconButton } from './dom';
@@ -126,14 +128,24 @@ export type PaletteInit = {
    *  saying WHY a hit doesn't fit is more useful than hiding it. */
   tools: readonly ToolDef[];
   /** `null` when `tool` can run against what's currently loaded; otherwise
-   *  the reason to show — e.g. "Drop files first" or "doesn't work with
-   *  these files". */
+   *  the reason to show — e.g. "Needs at least 2 files" or "doesn't work
+   *  with these files". Shown whenever it is non-null, whether or not
+   *  `refuses` also is — see `refuses` below for what that split is for. */
   unavailableReason(tool: ToolDef): string | null;
+  /**
+   * True only for a hard TYPE mismatch — nothing about bringing more files
+   * of the same kind could fix it. Every OTHER non-null `unavailableReason`
+   * (no files loaded yet, or a count shortfall) is an invitation, not a
+   * refusal: `commit()` selects the tool and closes, exactly like clicking
+   * its card cold, and zone 3 explains what is still needed from there. Only
+   * a `refuses` tool stays behind in the still-open palette (see `commit`).
+   */
+  refuses(tool: ToolDef): boolean;
   /** Mirrors a message into the shell's shared aria-live region, so a
    *  screen-reader user hears the same thing a sighted user reads inline. */
   announce(message: string): void;
-  /** Called once, for a tool that IS available, right after the palette has
-   *  closed and focus has been restored. */
+  /** Called once, for a tool that is not `refuses`, right after the palette
+   *  has closed and focus has been restored. */
   onRun(tool: ToolDef): void;
 };
 
@@ -149,7 +161,7 @@ export type PaletteHandle = {
 let uid = 0;
 
 export function createPalette(init: PaletteInit): PaletteHandle {
-  const { tools, unavailableReason, announce, onRun } = init;
+  const { tools, unavailableReason, refuses, announce, onRun } = init;
 
   uid += 1;
   const inputId = `palette-input-${uid}`;
@@ -235,15 +247,21 @@ export function createPalette(init: PaletteInit): PaletteHandle {
 
     filtered.forEach((tool, index) => {
       const reason = unavailableReason(tool);
+      // A hard refusal is visually muted AND tagged "not for these files"; a
+      // mere invitation (no files yet, or a count shortfall) is fully
+      // clickable — commit() below selects it — so it stays at full opacity
+      // and gets the softer "needs files" tag instead. Same underlying
+      // `reason` string either way for `aria-description`: a screen-reader
+      // user benefits from the specific "needs at least 2 files" wording
+      // regardless of which case this is.
+      const refused = reason !== null && refuses(tool);
 
       const row = el('li', 'palette__row');
       row.id = rowId(index);
       row.setAttribute('role', 'option');
       row.setAttribute('aria-selected', 'false');
-      if (reason) {
-        row.classList.add('is-unavailable');
-        row.setAttribute('aria-description', reason);
-      }
+      if (reason) row.setAttribute('aria-description', reason);
+      if (refused) row.classList.add('is-unavailable');
 
       // The same glyph and family tint the tool wears in the grid, so a
       // search result and a card are recognisably the same object.
@@ -253,7 +271,9 @@ export function createPalette(init: PaletteInit): PaletteHandle {
 
       const top = el('div', 'palette__rowtop');
       top.append(el('span', 'palette__name', tool.name));
-      if (reason) top.append(el('span', 'palette__tag', 'Not for these files'));
+      if (reason) {
+        top.append(el('span', 'palette__tag', refused ? 'Not for these files' : 'Needs files'));
+      }
 
       const body = el('div', 'palette__rowbody');
       body.append(
@@ -281,14 +301,20 @@ export function createPalette(init: PaletteInit): PaletteHandle {
     const tool = filtered[activeIndex];
     if (!tool) return;
 
-    const reason = unavailableReason(tool);
-    if (reason) {
+    // Only a hard TYPE mismatch refuses (spec §4.5: report what a tool needs
+    // rather than refusing outright). Anything else `unavailableReason` might
+    // say — no files loaded, or a count shortfall — is an invitation: fall
+    // through and select it, exactly like clicking its card cold. Zone 3
+    // explains what is still needed from there; it already does, since
+    // `select()` never required Run to be immediately available.
+    if (refuses(tool)) {
       // §requirement: a tool that doesn't fit must be VISIBLE, never a silent
       // no-op. Say why, out loud (announce) and on screen (note); keep the
       // palette open so the user can pick something else.
+      const reason = unavailableReason(tool);
       note.hidden = false;
-      note.textContent = reason;
-      announce(reason);
+      note.textContent = reason ?? '';
+      if (reason) announce(reason);
       return;
     }
 

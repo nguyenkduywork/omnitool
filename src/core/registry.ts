@@ -5,7 +5,7 @@
 // that adding a tool touches one file and never collides with another group.
 
 import type { ToolDef } from '../types';
-import { accepts, applicabilityFor as bucket, type Applicability } from './format';
+import { accepts } from './format';
 import { DATA_TOOLS } from './registry.data';
 import { IMAGE_TOOLS } from './registry.image';
 import { PDF_TOOLS } from './registry.pdf';
@@ -19,9 +19,4 @@ export function getTool(id: string): ToolDef | undefined {
 /** The tools that can run against exactly this selection of mime types. */
 export function toolsFor(mimes: string[]): ToolDef[] {
   return TOOLS.filter((tool) => accepts(tool, mimes));
-}
-
-/** The same question, answered in the three tiers the grid renders. */
-export function applicabilityFor(mimes: string[]): Applicability {
-  return bucket(TOOLS, mimes);
 }

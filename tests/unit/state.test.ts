@@ -207,4 +207,76 @@ describe('createState', () => {
     state.addFiles([pdf()]);
     expect(seen).not.toHaveBeenCalled();
   });
+
+  // F1 of the final-branch review: dropping a mismatched file mid-run used to
+  // prune the selection out from under a running job, which is what tore
+  // down the run's own Cancel button and progress ring on screen (shell.ts's
+  // `refreshTools` reacts to a selection the machine dropped by tearing down
+  // the whole `.run` card). A job has already captured its own copy of the
+  // file list by the time it starts (`shell.ts`'s `start()` reads
+  // `snap.entries` once, before calling `setRunning(true)`), so nothing a
+  // LATER file change does can affect it — the selection just has to survive
+  // on screen for as long as the job that owns it is still running.
+  describe('F1 — running protects the selection from pruneSelection', () => {
+    it('does not prune a selection whose type stops fitting while a job is running', () => {
+      const state = createState(TOOLS);
+      state.addFiles([pdf(), pdf()]);
+      state.selectTool('pdf-merge');
+      state.setRunning(true);
+
+      // A PNG next to two PDFs: pdf-merge's type no longer fits — exactly
+      // the case pruneSelection prunes for outside of a run.
+      state.addFiles([entry('a.png', 'image/png')]);
+
+      const snap = state.snapshot();
+      expect(snap.selected?.id).toBe('pdf-merge');
+      expect(snap.phase).toBe('running');
+    });
+
+    it('the same mismatch still prunes normally once nothing is running', () => {
+      const state = createState(TOOLS);
+      state.addFiles([pdf(), pdf()]);
+      state.selectTool('pdf-merge');
+
+      state.addFiles([entry('a.png', 'image/png')]);
+
+      expect(state.snapshot().selected).toBeNull();
+    });
+
+    it('re-asserts the prune the moment the run ends, without waiting for another file change', () => {
+      const state = createState(TOOLS);
+      state.addFiles([pdf(), pdf()]);
+      state.selectTool('pdf-merge');
+      state.setRunning(true);
+      state.addFiles([entry('a.png', 'image/png')]);
+      expect(state.snapshot().selected?.id).toBe('pdf-merge'); // still protected
+
+      state.setRunning(false);
+
+      expect(state.snapshot().selected).toBeNull();
+    });
+
+    it('setFiles mid-run is protected the same way as addFiles', () => {
+      const state = createState(TOOLS);
+      state.addFiles([pdf(), pdf()]);
+      state.selectTool('pdf-merge');
+      state.setRunning(true);
+
+      state.setFiles([entry('a.png', 'image/png')]);
+
+      expect(state.snapshot().selected?.id).toBe('pdf-merge');
+    });
+
+    it('a run ending with the files still fitting leaves the selection alone', () => {
+      const state = createState(TOOLS);
+      state.addFiles([pdf(), pdf()]);
+      state.selectTool('pdf-merge');
+      state.setRunning(true);
+      state.setRunning(false);
+
+      const snap = state.snapshot();
+      expect(snap.selected?.id).toBe('pdf-merge');
+      expect(snap.phase).toBe('ready');
+    });
+  });
 });

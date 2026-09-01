@@ -96,6 +96,27 @@ test('gives a tool its own URL, and keeps back inside the app', async ({ page })
   );
 });
 
+// Privacy test gap flagged by the final whole-branch review: both URL
+// assertions above run COLD (qr-generate never has a file loaded at all), so
+// they would still pass even if `router.navigate` started appending file
+// names to the hash — the exact thing router.ts's own header comment
+// promises never happens ("FILES ARE NEVER IN THE URL. They stay in
+// memory."). This is the one assertion that actually reads the URL with
+// files loaded.
+test('never puts a filename in the URL, even with files loaded', async ({ page }) => {
+  await page
+    .locator('input[type=file]')
+    .setInputFiles([fixturePath('small.pdf'), fixturePath('small.pdf')]);
+
+  await page.locator('.toolcard[data-tool="pdf-merge"]').click();
+  await expect(page).toHaveURL(/#\/pdf-merge$/);
+
+  const url = page.url();
+  expect(url).not.toContain('small.pdf');
+  expect(url).not.toContain('small');
+  expect(url).not.toContain('.pdf');
+});
+
 test('opens a deep link straight into the tool, with no files attached', async ({ page }) => {
   // The registry's own id is `pdf-merge` (see src/core/registry.pdf.ts) —
   // NOT `merge-pdfs`, which is only ever used as a placeholder in

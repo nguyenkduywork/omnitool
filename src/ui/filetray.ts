@@ -34,6 +34,19 @@ export type FileTrayHandle = {
    */
   setEntries(entries: TrayEntry[]): void;
   entries(): TrayEntry[];
+  /**
+   * Freeze (or unfreeze) every control that MUTATES the list — drag, the
+   * keyboard reorder shortcuts, and the per-row nudge/remove buttons — while a
+   * job is running. A running job already captured its own copy of the file
+   * list (see `shell.ts`'s `start()`), so nothing the tray does can reach it
+   * any more; letting it keep mutating anyway would just let what's ON SCREEN
+   * drift from what the job is actually processing, which is confusing in
+   * exactly the way `zones/files.ts`'s "Remove all files" being disabled
+   * during a run already avoids for the whole-tray case. Intake (adding MORE
+   * files) is deliberately NOT frozen by this — see shell.ts's `intake` and
+   * the F1 write-up in the final-fix report for why that line was drawn here.
+   */
+  setRunning(on: boolean): void;
   destroy(): void;
 };
 
@@ -113,6 +126,8 @@ export function createFileTray(init: FileTrayInit): FileTrayHandle {
   type Item = { entry: TrayEntry; node: HTMLLIElement; url: string | null };
   let items: Item[] = [];
   let dragFrom = -1;
+  /** See `FileTrayHandle.setRunning`'s own doc comment. */
+  let frozen = false;
 
   function positions(): Map<HTMLElement, DOMRect> {
     const map = new Map<HTMLElement, DOMRect>();
@@ -124,10 +139,16 @@ export function createFileTray(init: FileTrayInit): FileTrayHandle {
     for (const item of items) list.append(item.node);
     for (const [index, item] of items.entries()) {
       item.node.setAttribute('aria-label', describe(item.entry, index));
+      // Native drag is opt-in per element; clearing it while frozen is what
+      // stops `dragstart` from firing at all (see the listener below), not
+      // just cosmetic.
+      item.node.draggable = !frozen;
       const nudges = item.node.querySelectorAll<HTMLButtonElement>('.tray__nudge');
       // A control that cannot do anything says so, rather than silently no-op'ing.
-      if (nudges[0]) nudges[0].disabled = index === 0;
-      if (nudges[1]) nudges[1].disabled = index === items.length - 1;
+      if (nudges[0]) nudges[0].disabled = frozen || index === 0;
+      if (nudges[1]) nudges[1].disabled = frozen || index === items.length - 1;
+      const remove = item.node.querySelector<HTMLButtonElement>('.tray__remove');
+      if (remove) remove.disabled = frozen;
     }
     count.textContent = items.length === 1 ? '1 file' : `${items.length} files`;
   }
@@ -251,7 +272,7 @@ export function createFileTray(init: FileTrayInit): FileTrayHandle {
 
     node.addEventListener('keydown', (event) => {
       const index = indexOfNode(node);
-      if (index < 0) return;
+      if (index < 0 || frozen) return;
       switch (event.key) {
         case 'ArrowUp':
         case 'ArrowLeft':
@@ -347,6 +368,11 @@ export function createFileTray(init: FileTrayInit): FileTrayHandle {
     },
     entries(): TrayEntry[] {
       return items.map((item) => item.entry);
+    },
+    setRunning(on: boolean): void {
+      if (frozen === on) return;
+      frozen = on;
+      syncOrder();
     },
     destroy(): void {
       clear();

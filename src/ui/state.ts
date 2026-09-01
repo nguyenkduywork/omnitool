@@ -57,6 +57,23 @@ export function runBlockedReason(selected: ToolDef | null, mimes: string[]): str
 }
 
 /**
+ * True only for a hard TYPE mismatch — nothing about adding more files of the
+ * SAME kind could ever fix it. Never true for a mere count shortfall,
+ * including zero files loaded: that is an invitation ("needs 2 files, bring
+ * them"), not a refusal, the same way the cold catalogue's cards are all
+ * clickable with nothing loaded yet.
+ *
+ * This is the one piece of `runBlockedReason`'s logic the palette needs
+ * SEPARATELY from the reason string itself (see palette.ts's `commit`): the
+ * string alone cannot tell a "doesn't work with these files" refusal apart
+ * from a "needs at least 2 files" invitation without re-parsing English.
+ */
+export function typeMismatch(selected: ToolDef, mimes: string[]): boolean {
+  if (selected.kind === 'generate') return false;
+  return mimes.length > 0 && !typesMatch(selected, mimes);
+}
+
+/**
  * A pure fold over the four things that decide what the screen shows.
  *
  * It takes `runBlocked` rather than recomputing it because the reason a tool
@@ -120,8 +137,22 @@ export function createState(tools: readonly ToolDef[]): StateHandle {
    * describe files that are not there. A count shortfall is NOT a reason to
    * drop it: "you need one more PDF" is a better answer than a cleared panel.
    * A generator never depended on the files at all.
+   *
+   * Gated on `running`: a job already holds its own copy of the file list
+   * (`shell.ts`'s `start()` reads `snap.entries` once, before the run
+   * starts), so nothing about a LATER file change can affect what it is
+   * doing. But `pruneSelection` changing `selected` behind the shell's back
+   * is exactly what used to tear down the run's own controls out from under
+   * it — `refreshTools`'s prune-teardown (shell.ts) reacts to a selection
+   * dropping to null by tearing down the options panel and, via
+   * `clearSelection`, the whole `.run` card the Cancel button and progress
+   * ring live in. Skipping the prune while a job is running is what keeps
+   * that card on screen, Cancel reachable and the job stoppable, for as long
+   * as it is actually running — see tests/unit/state.test.ts's "does not
+   * prune the selection while a job is running".
    */
   function pruneSelection(): void {
+    if (running) return;
     if (!selected || selected.kind === 'generate') return;
     if (entries.length > 0 && !typesMatch(selected, mimes())) selected = null;
   }
@@ -159,6 +190,15 @@ export function createState(tools: readonly ToolDef[]): StateHandle {
     setRunning(on) {
       running = on;
       if (on) hasResults = false;
+      // The moment a run ENDS, re-assert the invariant `pruneSelection`
+      // enforces everywhere else: a selection whose type no longer matches
+      // the files is dropped. While `running` was true, a file change could
+      // have made that true without anything acting on it (see
+      // `pruneSelection`'s own comment) — catching up here, rather than
+      // waiting for the next unrelated `addFiles`/`setFiles`, means a stale
+      // mismatch never outlives the run that protected it a moment longer
+      // than it has to.
+      if (!on) pruneSelection();
       emit();
     },
     setResults(shown) {

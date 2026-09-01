@@ -1,4 +1,8 @@
-// src/ui/dropzone.ts — file intake. Drop first, choose second (§7.1).
+// src/ui/dropzone.ts — file intake: one of the app's two equal entry doors
+// (the other is picking a tool cold, straight off the catalogue — see
+// shell.ts's own header comment for the current model. v1's §7.1 "drop
+// first, choose second" no longer holds on its own: this module still owns
+// getting files IN, just not the only way in any more).
 //
 // Three ways in, all equal citizens:
 //   1. drag and drop ANYWHERE in the window, not just onto a small rectangle

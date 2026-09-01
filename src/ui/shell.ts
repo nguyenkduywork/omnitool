@@ -11,11 +11,13 @@
 // handed: every reader below goes through `snap`, and every mutation goes
 // through `state.*` and comes back as a notification.
 //
-// The product decision this file exists to serve is DROP FIRST, CHOOSE SECOND
-// (§7.1): tools are never offered before the files are in, and once they are in,
-// the grid ranks them in the three tiers `applicabilityFor` returns. A tool that
-// does not fit the TYPES on the tray is absent, never greyed, so the grid stays
-// scannable. The two exceptions earn their place:
+// The product decision this file exists to serve is TWO EQUAL ENTRY DOORS —
+// drop files and the grid narrows to what can run on them, or pick a tool
+// first, cold, straight off the always-visible catalogue (ui/zones/catalogue.ts)
+// and bring files after. Once files ARE in, the grid ranks tools in the three
+// tiers `applicabilityFor` returns. A tool that does not fit the TYPES on the
+// tray is absent, never greyed, so the grid stays scannable. The two
+// exceptions earn their place:
 //
 //   blocked — the type fits and only the COUNT is wrong. Rendering it disabled
 //             with the count it wants answers "can this app do that at all?",
@@ -24,8 +26,15 @@
 //             drop from another. A quiet pill row, below the grid it would
 //             otherwise flood.
 //
-// There is NO NAVIGATION (§7.2). The hero dropzone dissolves into the workbench,
-// choosing a tool expands its options inline, and results appear beneath.
+// This supersedes v1's §7.1 ("drop first, choose second") and §7.2 ("one
+// screen, no navigation") — see the superseding note at the top of §7 in
+// docs/superpowers/specs/2026-08-29-omnitool-design.md. Navigation is real
+// now: every tool gets its own bookmarkable, shareable hash URL (./router.ts),
+// and picking one cold from the catalogue is a route, exactly like a deep
+// link. What survives from "one screen": the hero dropzone still dissolves
+// into the always-mounted three-zone workbench on the first file or the first
+// pick, choosing a tool still expands its options inline rather than
+// navigating to a second page, and results still appear beneath.
 //
 // Everything heavy is behind a dynamic import: `core/pipeline` (and through it
 // `core/fs` + fflate + the worker pool) is fetched when the first run starts and
@@ -51,7 +60,7 @@ import { defaultOptions, renderOptions, type OptionsHandle } from './optionspane
 import { createPalette } from './palette';
 import { prefetchModule, prefetchTool } from './prefetch';
 import { createRouter } from './router';
-import { createState, runBlockedReason, type Snapshot } from './state';
+import { createState, runBlockedReason, typeMismatch, type Snapshot } from './state';
 import { createThemeControl } from './theme';
 import { createCatalogue } from './zones/catalogue';
 import { createFilesZone } from './zones/files';
@@ -272,7 +281,19 @@ export function mountShell(root: HTMLElement): ShellHandle {
     const cold = snap.phase === 'browsing';
     if (wasCold && !cold) {
       void fadeHero(dropzone.hero).then(() => {
-        dropzone.hero.hidden = true;
+        // Guarded on the CURRENT `wasCold`, read at the time this resolves —
+        // not assumed still `false` just because it was when the fade
+        // started. Two picks ~60ms apart (select a tool, then immediately
+        // deselect it) fire fadeHero here, then hit the `else if` below
+        // synchronously, which un-hides the hero again because the phase is
+        // back to `browsing`. Without this guard, THIS callback still lands
+        // later and hides it a second time regardless — leaving the hero
+        // (the `<h1>`, the drop panel, "Choose files", all three trust
+        // claims) permanently hidden while the phase is `browsing`, with no
+        // `<h1>` anywhere on the page. Checking `wasCold` here means "hide
+        // it" only fires when we are actually STILL in the non-browsing
+        // state this fade was for.
+        if (!wasCold) dropzone.hero.hidden = true;
       });
     } else if (!wasCold && cold) {
       // `fadeHero` never writes an inline style — the whole visual side is
@@ -369,10 +390,23 @@ export function mountShell(root: HTMLElement): ShellHandle {
     // guard leaves it alone — `syncWork` puts the reason on the button.
     if (shownTool && !snap.selected) {
       clearSelection();
+      // F4 of the final-branch review: this is the one call site that used
+      // to leave the URL stale. `state.ts` prunes the selection here on its
+      // own — nothing routed through it — so this is NEVER a
+      // router-originated call the way `select()`'s two sites below can be;
+      // writing the URL back to the catalogue is always safe (and never a
+      // redundant echo) from here. Without this, "Remove all files" (which
+      // reaches this same branch — see `filesZone`'s `onClear`) left a stale
+      // `#/pdf-merge` behind: reload then restored a selection the user had
+      // just cleared, and the stale hash made `navigate()`'s own echo-guard
+      // (`location.hash === next`) swallow the NEXT genuine selection of
+      // that same tool.
+      router.navigate(null);
       announce('The selected tool no longer fits these files, so it was cleared.');
     }
 
     syncEditor();
+    retractStalePreset();
   }
 
   function clearSelection(): void {
@@ -387,6 +421,21 @@ export function mountShell(root: HTMLElement): ShellHandle {
     // Emits: `refreshTools` repaints the catalogue with nothing selected, and
     // `syncWork` is what hides the work zone's panel.
     state.selectTool(null);
+    // Deliberately does NOT touch the URL — unlike `refreshTools`'s own
+    // prune-teardown above, both of `select()`'s callers below already know
+    // whether writing `router.navigate(null)` is safe for THEIR context (a
+    // click always is; a route already AT that hash must not write again —
+    // see the `!opts.fromRouter` guards there). An earlier version of this
+    // fix called `router.navigate(null)` unconditionally from inside this
+    // function instead, on the theory that `navigate()`'s own
+    // `location.hash === next` check would make a router-originated call a
+    // safe no-op. It is not: a fresh page load's `location.hash` is the
+    // EMPTY STRING, not `'#/'`, so a Back navigation to the catalogue (whose
+    // hashchange already carries `fromRouter: true` into `select()`, which
+    // reaches this function) made that comparison fail and WRITE anyway —
+    // silently pushing a new history entry that broke the browser's own
+    // Forward stack (caught live by tests/e2e/tool-first.spec.ts's "gives a
+    // tool its own URL" test going red under this exact fix).
   }
 
   /**
@@ -451,6 +500,33 @@ export function mountShell(root: HTMLElement): ShellHandle {
   }
 
   /**
+   * A mounted preset's "because" caption describes the files AT MOUNT TIME
+   * (`lastFilesSignature`) — `mountOptions` computes it once and bakes it
+   * into the panel. An `editor` tool never goes stale on its own: `syncEditor`
+   * above remounts it wholesale, fresh preset included, the moment the files
+   * move. A plain schema-driven panel is deliberately never remounted just
+   * because the files changed (see `mountOptions`'s own comment — it would
+   * clobber a value the user has since typed over the preset), so nothing
+   * else ever corrects its caption. Left alone, that is how "Create ZIP"
+   * keeps reading "report" captioned "from the first file" after report.gz
+   * has been swapped for holiday-photos.pdf — a sentence the panel is still
+   * asserting about a file that is no longer there (spec Decision 3: "infer
+   * the obvious, show the reasoning" — the reasoning is the feature, so a
+   * false one has to go). Retracting the caption, never the value, is what
+   * keeps the panel honest without discarding what the user typed.
+   *
+   * Runs AFTER `syncEditor`: an editor tool that just remounted already has
+   * `lastFilesSignature` caught up (`mountOptions` sets it synchronously,
+   * before its own first `await`), so this sees no staleness left to act on
+   * for that case — it only ever does something for the non-editor panel
+   * `syncEditor` does not touch at all.
+   */
+  function retractStalePreset(): void {
+    if (!panel || filesSignature() === lastFilesSignature) return;
+    panel.retractPresetNotes();
+  }
+
+  /**
    * `opts.fromRouter` marks a call that came from `router`'s `onRoute` — `id`
    * came from reading (or being pushed to) the URL, not from a card click or
    * the palette. Two things follow:
@@ -474,6 +550,9 @@ export function mountShell(root: HTMLElement): ShellHandle {
     if (opts.fromRouter && id !== null && snap.selected?.id === id) return;
 
     // A click on the CURRENT tool deselects; a route never does (see above).
+    // This is a click, never a route (the guard above requires
+    // `!opts.fromRouter`), so writing the URL back to the catalogue is
+    // always safe here — never a redundant echo of a hash we are already at.
     if (!opts.fromRouter && id !== null && snap.selected?.id === id) {
       clearSelection();
       router.navigate(null);
@@ -490,9 +569,16 @@ export function mountShell(root: HTMLElement): ShellHandle {
       // helper forgets `shownTool` BEFORE telling the machine, which is the
       // only reason `refreshTools`'s prune check does not mistake this for a
       // files-no-longer-fit prune and fire that message instead (see the
-      // comment on `clearSelection`). Skipped entirely when nothing is
-      // selected, so a page load with an empty hash — the common case — does
-      // not force a needless extra render.
+      // comment on `clearSelection`).
+      //
+      // `router.navigate(null)` is gated on `!opts.fromRouter` — NOT called
+      // unconditionally the way F4's fix first tried it (see
+      // `clearSelection`'s own comment for why that broke Back/Forward): a
+      // route already delivered this exact "no tool" state, so writing the
+      // URL again here would be a second, unwanted history entry, not a
+      // no-op. Skipped entirely when nothing is selected either way, so a
+      // page load with an empty hash — the common case — does not force a
+      // needless extra render.
       if (!opts.fromRouter) router.navigate(null);
       if (snap.selected) clearSelection();
       return;
@@ -573,6 +659,13 @@ export function mountShell(root: HTMLElement): ShellHandle {
     }
 
     await workZone.results.show({ toolName: tool.name, inputs, result, error: failure });
+    // Spec §4.2 diagrams RUNNING -> RESULTS, and `results.show` above has
+    // just unhidden the tray unconditionally — on success, partial success,
+    // AND failure alike (a failure card is still a result, never a silent
+    // no-op — see results.ts's own header comment). `state.setResults` tells
+    // the machine the same thing, which is what makes `derivePhase` actually
+    // reach 'results' rather than leaving it a diagram nothing produces.
+    state.setResults(true);
 
     if (failure) {
       announce(
@@ -625,23 +718,48 @@ export function mountShell(root: HTMLElement): ShellHandle {
   }
 
   /**
-   * The palette has already confirmed `tool` fits (via `unavailableReason`)
-   * and has closed itself. Select it exactly like clicking its card would —
-   * unless it already IS the selection, in which case calling `select` again
-   * would TOGGLE it off (that codepath exists for the card's click-to-
-   * deselect behaviour, which the palette must not trigger).
+   * Whether the palette should actually REFUSE `tool` (stay open, explain,
+   * never call `onRun`) rather than treat a non-null `unavailableReason` as
+   * an invitation (select and close, same as a card click cold — see
+   * `palette.ts`'s own doc comment on `refuses`).
+   *
+   * This is the fix for the bug this comment block used to describe as
+   * already solved: commit()'s `if (reason) return` was unconditional on
+   * this branch's whole history — the WORDING became bucket-aware (Task 13),
+   * but nothing ever stopped it refusing a tool that merely needed more
+   * files, which is exactly the "wall instead of a door" behaviour the old
+   * version was already accused of. `typeMismatch` (state.ts) is the one
+   * part of `runBlockedReason`'s logic that is genuinely unfixable by
+   * bringing more files of the same kind; everything else — no files loaded
+   * at all, or a count shortfall — is not.
+   */
+  function refuses(tool: ToolDef): boolean {
+    return typeMismatch(tool, mimes());
+  }
+
+  /**
+   * The palette has already confirmed `tool` is not `refuses` and has closed
+   * itself. Select it exactly like clicking its card would — unless it
+   * already IS the selection, in which case calling `select` again would
+   * TOGGLE it off (that codepath exists for the card's click-to-deselect
+   * behaviour, which the palette must not trigger).
    *
    * A tool with a bespoke `editor` (crop, organize) cannot be run blind: its
    * options only mean something once the user has interacted with the board.
    * For those, the palette selects and stops — the same state a card click
-   * leaves it in.
+   * leaves it in. And now that `refuses` lets a genuinely BLOCKED tool (needs
+   * files it does not have yet) through to `select()` too, `start()` must
+   * not be called on one: `start()` itself trusts its caller to have already
+   * checked `runBlockedReason` — the enabled/disabled Run button is what
+   * enforces that everywhere else — so this is the one caller that has to
+   * check it explicitly.
    */
   async function runFromPalette(tool: ToolDef): Promise<void> {
     if (snap.phase === 'running') return;
     if (snap.selected?.id !== tool.id) {
       await select(tool.id);
     }
-    if (snap.selected?.id === tool.id && !tool.editor) {
+    if (snap.selected?.id === tool.id && !tool.editor && snap.runBlockedReason === null) {
       await start();
     }
   }
@@ -649,6 +767,7 @@ export function mountShell(root: HTMLElement): ShellHandle {
   const palette = createPalette({
     tools: TOOLS,
     unavailableReason,
+    refuses,
     announce,
     onRun: (tool) => void runFromPalette(tool),
   });

@@ -23,6 +23,21 @@ export type OptionsHandle = {
   readonly ready: Promise<void>;
   /** The current, correctly typed option values. */
   values(): Record<string, unknown>;
+  /**
+   * Remove any preset "because" captions still on screen — a value's
+   * CONTROL is left exactly as it is, only the sentence explaining where it
+   * came from goes away. For when the files that produced a preset no
+   * longer match what's loaded: rebuilding the panel would recompute a
+   * fresh preset, but it would just as readily clobber a value the user has
+   * since typed over it, which `shell.ts`'s `mountOptions` deliberately
+   * never does just because the file list moved. The caption is the one
+   * part of a stale preset that CAN go stale entirely on its own — spec
+   * Decision 3 ("infer the obvious, show the reasoning") makes the
+   * reasoning the whole point of showing it, so a false one has to be
+   * retracted rather than left on screen. See shell.ts's
+   * `retractStalePreset`.
+   */
+  retractPresetNotes(): void;
   /** Unmount: calls a mounted editor's teardown. */
   destroy(): void;
 };
@@ -165,6 +180,12 @@ export function renderOptions(init: RenderOptionsInit): OptionsHandle {
       el: root,
       ready,
       values: () => ({ ...values }),
+      // An editor never renders a preset "because" caption in the first
+      // place (see optionspanel.ts's own module comment: it derives its
+      // options from the files directly, and `shell.ts`'s `syncEditor`
+      // remounts it wholesale — fresh preset included — the moment the
+      // files change, rather than leaving a stale caption to retract).
+      retractPresetNotes(): void {},
       destroy(): void {
         destroyed = true;
         teardown?.();
@@ -182,6 +203,7 @@ export function renderOptions(init: RenderOptionsInit): OptionsHandle {
     root.append(el('p', 'options__note', 'This tool has no options — just run it.'));
     return {
       el: root,
+      retractPresetNotes(): void {},
       ready: Promise.resolve(),
       values: () => ({}),
       destroy(): void {
@@ -325,6 +347,25 @@ export function renderOptions(init: RenderOptionsInit): OptionsHandle {
     el: root,
     ready: Promise.resolve(),
     values: () => ({ ...values }),
+    retractPresetNotes(): void {
+      for (const note of root.querySelectorAll<HTMLElement>('.opt__because')) {
+        // The field's `aria-describedby` may reference OTHER ids too (a
+        // blocked-choice `.opt__reason` carries none, but a future field
+        // could combine several) — drop only this note's own token rather
+        // than the whole attribute.
+        const field = note.parentElement?.querySelector<HTMLElement>('input, select, textarea');
+        const described = field?.getAttribute('aria-describedby');
+        if (field && described) {
+          const kept = described
+            .split(' ')
+            .filter((token) => token !== note.id)
+            .join(' ');
+          if (kept) field.setAttribute('aria-describedby', kept);
+          else field.removeAttribute('aria-describedby');
+        }
+        note.remove();
+      }
+    },
     destroy(): void {
       destroyed = true;
       root.replaceChildren();
