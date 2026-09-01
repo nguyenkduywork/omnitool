@@ -607,6 +607,10 @@ html.is-dragging .hero__drop {
   background: var(--bg-3);
 }
 
+.tray__item[draggable='false'] {
+  cursor: default;
+}
+
 .tray__item.is-dragging {
   opacity: 0.45;
   cursor: grabbing;
@@ -704,12 +708,13 @@ html.is-dragging .hero__drop {
   background: var(--bg-1);
 }
 
-.tray__nudge:disabled {
+.tray__nudge:disabled,
+.tray__remove:disabled {
   opacity: 0.3;
   cursor: not-allowed;
 }
 
-.tray__remove:hover {
+.tray__remove:hover:not(:disabled) {
   color: var(--bad);
   background: var(--bad-quiet);
 }

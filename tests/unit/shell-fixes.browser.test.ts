@@ -1,7 +1,9 @@
 // tests/unit/shell-fixes.browser.test.ts — regression coverage for the
-// final whole-branch review's F2, F3, F4, F5 and F6 (see
-// .superpowers/sdd/2026-08-30-ui-overhaul/progress.md and
-// .superpowers/sdd/2026-08-30-ui-overhaul/final-fix-report.md).
+// final whole-branch review's F2, F3, F4, F5 and F6, plus NB2 from the
+// re-review of that fix wave (see
+// .superpowers/sdd/2026-08-30-ui-overhaul/progress.md,
+// .superpowers/sdd/2026-08-30-ui-overhaul/final-fix-report.md and
+// .superpowers/sdd/2026-08-30-ui-overhaul/nb-fix-report.md).
 //
 // Real headless Chromium, the real registry, real fixture bytes through the
 // app's own hidden <input> — same technique as shell.browser.test.ts, which
@@ -18,6 +20,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { mountShell, type ShellHandle } from '../../src/ui/shell';
+// NB2's assertions read real computed styles (opacity/cursor) off
+// `.tray__remove`/`.tray__nudge`, which only exist once app.css itself is
+// loaded — `shell.ts` never imports its own stylesheet (main.ts does that
+// for the real app), so this file pulls it in explicitly, scoped to this
+// test file alone.
+import '../../src/styles/app.css';
 
 /** A committed fixture, as a File the sniffer will recognise by its bytes. */
 async function fixture(name: string): Promise<File> {
@@ -313,5 +321,71 @@ describe('F6 — preset staleness retracts the caption, keeps the value', () => 
     // file even resembling "small" in the tray any more, so "from the first
     // file" would be a false sentence left on screen.
     expect(count('.run__options .opt__because')).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NB2 — a frozen tray control looks frozen, matching its `.tray__nudge`
+// sibling, instead of still lighting up as if live.
+// ---------------------------------------------------------------------------
+describe('NB2 — the frozen remove control reads as disabled, not merely inert', () => {
+  it('while a run is in flight, .tray__remove matches .tray__nudge\'s disabled opacity/cursor, and the row drops its grab cursor', async () => {
+    deliver([await fixture('small.pdf'), await fixture('small.pdf')]);
+    await until('the files to land', () => count('.tray__item') === 2);
+
+    one<HTMLButtonElement>('.toolcard[data-tool="pdf-merge"]').click();
+    await until('Run to take focus', () => document.activeElement === one('.run .btn--primary'));
+
+    const item = one<HTMLLIElement>('.tray__item');
+    const remove = item.querySelector<HTMLButtonElement>('.tray__remove');
+    if (!remove) throw new Error('the tray item rendered no remove button');
+    // nudges[1] is the "move later" arrow — for the FIRST of two items it is
+    // NOT disabled by position (only the "move earlier" arrow, nudges[0], is)
+    // so it is a genuine live-vs-frozen control to compare against, not one
+    // that was already disabled for an unrelated reason.
+    const nudgeDown = item.querySelectorAll<HTMLButtonElement>('.tray__nudge')[1];
+    if (!nudgeDown) throw new Error('the tray item rendered no second nudge button');
+
+    // Baseline, before the run: both controls are genuinely live.
+    expect(remove.disabled).toBe(false);
+    expect(nudgeDown.disabled).toBe(false);
+    expect(getComputedStyle(remove).cursor).toBe('pointer');
+    expect(item.getAttribute('draggable')).toBe('true');
+    expect(getComputedStyle(item).cursor).toBe('grab');
+
+    // `start()` runs synchronously up to its first `await` (the dynamic
+    // `import('../core/pipeline')`), and that synchronous prefix is what
+    // calls `setRunning(true)` — so immediately after `.click()` returns,
+    // the phase flip and the tray's freeze have both already happened, with
+    // no polling/race needed to observe the frozen instant.
+    one<HTMLButtonElement>('.run .btn--primary').click();
+    expect(one<HTMLElement>('#stage').dataset.phase).toBe('running');
+
+    // The bug: filetray.ts froze `remove.disabled` but app.css had no
+    // `.tray__remove:disabled` rule at all, so the button stayed at full
+    // opacity with a pointer cursor while `.tray__nudge:disabled` right next
+    // to it correctly dimmed — a control that LOOKS live but silently
+    // no-ops on click. Assert the two now genuinely match, not just that
+    // each individually has "some" disabled style.
+    expect(remove.disabled).toBe(true);
+    expect(nudgeDown.disabled).toBe(true);
+    const removeStyle = getComputedStyle(remove);
+    const nudgeStyle = getComputedStyle(nudgeDown);
+    expect(removeStyle.opacity).toBe(nudgeStyle.opacity);
+    expect(removeStyle.cursor).toBe(nudgeStyle.cursor);
+    expect(removeStyle.opacity).toBe('0.3');
+    expect(removeStyle.cursor).toBe('not-allowed');
+
+    // Drag is off too (`item.node.draggable = !frozen`) — the row must not
+    // keep advertising `cursor: grab` for an affordance that no longer works.
+    expect(item.getAttribute('draggable')).toBe('false');
+    expect(getComputedStyle(item).cursor).toBe('default');
+
+    // Let the run finish so `afterEach`'s `shell.destroy()` does not tear
+    // down a shell with a job still in flight.
+    await until(
+      "the phase to reach 'results'",
+      () => one<HTMLElement>('#stage').dataset.phase === 'results',
+    );
   });
 });
