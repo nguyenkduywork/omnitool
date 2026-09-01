@@ -157,6 +157,7 @@ export default tseslint.config(
                 'src/ui/state.ts must stay DOM-free — a relative import from this file can only resolve to another src/ui/* module, which is exactly the DOM the global ban above exists to keep out.',
             },
           ],
+          paths: [{ name: 'animejs', message: ANIME_MESSAGE }],
         },
       ],
     },
