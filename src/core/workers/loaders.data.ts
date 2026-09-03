@@ -18,4 +18,5 @@ export const DATA_LOADERS: Record<string, () => Promise<{ default: Op }>> = {
   'file-split': () => import('../../tools/data/file-split.op.js'),
   'file-join': () => import('../../tools/data/file-join.op.js'),
   'text-clean': () => import('../../tools/data/text-clean.op.js'),
+  'text-diff': () => import('../../tools/data/text-diff.op.js'),
 };

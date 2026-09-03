@@ -96,6 +96,64 @@ const BY_EXTENSION: Record<string, string> = {
   html: 'text/html',
   htm: 'text/html',
   xml: 'application/xml',
+  log: 'text/plain',
+  diff: 'text/plain',
+  patch: 'text/plain',
+  rst: 'text/plain',
+  tex: 'text/plain',
+
+  // Source code. Every one of these is signature-less text, so without an
+  // entry here a .ts file sniffs as application/octet-stream — "Unknown file"
+  // in the tray, and invisible to any tool that accepts text. They share ONE
+  // mime rather than getting a language each: nothing in the app cares which
+  // language it is, and a tool that wants "any source file" can then say so in
+  // a single pattern. It is deliberately NOT text/plain, so the tools that
+  // enumerate text/plain for a reason — Format JSON, CSV to JSON, Clean up
+  // text — do not start offering themselves for a Python file.
+  ts: 'text/x-source',
+  tsx: 'text/x-source',
+  js: 'text/x-source',
+  jsx: 'text/x-source',
+  mjs: 'text/x-source',
+  cjs: 'text/x-source',
+  py: 'text/x-source',
+  rb: 'text/x-source',
+  go: 'text/x-source',
+  rs: 'text/x-source',
+  java: 'text/x-source',
+  kt: 'text/x-source',
+  swift: 'text/x-source',
+  c: 'text/x-source',
+  h: 'text/x-source',
+  cc: 'text/x-source',
+  cpp: 'text/x-source',
+  hpp: 'text/x-source',
+  cs: 'text/x-source',
+  php: 'text/x-source',
+  sh: 'text/x-source',
+  bash: 'text/x-source',
+  zsh: 'text/x-source',
+  ps1: 'text/x-source',
+  sql: 'text/x-source',
+  yml: 'text/x-source',
+  yaml: 'text/x-source',
+  toml: 'text/x-source',
+  ini: 'text/x-source',
+  cfg: 'text/x-source',
+  conf: 'text/x-source',
+  lua: 'text/x-source',
+  pl: 'text/x-source',
+  scala: 'text/x-source',
+  dart: 'text/x-source',
+  vue: 'text/x-source',
+  svelte: 'text/x-source',
+  tf: 'text/x-source',
+  gradle: 'text/x-source',
+  graphql: 'text/x-source',
+  proto: 'text/x-source',
+  css: 'text/x-source',
+  scss: 'text/x-source',
+  less: 'text/x-source',
 };
 
 const LABELS: Record<string, string> = {
@@ -120,6 +178,7 @@ const LABELS: Record<string, string> = {
   'text/plain': 'Plain text',
   'text/markdown': 'Markdown text',
   'text/html': 'HTML document',
+  'text/x-source': 'Source code',
 };
 
 function extensionOf(filename: string): string {
