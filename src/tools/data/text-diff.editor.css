@@ -1,0 +1,349 @@
+/* src/tools/data/text-diff.editor.css — the comparison view for text-diff.
+ *
+ * Ships with the lazily-imported editor, so it costs the initial CSS budget
+ * nothing. Uses the app's own tokens, so both themes come for free.
+ *
+ * COLOUR IS NEVER THE ONLY SIGNAL. Every changed row carries a sign in its
+ * gutter (+ added, - removed, ~ rewritten) as well as a tint, so the view reads
+ * the same to someone who cannot separate the green from the red — and prints
+ * that way too. The tints are the app's existing --good/--bad "quiet" fills;
+ * only the two word-level marks needed tokens of their own, and both are
+ * checked by `npm run contrast` like every other pairing.
+ */
+
+.tdiff {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+.tdiff__head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.tdiff__files {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.tdiff__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tdiff__chip {
+  padding: 1px var(--s-2);
+  border-radius: var(--r-pill);
+  background: var(--bg-2);
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.tdiff__chip--add {
+  background: var(--good-quiet);
+  color: var(--good);
+}
+
+.tdiff__chip--del {
+  background: var(--bad-quiet);
+  color: var(--bad);
+}
+
+.tdiff__chip--rep {
+  background: var(--warn-quiet);
+  color: var(--warn);
+}
+
+/* -- controls ---------------------------------------------------------- */
+
+.tdiff__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-3);
+}
+
+.tdiff__seg {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--bg-2);
+}
+
+.tdiff__segbtn {
+  padding: 2px var(--s-2);
+  border: 0;
+  border-radius: var(--r-pill);
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.tdiff__segbtn[aria-pressed='true'] {
+  background: var(--accent-quiet);
+  color: var(--accent);
+}
+
+.tdiff__segbtn:focus-visible,
+.tdiff__btn:focus-visible,
+.tdiff__expand:focus-visible,
+.tdiff__view:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+.tdiff__check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.tdiff__btn {
+  padding: 2px var(--s-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  background: var(--bg-2);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.tdiff__btn:hover:not(:disabled) {
+  background: var(--bg-3);
+  color: var(--ink);
+}
+
+.tdiff__btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.tdiff__btn--icon {
+  min-width: 1.9rem;
+  text-align: center;
+}
+
+.tdiff__nav {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.tdiff__pos {
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Announced, never shown: the position readout is already on screen beside
+ * the buttons, but a status region is what makes stepping through changes
+ * audible to a screen reader. */
+.tdiff__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.tdiff__notices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.tdiff__notice {
+  margin: 0;
+  padding: var(--s-2) var(--s-3);
+  border-left: 3px solid var(--line-2);
+  border-radius: var(--r-sm);
+  background: var(--bg-2);
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-snug);
+}
+
+.tdiff__notice--warn {
+  border-left-color: var(--warn);
+}
+
+/* -- the comparison ---------------------------------------------------- */
+
+.tdiff__view {
+  max-height: min(58vh, 34rem);
+  overflow: auto;
+  /* Load-bearing, not an optimisation. Without it the side-by-side grid's
+   * min-content width propagates all the way up through `.run` and pushes the
+   * whole work zone — and with it the page — wider than its column, which is
+   * how a diff viewer ends up giving the document a horizontal scrollbar.
+   * `contain: inline-size` makes this box's own width independent of what is
+   * inside it, which is exactly what a scroller with a fixed max-height wants:
+   * the columns below can then ask for the room they need and get it as
+   * scroll, here, instead of as layout, everywhere. */
+  contain: inline-size;
+  overscroll-behavior: contain;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg-1);
+}
+
+.tdiff__grid {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.55;
+  tab-size: 2;
+}
+
+/* Side by side deliberately has NO minimum width. Forcing one looks reasonable
+ * — two readable columns or nothing — but what it actually produces in a
+ * 22rem work zone is a view scrolled to the left half, showing every removal
+ * and no addition, with the other side parked off-screen behind a scrollbar
+ * nobody knew to look for. Sharing whatever width there is keeps both sides
+ * visible at once, which is the entire reason to pick this layout. Unified is
+ * the default precisely because it reads well in a narrow column, so this one
+ * is only ever an explicit choice.
+ */
+
+.tdiff__row {
+  display: grid;
+  align-items: start;
+}
+
+/* Both layouts use the same gutter width, and it is deliberately tight: in a
+ * 22rem column every pixel spent on line numbers is a pixel of code that wraps
+ * instead. Four digits still fit, which is more lines than anyone compares by
+ * eye. */
+.tdiff__grid--split .tdiff__row {
+  grid-template-columns: 2.75rem minmax(0, 1fr) 2.75rem minmax(0, 1fr);
+}
+
+.tdiff__grid--unified .tdiff__row {
+  grid-template-columns: 2.75rem 2.75rem minmax(0, 1fr);
+}
+
+.tdiff__gutter {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.25em;
+  padding: 0 var(--s-1);
+  background: var(--bg-2);
+  border-right: 1px solid var(--line);
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.tdiff__sign {
+  width: 0.8em;
+  text-align: center;
+}
+
+.tdiff__code {
+  padding: 0 var(--s-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+}
+
+/* Row tints. The "absent" side of a one-sided row is filled, not left blank,
+ * so the eye reads it as "nothing here" rather than "unchanged". */
+.tdiff__grid--split .tdiff__row--delete .tdiff__code--a,
+.tdiff__grid--split .tdiff__row--replace .tdiff__code--a,
+.tdiff__grid--unified .tdiff__row--delete .tdiff__code,
+.tdiff__grid--unified .tdiff__row--replace .tdiff__code {
+  background: var(--bad-quiet);
+}
+
+.tdiff__grid--split .tdiff__row--insert .tdiff__code--b,
+.tdiff__grid--split .tdiff__row--replace .tdiff__code--b,
+.tdiff__grid--unified .tdiff__row--insert .tdiff__code {
+  background: var(--good-quiet);
+}
+
+.tdiff__grid--split .tdiff__row--delete .tdiff__code--b,
+.tdiff__grid--split .tdiff__row--insert .tdiff__code--a {
+  background: var(--bg-2);
+}
+
+.tdiff__mark {
+  border-radius: 2px;
+  padding: 0 1px;
+  color: var(--ink);
+}
+
+.tdiff__code--a .tdiff__mark,
+.tdiff__grid--unified .tdiff__row--replace .tdiff__mark {
+  background: var(--diff-del-mark);
+}
+
+.tdiff__code--b .tdiff__mark,
+.tdiff__grid--unified .tdiff__row--insert .tdiff__mark {
+  background: var(--diff-add-mark);
+}
+
+.tdiff__row.is-current .tdiff__gutter {
+  box-shadow: inset 2px 0 0 0 var(--accent);
+}
+
+.tdiff__row--gap {
+  display: block;
+}
+
+.tdiff__expand {
+  width: 100%;
+  padding: 2px;
+  border: 0;
+  border-block: 1px solid var(--line);
+  background: var(--bg-2);
+  color: var(--ink-3);
+  font: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.tdiff__expand:hover {
+  color: var(--ink-2);
+  background: var(--bg-3);
+}
+
+.tdiff__export {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+}
+
+.tdiff__select {
+  flex: 1 1 12rem;
+  min-width: 0;
+  padding: var(--s-1) var(--s-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  background: var(--bg-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-xs);
+}

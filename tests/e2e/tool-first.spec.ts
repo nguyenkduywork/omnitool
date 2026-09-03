@@ -24,7 +24,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('shows every tool before any file is dropped', async ({ page }) => {
-  await expect(page.locator('.toolcard')).toHaveCount(29);
+  await expect(page.locator('.toolcard')).toHaveCount(30);
   await expect(page.locator('.toolcard[data-tool="qr-generate"]')).toBeVisible();
 });
 
@@ -89,7 +89,7 @@ test('gives a tool its own URL, and keeps back inside the app', async ({ page })
 
   await page.goBack();
   await expect(page).toHaveURL(/#\/$|\/$/);
-  await expect(page.locator('.toolcard')).toHaveCount(29);
+  await expect(page.locator('.toolcard')).toHaveCount(30);
 
   await page.goForward();
   await expect(page.locator('.toolcard[data-tool="qr-generate"]')).toHaveAttribute(
@@ -150,7 +150,7 @@ test('falls back to the catalogue for an unknown tool id, and corrects the addre
   // that stays live either way.
   await page.goto('/#/not-a-real-tool');
   await page.reload();
-  await expect(page.locator('.toolcard')).toHaveCount(29);
+  await expect(page.locator('.toolcard')).toHaveCount(30);
 
   // M2: the SCREEN already fell back correctly (the assertion above), but
   // before the fix the bogus hash stayed in the address bar forever — a

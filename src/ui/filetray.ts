@@ -60,7 +60,11 @@ const REORDER_MIME = 'application/x-omnitool-reorder';
 /** A short badge for a file with no thumbnail: 'PDF', 'ZIP', 'CSV', ... */
 function badgeFor(entry: TrayEntry): string {
   const subtype = entry.type.slice(entry.type.indexOf('/') + 1).replace(/^x-|\+.*$/g, '');
-  if (entry.type === 'application/octet-stream') {
+  // Two types carry no useful name of their own: an unknown file has none, and
+  // `text/x-source` deliberately covers every language at once (see
+  // core/format.ts). For both, the extension is the most specific thing there
+  // is — 'TS' and 'PY' beat 'FILE' and 'SOUR'.
+  if (entry.type === 'application/octet-stream' || entry.type === 'text/x-source') {
     const dot = entry.file.name.lastIndexOf('.');
     const ext = dot > 0 ? entry.file.name.slice(dot + 1) : '';
     return (ext || 'file').slice(0, 4).toUpperCase();

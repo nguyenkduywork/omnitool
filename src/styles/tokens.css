@@ -70,6 +70,15 @@
   --bad: #ff9b93;
   --bad-quiet: #351a19;
 
+  /* -- the two word-level diff marks ----------------------------------- */
+  /* The only colours the comparison view could not take from the state ramp
+   * above: a rewritten line needs its changed TOKENS to stand out from the
+   * row tint they sit inside, which means a second, stronger step of the same
+   * two hues. Both carry --ink at body size, so both are in the contrast
+   * gate like everything else. */
+  --diff-add-mark: #1f5a37;
+  --diff-del-mark: #6d2b28;
+
   /* -- elevation ------------------------------------------------------ */
   --shadow-1: 0 1px 2px rgb(0 0 0 / 0.5);
   --shadow-2: 0 2px 4px rgb(0 0 0 / 0.4), 0 8px 20px -8px rgb(0 0 0 / 0.6);
@@ -160,6 +169,8 @@
     --warn-quiet: #fbf0d8;
     --bad: #b02a20;
     --bad-quiet: #fbe6e4;
+    --diff-add-mark: #b7e7c6;
+    --diff-del-mark: #f7c3bf;
     --shadow-1: 0 1px 2px rgb(16 24 32 / 0.07);
     --shadow-2: 0 1px 2px rgb(16 24 32 / 0.06), 0 8px 20px -10px rgb(16 24 32 / 0.18);
     --shadow-3: 0 28px 60px -22px rgb(16 24 32 / 0.3);
@@ -196,6 +207,8 @@
   --warn-quiet: #fbf0d8;
   --bad: #b02a20;
   --bad-quiet: #fbe6e4;
+  --diff-add-mark: #b7e7c6;
+  --diff-del-mark: #f7c3bf;
   --shadow-1: 0 1px 2px rgb(16 24 32 / 0.07);
   --shadow-2: 0 1px 2px rgb(16 24 32 / 0.06), 0 8px 20px -10px rgb(16 24 32 / 0.18);
   --shadow-3: 0 28px 60px -22px rgb(16 24 32 / 0.3);

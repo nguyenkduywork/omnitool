@@ -5,8 +5,8 @@
 ![Node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen)
 ![TypeScript](https://img.shields.io/badge/typescript-strict-3178c6)
 
-Everyday file tools — merge PDFs, convert and resize images, zip, hash, and reformat
-data — that run entirely inside your browser tab.
+Everyday file tools — merge PDFs, convert and resize images, zip, hash, compare two
+versions of a file, and reformat data — that run entirely inside your browser tab.
 
 **No file you open ever leaves your device.** There is no server. Every operation runs
 in a Web Worker on your own machine, and the app makes no network calls at runtime: no
@@ -87,6 +87,7 @@ AA contrast in both light and dark themes — covered by tests, not just intent.
 | Format JSON | Pretty-print or minify |
 | Generate QR code | Turn text or a URL into a QR code, PNG or SVG |
 | Clean up text | Sort, deduplicate, trim, and normalise the lines of a text file |
+| Compare text | Show what changed between two versions of a text or code file, down to the word |
 
 ## Run it locally
 
@@ -166,6 +167,26 @@ for open engineering items.
   with your name printed on page one still has your name on page one.
 - **A watermark is a label, not a lock.** It paints text into the pixels, so it can be
   cropped off or painted over. It marks provenance, it does not protect anything.
+- **Compare text is a line diff with word-level highlighting, not a merge tool.** It
+  shows what changed; it never writes either file back. Four things are worth knowing
+  before you trust a comparison. It does not track a moved block: a function that moved
+  to the other end of the file reads as a deletion in one place and an insertion in
+  another, because nothing here looks for the same lines twice. Two files whose lines
+  all match but whose line endings or byte-order mark differ are reported as *identical
+  lines, different endings* rather than as a change on every line — the honest reading,
+  but not a byte comparison; use Hash files for that. "Ignore whitespace changes"
+  trims each line and collapses runs of spaces and tabs, so it forgives reindentation
+  and trailing space, but two lines that differ by a space inside a string literal are
+  still different. And when two files share almost no structure, alignment is abandoned
+  rather than guessed: you get one "replaced wholesale" region, said out loud in the
+  view and in the report.
+
+- **The live comparison is capped, and says when it stops.** Above 3 million characters
+  across the two files it does not run on screen at all — the comparison happens on the
+  main thread so it can be interactive, and a file pair that large would freeze the tab
+  — and above 4,000 rows the view shows the first 4,000. Running the tool builds the
+  full report either way.
+
 - **Clean up text sorts in code-unit order, not your locale's** — uppercase before
   lowercase, digits before letters, like `sort` under `LC_ALL=C`. It reads UTF-8 only.
 - **Extract images gets the pictures out, not every picture.** JPEG streams come out

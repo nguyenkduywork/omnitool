@@ -312,4 +312,50 @@ export const DATA_TOOLS: ToolDef[] = [
     },
     load: () => import('../tools/data/text-clean.op.js'),
   },
+  {
+    id: 'text-diff',
+    name: 'Compare text',
+    blurb: 'See exactly what changed between two versions of a text or code file',
+    group: 'data',
+    kind: 'transform',
+    // `text/*` covers plain text, Markdown, CSV/TSV, HTML and the
+    // `text/x-source` that format.ts assigns to source files — the two things
+    // people actually compare. JSON and XML are named because they sit under
+    // `application/`.
+    accepts: ['text/*', 'application/json', 'application/xml'],
+    // Exactly two: a comparison of three files is three comparisons, and the
+    // file tray's order is what decides which one is the OLD side.
+    minInputs: 2,
+    maxInputs: 2,
+    // The declarative fallback, and the source of the op's defaults. The
+    // `editor` below supersedes it in the UI because the whole value of this
+    // tool is SEEING the differences before deciding whether to export them,
+    // and a flat schema has nowhere to put a diff.
+    options: {
+      format: {
+        kind: 'select',
+        label: 'Export as',
+        choices: [
+          { value: 'html', label: 'Side-by-side report (HTML)' },
+          { value: 'unified', label: 'Patch file (.diff)' },
+        ],
+        default: 'html',
+      },
+      scope: {
+        kind: 'select',
+        label: 'Include',
+        choices: [
+          { value: 'changes', label: 'Changes and their context' },
+          { value: 'whole', label: 'The whole file' },
+        ],
+        default: 'changes',
+      },
+      context: { kind: 'number', label: 'Context lines', min: 0, max: 100, step: 1, default: 3 },
+      ignoreWhitespace: { kind: 'toggle', label: 'Ignore whitespace changes', default: false },
+      ignoreCase: { kind: 'toggle', label: 'Ignore case', default: false },
+      swap: { kind: 'toggle', label: 'Compare the second file against the first', default: false },
+    },
+    editor: () => import('../tools/data/text-diff.editor'),
+    load: () => import('../tools/data/text-diff.op.js'),
+  },
   ];

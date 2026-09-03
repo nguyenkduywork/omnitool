@@ -5,8 +5,8 @@ import { applicabilityFor, countReason, typesMatch } from '../../src/core/format
 import type { ToolDef } from '../../src/types';
 
 describe('every tool declares a kind', () => {
-  it('assigns exactly one kind to each of the 29 tools', () => {
-    expect(TOOLS).toHaveLength(29);
+  it('assigns exactly one kind to each of the 30 tools', () => {
+    expect(TOOLS).toHaveLength(30);
     for (const tool of TOOLS) {
       expect(['transform', 'generate', 'utility']).toContain(tool.kind);
     }
@@ -47,8 +47,8 @@ describe('every tool declares a kind', () => {
     expect(both).toEqual([]);
   });
 
-  it('leaves the remaining 21 as transforms, including the extractors', () => {
-    expect(TOOLS.filter((t) => t.kind === 'transform')).toHaveLength(21);
+  it('leaves the remaining 22 as transforms, including the extractors', () => {
+    expect(TOOLS.filter((t) => t.kind === 'transform')).toHaveLength(22);
     expect(getTool('zip-extract')?.kind).toBe('transform');
     expect(getTool('tar-extract')?.kind).toBe('transform');
   });

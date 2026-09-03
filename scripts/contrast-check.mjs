@@ -61,6 +61,13 @@ const PAIRS = [
   ['--warn', '--bg-1', 'warning text'],
   ['--bad', '--bad-quiet', 'failure card, size-increase chip'],
   ['--bad', '--bg-1', 'error text'],
+  // The comparison view (tools/data/text-diff.editor.css) prints file CONTENT
+  // on the quiet state fills and on the two diff marks, which no other screen
+  // does — every other use of those fills carries only its own state colour.
+  ['--ink', '--good-quiet', 'an added line in the comparison view'],
+  ['--ink', '--bad-quiet', 'a removed line in the comparison view'],
+  ['--ink', '--diff-add-mark', 'a changed word on the added side'],
+  ['--ink', '--diff-del-mark', 'a changed word on the removed side'],
 ];
 
 /** Pull the custom properties out of one `{ … }` block, by its opening line. */
