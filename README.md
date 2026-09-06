@@ -87,7 +87,7 @@ AA contrast in both light and dark themes — covered by tests, not just intent.
 | Format JSON | Pretty-print or minify |
 | Generate QR code | Turn text or a URL into a QR code, PNG or SVG |
 | Clean up text | Sort, deduplicate, trim, and normalise the lines of a text file |
-| Compare text | Show what changed between two versions of a text or code file, down to the word |
+| Compare text | Show what changed between two versions of a text or code file, down to the word — from two files, or from text you paste |
 
 ## Run it locally
 
@@ -179,7 +179,10 @@ for open engineering items.
   and trailing space, but two lines that differ by a space inside a string literal are
   still different. And when two files share almost no structure, alignment is abandoned
   rather than guessed: you get one "replaced wholesale" region, said out loud in the
-  view and in the report. Word-level highlighting also stops at 2,000 characters in a
+  view and in the report. Either side can be pasted instead of loaded — two boxes when
+  you have no files, one box beside the file when you have one — and pasted text is
+  held in the page like everything else here: it is never uploaded, and it is gone when
+  you close the tab. Word-level highlighting also stops at 2,000 characters in a
   line — two different minified bundles are one enormous line each, where pinpointing
   "what moved" costs minutes and means nothing; those lines are marked as changed
   without highlighting inside them.

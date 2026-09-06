@@ -283,7 +283,7 @@ export function createCatalogue(init: {
         // announced where nobody reads it.
         count.textContent =
           `${init.tools.length} tools, in three families. Pick one, or drop files to narrow ` +
-          `the list. Most tools need files; the QR code generator does not.`;
+          `the list. Most tools need files; the QR code generator and Compare text do not.`;
         renderGroups(init.tools);
         blockedWrap.hidden = true;
         utilityWrap.hidden = true;

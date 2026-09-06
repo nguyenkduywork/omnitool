@@ -90,7 +90,45 @@ test('a third file takes the tool away, and says why', async ({ page }) => {
 
   const card = page.locator('[data-tool="text-diff"]');
   await expect(card).toHaveClass(/toolcard--blocked/);
-  await expect(card).toContainText('exactly 2 files');
+  await expect(card).toContainText('at most 2 files');
+});
+
+// Two snippets on a clipboard is the commonest comparison there is, and the
+// tool used to demand you save them as files first.
+test('opens from cold with two boxes, and compares what you paste', async ({ page }) => {
+  // No files at all: straight to the tool from the catalogue.
+  await page.locator('[data-tool="text-diff"]').click();
+  await expect(page.locator('.tdiff__box')).toHaveCount(2, { timeout: 15_000 });
+  await expect(page.locator('.tdiff__notices')).toContainText('Paste text into both boxes');
+
+  await page.locator('.tdiff__box').nth(0).fill(OLD);
+  await page.locator('.tdiff__box').nth(1).fill(NEW);
+
+  await expect(page.locator('.tdiff__grid')).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator('.tdiff__mark').first()).toHaveText('* 2');
+  await expect(page.locator('.tdiff__stats')).toContainText('1 changed');
+
+  await page.getByRole('button', { name: 'Run' }).click();
+  const output = page.locator('.card--output');
+  await expect(output).toHaveCount(1, { timeout: 30_000 });
+  // Nothing was named, so neither is the report.
+  await expect(output).toContainText('comparison.html');
+});
+
+test('pairs one loaded file with one box', async ({ page }) => {
+  await page.locator('input[type="file"]').setInputFiles([source('old.ts', OLD)]);
+  await page.locator('[data-tool="text-diff"]').click();
+
+  await expect(page.locator('.tdiff__box')).toHaveCount(1, { timeout: 15_000 });
+  await expect(page.locator('.tdiff__from')).toContainText('old.ts');
+
+  await page.locator('.tdiff__box').fill(NEW);
+  await expect(page.locator('.tdiff__grid')).toBeVisible({ timeout: 10_000 });
+
+  await page.getByRole('button', { name: 'Run' }).click();
+  await expect(page.locator('.card--output')).toContainText('old-vs-pasted.html', {
+    timeout: 30_000,
+  });
 });
 
 test('side by side stays inside its column, and shows both sides at once', async ({ page }) => {
@@ -183,6 +221,27 @@ test.describe('on a phone', () => {
     const row = page.locator('.tdiff__row--replace').first();
     await expect(row.locator('.tdiff__code--a')).toBeInViewport();
     await expect(row.locator('.tdiff__code--b')).toBeInViewport();
+  });
+
+  test('pasting works, and the boxes do not trigger an iOS zoom', async ({ page }) => {
+    await page.locator('[data-tool="text-diff"]').click();
+    await expect(page.locator('.tdiff__box')).toHaveCount(2, { timeout: 15_000 });
+
+    // Below 16px, focusing a textarea zooms the viewport out from under you —
+    // mid-paste, on the one control you are actually typing into.
+    const fontSize = await page.evaluate(() =>
+      Number.parseFloat(getComputedStyle(document.querySelector('.tdiff__box') as Element).fontSize),
+    );
+    expect(fontSize).toBeGreaterThanOrEqual(16);
+
+    await page.locator('.tdiff__box').nth(0).fill(OLD);
+    await page.locator('.tdiff__box').nth(1).fill(NEW);
+    await expect(page.locator('.tdiff__grid')).toBeVisible({ timeout: 10_000 });
+
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(0);
   });
 
   test('the whole comparison is reachable by touch, including the run', async ({ page }) => {

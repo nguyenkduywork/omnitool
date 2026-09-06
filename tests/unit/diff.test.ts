@@ -712,6 +712,78 @@ describe('text-diff (the op)', () => {
     expect(whole).toContain('line 5<');
   });
 
+  // ---- pasted sides -------------------------------------------------------
+
+  it('compares two pasted snippets with no files at all', async () => {
+    const ctx = makeCtx();
+    const [output] = await textDiff(
+      [],
+      { format: 'unified', leftText: OLD, rightText: NEW },
+      ctx,
+    );
+
+    // No filenames to build one from, so the output says what it is.
+    expect(output?.name).toBe('comparison.diff');
+    const patch = decode(output?.buffer as ArrayBuffer);
+    expect(patch).toContain('--- a/original text');
+    expect(patch).toContain('+++ b/changed text');
+    expect(patch).toContain('+  return items.length * 2;');
+  });
+
+  it('compares one file against one pasted snippet', async () => {
+    const [output] = await textDiff(
+      [textInput('old.js', OLD)],
+      { format: 'unified', rightText: NEW },
+      makeCtx(),
+    );
+
+    // The file's name is the half worth recognising in a downloads folder.
+    expect(output?.name).toBe('old-vs-pasted.diff');
+    const patch = decode(output?.buffer as ArrayBuffer);
+    expect(patch).toContain('--- a/old.js');
+    expect(patch).toContain('+++ b/changed text');
+    expect(patch).toContain('-  return items.length;');
+  });
+
+  it('takes the file as the second side when that is the slot it is in', async () => {
+    // A file in the tray is always the FIRST side, so this is the swapped
+    // arrangement — the one the editor's "Swap sides" button produces.
+    const [output] = await textDiff(
+      [textInput('new.js', NEW)],
+      { format: 'unified', rightText: OLD, swap: true },
+      makeCtx(),
+    );
+
+    expect(output?.name).toBe('pasted-vs-new.diff');
+    const patch = decode(output?.buffer as ArrayBuffer);
+    expect(patch).toContain('--- a/changed text');
+    expect(patch).toContain('+++ b/new.js');
+  });
+
+  it('treats a side pasted as empty as a real, empty side', async () => {
+    // Everything added, not "nothing to do": pasting into one box only is a
+    // legitimate comparison against nothing.
+    const [output] = await textDiff([], { format: 'unified', rightText: 'a\nb\n' }, makeCtx());
+    const patch = decode(output?.buffer as ArrayBuffer);
+    expect(patch).toContain('@@ -0,0 +1,2 @@');
+    expect(patch).toContain('+a');
+  });
+
+  it('refuses two empty boxes rather than reporting them identical', async () => {
+    // "0 added, 0 removed, 100% unchanged" is a true answer to a question
+    // nobody asked, and it looks exactly like a broken tool.
+    const error = await expectOpError(
+      textDiff([], { leftText: '', rightText: '' }, makeCtx()),
+      'InvalidOptions',
+    );
+    expect(error.message).toContain('paste text into both boxes');
+    expect(error.file).toBeUndefined();
+  });
+
+  it('rejects pasted text that is not text', async () => {
+    await expectOpError(textDiff([], { leftText: 42, rightText: 'x' }, makeCtx()), 'InvalidOptions');
+  });
+
   // ---- 2. a typed error ---------------------------------------------------
 
   it('refuses a file that is not text, naming it', async () => {
@@ -730,11 +802,10 @@ describe('text-diff (the op)', () => {
 
   it('refuses a count it cannot compare, without naming a file', async () => {
     // No file name: naming one tells runner.worker.ts to drop that input and
-    // retry, and retrying with one file left would fail exactly the same way.
-    const error = await expectOpError(
-      textDiff([textInput('only.txt', 'hello\n')], {}, makeCtx()),
-      'InvalidOptions',
-    );
+    // retry, and retrying with two files left would fail exactly the same way.
+    const three = ['a', 'b', 'c'].map((name) => textInput(`${name}.txt`, 'hello\n'));
+    const error = await expectOpError(textDiff(three, {}, makeCtx()), 'InvalidOptions');
+    expect(error.message).toContain('at most 2');
     expect(error.file).toBeUndefined();
   });
 
@@ -797,7 +868,9 @@ describe('text-diff (the op)', () => {
   it('is registered, loadable by the worker, and takes exactly two files', () => {
     const tool = DATA_TOOLS.find((entry) => entry.id === 'text-diff');
     expect(tool).toBeDefined();
-    expect(tool?.minInputs).toBe(2);
+    // Zero, so the tool opens from cold with two boxes to paste into; two,
+    // because a comparison of three files is three comparisons.
+    expect(tool?.minInputs).toBe(0);
     expect(tool?.maxInputs).toBe(2);
     expect(tool?.editor).toBeTypeOf('function');
     // The worker's static id -> loader map is what actually runs the op; a
@@ -815,6 +888,8 @@ describe('text-diff (the op)', () => {
       'format',
       'ignoreCase',
       'ignoreWhitespace',
+      'leftText',
+      'rightText',
       'scope',
       'swap',
     ]);

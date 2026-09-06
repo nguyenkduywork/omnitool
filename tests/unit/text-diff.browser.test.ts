@@ -39,11 +39,17 @@ async function mount(
 ): Promise<void> {
   teardown = editor(host, files, onChange);
   await vi.waitFor(() => {
-    expect(host.querySelector('.tdiff__grid, .tdiff__notice--warn')).not.toBeNull();
+    expect(host.querySelector('.tdiff__grid, .tdiff__notice')).not.toBeNull();
   });
 }
 
 const rows = (): HTMLElement[] => [...host.querySelectorAll<HTMLElement>('.tdiff__row')];
+
+/** Set a box's value the way a paste does: assign, then fire `input`. */
+function type(box: HTMLTextAreaElement, value: string): void {
+  box.value = value;
+  box.dispatchEvent(new Event('input', { bubbles: true }));
+}
 const text = (selector: string): string => host.querySelector(selector)?.textContent ?? '';
 
 describe('the comparison view', () => {
@@ -186,6 +192,8 @@ describe('the comparison view', () => {
       'format',
       'ignoreCase',
       'ignoreWhitespace',
+      'leftText',
+      'rightText',
       'scope',
       'swap',
     ]);
@@ -267,6 +275,58 @@ describe('the comparison view', () => {
       // Clamped back to "no position yet", which is the other honest answer.
       expect(after).toMatch(/changes$/);
     }
+  });
+
+  it('offers two boxes to paste into when there are no files', async () => {
+    await mount([]);
+
+    const boxes = host.querySelectorAll<HTMLTextAreaElement>('.tdiff__box');
+    expect(boxes).toHaveLength(2);
+    expect(boxes[0]?.placeholder).toContain('original');
+    expect(boxes[1]?.placeholder).toContain('changed');
+    // Every box is labelled, and by a real <label for>, not a nearby div.
+    for (const box of boxes) {
+      expect(host.querySelector(`label[for="${box.id}"]`)).not.toBeNull();
+    }
+    expect(text('.tdiff__notices')).toContain('Paste text into both boxes');
+    // Controls for a comparison that does not exist yet are noise.
+    expect(host.querySelector<HTMLElement>('.tdiff__controls')?.hidden).toBe(true);
+  });
+
+  it('compares what you type, without pressing anything', async () => {
+    const onChange = vi.fn();
+    await mount([], onChange);
+
+    const boxes = host.querySelectorAll<HTMLTextAreaElement>('.tdiff__box');
+    type(boxes[0] as HTMLTextAreaElement, OLD);
+    type(boxes[1] as HTMLTextAreaElement, NEW);
+
+    await vi.waitFor(() => expect(host.querySelector('.tdiff__grid')).not.toBeNull());
+    expect(host.querySelector<HTMLElement>('.tdiff__controls')?.hidden).toBe(false);
+    expect([...host.querySelectorAll('.tdiff__mark')].map((n) => n.textContent)).toEqual([' * 2']);
+    // The op is handed the text, so Run exports exactly what is on screen.
+    expect(onChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ leftText: OLD, rightText: NEW }),
+    );
+  });
+
+  it('pairs a single file with one box, and says which side is which', async () => {
+    await mount([file('old.js', OLD)]);
+
+    const boxes = host.querySelectorAll<HTMLTextAreaElement>('.tdiff__box');
+    expect(boxes).toHaveLength(1);
+    expect(text('.tdiff__from')).toContain('old.js');
+    await vi.waitFor(() => expect(text('.tdiff__notices')).toContain('Paste the other side'));
+
+    type(boxes[0] as HTMLTextAreaElement, NEW);
+    await vi.waitFor(() => expect(host.querySelector('.tdiff__grid')).not.toBeNull());
+    expect(text('.tdiff__stats')).toContain('1 changed');
+  });
+
+  it('shows no boxes at all once both sides are files', async () => {
+    await mount([file('a.txt', OLD), file('b.txt', NEW)]);
+    expect(host.querySelectorAll('.tdiff__box')).toHaveLength(0);
+    expect(host.querySelectorAll('.tdiff__panes > *')).toHaveLength(0);
   });
 
   it('leaves nothing behind when it is torn down', async () => {

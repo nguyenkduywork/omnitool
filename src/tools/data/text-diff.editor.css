@@ -64,6 +64,70 @@
   color: var(--warn);
 }
 
+/* -- the paste boxes --------------------------------------------------- */
+
+.tdiff__panes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.tdiff__pane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.tdiff__panelabel {
+  margin: 0;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+/* The side that came from the tray, in the slot its box would have taken —
+ * dashed rather than filled, so it reads as "already provided" next to a box
+ * still waiting for something. */
+.tdiff__from {
+  margin: 0;
+  padding: var(--s-2);
+  border: 1px dashed var(--line-2);
+  border-radius: var(--r-sm);
+  background: var(--bg-2);
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+
+/* Deliberately short. The box is where text goes IN; the comparison below is
+ * where you read it, and it shows every line in full — so a tall box buys a
+ * second look at what you just pasted at the cost of pushing the answer off
+ * the screen. `resize: vertical` is there for the times that trade is wrong. */
+.tdiff__box {
+  width: 100%;
+  min-height: 4.5rem;
+  padding: var(--s-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  background: var(--bg-2);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  tab-size: 2;
+  resize: vertical;
+}
+
+.tdiff__box::placeholder {
+  color: var(--ink-3);
+}
+
+.tdiff__box:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
 /* -- controls ---------------------------------------------------------- */
 
 .tdiff__controls {
@@ -390,7 +454,10 @@
     height: 1.15rem;
   }
 
-  .tdiff__select {
+  .tdiff__select,
+  /* Same reason as the select, and it matters more here: this is the control
+   * you are actually typing into, so a zoom on focus lands mid-paste. */
+  .tdiff__box {
     font-size: 1rem;
   }
 }
