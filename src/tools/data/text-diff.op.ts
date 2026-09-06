@@ -27,6 +27,7 @@ import {
   diffWords,
   toRows,
   toUnified,
+  type DiffOptions,
   type DiffResult,
   type DiffRow,
   type GapRow,
@@ -164,7 +165,7 @@ function reportHtml(
   result: DiffResult,
   rows: readonly (DiffRow | GapRow)[],
   names: { a: string; b: string },
-  options: { ignoreWhitespace: boolean; ignoreCase: boolean },
+  options: DiffOptions & { ignoreWhitespace: boolean; ignoreCase: boolean },
 ): string {
   const { stats } = result;
   const body: string[] = [];
@@ -288,19 +289,31 @@ const textDiff: Op = async (inputs, options, ctx): Promise<OpOutput[]> => {
   const effectiveContext = scope === 'whole' ? Number.POSITIVE_INFINITY : context;
   const name = `${stem(left.name)}-vs-${stem(right.name)}`;
 
+  // A patch is hunks or it is nothing, so two files whose LINES all match
+  // produce a headers-only patch — which reads as "no differences" even when
+  // the bytes differ. Saying which of the two it was costs one comment line,
+  // and a preamble before the `---` header is exactly where patch and git
+  // apply expect prose they should skip.
+  const preamble = !result.identicalLines
+    ? ''
+    : result.onlyEndingsDiffer
+      ? '# Every line is identical. These files differ only in their line endings or byte-order mark.\n'
+      : '# No differences: these two files have identical contents.\n';
+
   const output: OpOutput =
     format === 'unified'
       ? {
           name: `${name}.diff`,
           type: 'text/plain',
           buffer: toArrayBuffer(
-            toUnified(result, {
-              aName: left.name,
-              bName: right.name,
-              // A patch with unbounded context is a patch of the whole file,
-              // which is what `scope: whole` asks for on this side too.
-              context: scope === 'whole' ? Number.MAX_SAFE_INTEGER : context,
-            }),
+            preamble +
+              toUnified(result, {
+                aName: left.name,
+                bName: right.name,
+                // A patch with unbounded context is a patch of the whole file,
+                // which is what `scope: whole` asks for on this side too.
+                context: scope === 'whole' ? Number.MAX_SAFE_INTEGER : context,
+              }),
           ),
         }
       : {
@@ -311,7 +324,7 @@ const textDiff: Op = async (inputs, options, ctx): Promise<OpOutput[]> => {
               result,
               collapseRows(toRows(result.blocks), effectiveContext),
               { a: left.name, b: right.name },
-              { ignoreWhitespace, ignoreCase },
+              { ignoreWhitespace, ignoreCase, check: () => stop(ctx.signal) },
             ),
           ),
         };

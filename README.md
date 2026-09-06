@@ -179,7 +179,10 @@ for open engineering items.
   and trailing space, but two lines that differ by a space inside a string literal are
   still different. And when two files share almost no structure, alignment is abandoned
   rather than guessed: you get one "replaced wholesale" region, said out loud in the
-  view and in the report.
+  view and in the report. Word-level highlighting also stops at 2,000 characters in a
+  line — two different minified bundles are one enormous line each, where pinpointing
+  "what moved" costs minutes and means nothing; those lines are marked as changed
+  without highlighting inside them.
 
 - **The live comparison is capped, and says when it stops.** Above 3 million characters
   across the two files it does not run on screen at all — the comparison happens on the

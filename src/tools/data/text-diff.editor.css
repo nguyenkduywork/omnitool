@@ -347,3 +347,50 @@
   font: inherit;
   font-size: var(--fs-xs);
 }
+
+/* -- touch ------------------------------------------------------------- */
+
+/* Sized against the app's own controls rather than this stylesheet's taste:
+ * `.btn--sm` elsewhere is 31px tall and `.btn` is 39px. The floor here is the
+ * former, which also clears WCAG 2.2's 24px target minimum (SC 2.5.8) that the
+ * dense original did not; a COARSE pointer gets the full 39px, because a thumb
+ * is not a mouse and this is the one screen where the controls sit directly
+ * above the thing you are reading.
+ *
+ * The select goes to 16px type there for a different reason: below 16px, iOS
+ * Safari zooms the whole page when a form control takes focus, and the reader
+ * loses their place in the comparison to a viewport jump they did not ask for.
+ */
+.tdiff__segbtn,
+.tdiff__check,
+.tdiff__btn {
+  min-height: 1.9375rem;
+}
+
+.tdiff__expand {
+  min-height: 1.5rem;
+}
+
+@media (pointer: coarse) {
+  .tdiff__segbtn,
+  .tdiff__check,
+  .tdiff__btn,
+  .tdiff__select,
+  .tdiff__expand {
+    min-height: 2.4375rem;
+  }
+
+  .tdiff__segbtn,
+  .tdiff__btn {
+    padding-inline: var(--s-3);
+  }
+
+  .tdiff__check input {
+    width: 1.15rem;
+    height: 1.15rem;
+  }
+
+  .tdiff__select {
+    font-size: 1rem;
+  }
+}

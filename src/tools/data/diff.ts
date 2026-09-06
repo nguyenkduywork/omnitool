@@ -629,6 +629,24 @@ export function diffLines(aText: string, bText: string, options: DiffOptions = {
 // ---------------------------------------------------------------------------
 
 /**
+ * The longest line either side may be before the word-level diff gives up.
+ *
+ * Word diffing is Myers over TOKENS, so its cost is quadratic in the length of
+ * the line when the two lines share little — and "a line" is not always short.
+ * A minified .css or .js file is one line of a hundred kilobytes, and comparing
+ * two different builds of one is precisely the "shares little" case: measured,
+ * 30 KB took 3.4s, 60 KB took 12s and 125 KB took 48s. In the editor that runs
+ * on the main thread, so it is not slow, it is a frozen tab.
+ *
+ * 2,000 characters is far beyond any line a person reads across — the longest
+ * lines in this repository are a quarter of it — so nothing legible loses its
+ * highlighting, and anything longer is reported as a changed line without
+ * pinpointing what inside it moved. Which is the honest answer: on two
+ * different minified bundles there is no "what moved" worth pointing at.
+ */
+const MAX_WORD_LINE = 2000;
+
+/**
  * Tokens a programmer would recognise: an identifier, a number, a run of
  * whitespace, or a single other character. Splitting on characters instead
  * would highlight the three letters `for` shares with `format` and call it a
@@ -677,14 +695,22 @@ export function diffWords(
     return { a: [{ text: aLine, changed: false }], b: [{ text: bLine, changed: false }] };
   }
 
+  // Too long to pick apart (see MAX_WORD_LINE). No marks rather than one mark
+  // over everything: the row is already shown as a replacement, and a solid
+  // block of highlight would claim a precision this did not compute.
+  if (aLine.length > MAX_WORD_LINE || bLine.length > MAX_WORD_LINE) {
+    return { a: [{ text: aLine, changed: false }], b: [{ text: bLine, changed: false }] };
+  }
+
   const aTokens = tokenize(aLine);
   const bTokens = tokenize(bLine);
   const { aIds, bIds } = intern(aTokens, bTokens, options);
 
-  // A line is short, so a plain Myers is right here: there are no unique-line
-  // anchors to find inside one line, and the cap can be generous.
+  // A plain Myers is right here: there are no unique-line anchors to find
+  // inside a single line. The same cap and the same cancellation hook as the
+  // line-level walk, because a bounded line can still be a tangled one.
   const ops =
-    myers(aIds, bIds, 0, aIds.length, 0, bIds.length, aTokens.length + bTokens.length, undefined) ??
+    myers(aIds, bIds, 0, aIds.length, 0, bIds.length, MYERS_CAP, options.check) ??
     [
       { kind: 'delete' as const, a: 0, b: 0, count: aTokens.length },
       { kind: 'insert' as const, a: 0, b: 0, count: bTokens.length },
@@ -722,6 +748,9 @@ export type UnifiedOptions = {
  * hunk headers counted in 1-based lines and the `\ No newline at end of file`
  * marker where a side does not end with one.
  */
+/** The marker `patch` and `git apply` read for a missing final newline. */
+const NO_NEWLINE = '\\ No newline at end of file';
+
 export function toUnified(result: DiffResult, options: UnifiedOptions): string {
   const rows = toRows(result.blocks);
   const context = Math.max(0, Math.min(options.context, rows.length));
@@ -777,23 +806,39 @@ export function toUnified(result: DiffResult, options: UnifiedOptions): string {
       if (row.a !== null) aSeen++;
       if (row.b !== null) bSeen++;
       if (row.kind === 'equal') {
-        body.push(` ${line(row.a, 'a')}`);
-        if (noNewline('a', row.a)) body.push('\\ No newline at end of file');
+        const aTail = noNewline('a', row.a);
+        const bTail = noNewline('b', row.b);
+        if (aTail === bTail) {
+          body.push(` ${line(row.a, 'a')}`);
+          if (aTail) body.push(NO_NEWLINE);
+        } else {
+          // Same text, different terminator — and a CONTEXT line cannot say
+          // that: it stands for both sides at once, so its single `\ No
+          // newline` marker would have to be true of both. Emitting it as a
+          // removal and an addition is how git writes this too, and it is the
+          // only form that applies to the right result: a patch claiming a
+          // trailing newline the postimage does not have is a patch that
+          // rebuilds the wrong file.
+          body.push(`-${line(row.a, 'a')}`);
+          if (aTail) body.push(NO_NEWLINE);
+          body.push(`+${line(row.b, 'b')}`);
+          if (bTail) body.push(NO_NEWLINE);
+        }
         aCount++;
         bCount++;
       } else if (row.kind === 'delete') {
         body.push(`-${line(row.a, 'a')}`);
-        if (noNewline('a', row.a)) body.push('\\ No newline at end of file');
+        if (noNewline('a', row.a)) body.push(NO_NEWLINE);
         aCount++;
       } else if (row.kind === 'insert') {
         body.push(`+${line(row.b, 'b')}`);
-        if (noNewline('b', row.b)) body.push('\\ No newline at end of file');
+        if (noNewline('b', row.b)) body.push(NO_NEWLINE);
         bCount++;
       } else {
         body.push(`-${line(row.a, 'a')}`);
-        if (noNewline('a', row.a)) body.push('\\ No newline at end of file');
+        if (noNewline('a', row.a)) body.push(NO_NEWLINE);
         body.push(`+${line(row.b, 'b')}`);
-        if (noNewline('b', row.b)) body.push('\\ No newline at end of file');
+        if (noNewline('b', row.b)) body.push(NO_NEWLINE);
         aCount++;
         bCount++;
       }
