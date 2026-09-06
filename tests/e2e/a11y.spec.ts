@@ -333,7 +333,7 @@ test.describe('landmarks', () => {
     // as the app sat in its own default state.
     await expect(cold.getByText('Pick a tool to get started.')).toBeVisible();
     await expect(
-      cold.getByText('Some tools need files; the QR code generator does not.'),
+      cold.getByText('Some tools need files; the QR code generator and Compare text do not.'),
     ).toBeVisible();
 
     // WARM: picking the cold-reachable QR generator (Task 10's second

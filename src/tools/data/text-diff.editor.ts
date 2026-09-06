@@ -27,6 +27,11 @@
 //     painting every line red the way a byte comparison would.
 //   - Marks every changed row with a sign (+, -, ~) as well as a colour, so
 //     nothing here depends on being able to tell green from red.
+//   - Takes PASTED text for any side that has no file. Two snippets on a
+//     clipboard is the commonest comparison there is, and saving them into two
+//     files first is busywork; one file against one pasted snippet works too,
+//     which is what you want when the thing you are checking a file against
+//     came out of a chat window.
 //
 // This runs on the MAIN THREAD, which is a deliberate trade: the diff has to be
 // synchronous to be interactive, and an editor cannot reach into core/'s worker
@@ -54,6 +59,13 @@ const LIVE_LIMIT = 3_000_000;
 /** Rendered rows above which the view stops and says how many it is showing. */
 const MAX_ROWS = 4000;
 
+/** How long to wait after the last keystroke before re-comparing. Long enough
+ *  that typing never competes with the diff, short enough to feel live. */
+const TYPING_PAUSE = 150;
+
+/** What a side is called when it was pasted rather than loaded. */
+const PASTED = ['original text', 'changed text'] as const;
+
 type View = 'split' | 'unified';
 type Scope = '3' | '10' | 'whole';
 
@@ -64,7 +76,12 @@ const editor: ToolEditor = (mount, inputs, onChange) => {
   let disposed = false;
 
   // ---- state ---------------------------------------------------------------
-  let texts: { a: string; b: string } | null = null;
+  /** Per slot: the file's text once read, or null when this side is pasted. */
+  const fileTexts: [string | null, string | null] = [null, null];
+  /** Per slot: what has been pasted into it. Unused when the slot has a file. */
+  const pasted: [string, string] = ['', ''];
+  let reading = Boolean(inputs[0] || inputs[1]);
+  let blocked: 'empty' | 'too-large' | null = null;
   let failure: string | null = null;
   let result: DiffResult | null = null;
   // Unified by default: the work zone is a ~22rem column, and a side-by-side
@@ -81,11 +98,13 @@ const editor: ToolEditor = (mount, inputs, onChange) => {
   let hunkAnchors: HTMLElement[] = [];
   let currentHunk = -1;
 
-  const names = (): { a: string; b: string } => {
-    const first = inputs[0]?.name ?? 'first file';
-    const second = inputs[1]?.name ?? 'second file';
-    return swapped ? { a: second, b: first } : { a: first, b: second };
-  };
+  const sideName = (slot: 0 | 1): string => inputs[slot]?.name ?? PASTED[slot];
+  const names = (): { a: string; b: string } =>
+    swapped
+      ? { a: sideName(1), b: sideName(0) }
+      : { a: sideName(0), b: sideName(1) };
+  /** True when nothing was loaded at all, so the labels already say which is which. */
+  const allPasted = !inputs[0] && !inputs[1];
 
   // ---- shell ---------------------------------------------------------------
   mount.replaceChildren();
@@ -108,6 +127,64 @@ const editor: ToolEditor = (mount, inputs, onChange) => {
   const title = make('p', 'tdiff__files');
   const stats = make('ul', 'tdiff__stats');
   head.append(title, stats);
+
+  // ---- the paste boxes -------------------------------------------------------
+  //
+  // Built ONCE, and deliberately outside everything `render` replaces: a box
+  // rebuilt on each keystroke is a box that loses the caret on each keystroke.
+  // Which slots get a box is fixed for this editor's lifetime, because the
+  // shell remounts the whole editor when the file list changes (shell.ts's
+  // `syncEditor`) — so "has a file" cannot go stale underneath this.
+  const panes = make('div', 'tdiff__panes');
+  let pending: ReturnType<typeof setTimeout> | null = null;
+
+  function schedule(): void {
+    if (pending !== null) clearTimeout(pending);
+    pending = setTimeout(() => {
+      pending = null;
+      recompute();
+    }, TYPING_PAUSE);
+  }
+
+  if (!inputs[0] || !inputs[1]) {
+    const unique = Math.random().toString(36).slice(2, 8);
+    for (const slot of [0, 1] as const) {
+      const pane = make('div', 'tdiff__pane');
+      const file = inputs[slot];
+      const heading = slot === 0 ? 'Original' : 'Changed';
+
+      if (file) {
+        // This side came from the tray. Say so, or a lone box beside a file
+        // leaves you guessing which half you are supposed to be filling in.
+        pane.append(
+          make('p', 'tdiff__panelabel', heading),
+          make('p', 'tdiff__from', `${file.name} — from your files`),
+        );
+      } else {
+        const id = `tdiff-${unique}-${slot}`;
+        const label = make('label', 'tdiff__panelabel', heading);
+        label.htmlFor = id;
+        const box = make('textarea', 'tdiff__box');
+        box.id = id;
+        // Three rows, not six: the stylesheet's min-height is the real floor,
+        // and `rows` would silently overrule it on the one screen where the
+        // space costs most.
+        box.rows = 3;
+        box.spellcheck = false;
+        box.placeholder =
+          slot === 0 ? 'Paste the original here' : 'Paste the changed version here';
+        box.addEventListener('input', () => {
+          pasted[slot] = box.value;
+          // The options go out immediately so Run always exports exactly what
+          // is in the boxes; only the redraw waits for a pause in the typing.
+          emit();
+          schedule();
+        });
+        pane.append(label, box);
+      }
+      panes.append(pane);
+    }
+  }
 
   // ---- controls ------------------------------------------------------------
   const controls = make('div', 'tdiff__controls');
@@ -241,7 +318,7 @@ const editor: ToolEditor = (mount, inputs, onChange) => {
   });
   exportRow.append(exportLabel, exportSelect);
 
-  root.append(head, controls, nav, notices, viewport, exportRow);
+  root.append(head, panes, controls, nav, notices, viewport, exportRow);
   mount.append(root);
 
   // ---- options -------------------------------------------------------------
@@ -253,6 +330,8 @@ const editor: ToolEditor = (mount, inputs, onChange) => {
       ignoreWhitespace,
       ignoreCase,
       swap: swapped,
+      leftText: pasted[0],
+      rightText: pasted[1],
     });
   }
   emit();
@@ -264,37 +343,64 @@ const editor: ToolEditor = (mount, inputs, onChange) => {
   }
 
   async function read(): Promise<void> {
-    const [first, second] = inputs;
-    if (!first || !second) {
-      failure = 'Drop two text or source files to compare them.';
-      render();
+    if (!reading) {
+      // Nothing loaded: every side is a paste box, and there is nothing to
+      // wait for before showing them.
+      recompute();
       return;
     }
     try {
       const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
-      const buffers = await Promise.all([first.arrayBuffer(), second.arrayBuffer()]);
-      if (disposed) return;
-      texts = { a: decoder.decode(buffers[0]), b: decoder.decode(buffers[1]) };
+      for (const slot of [0, 1] as const) {
+        const file = inputs[slot];
+        if (!file) continue;
+        const buffer = await file.arrayBuffer();
+        if (disposed) return;
+        fileTexts[slot] = decoder.decode(buffer);
+      }
     } catch {
       if (disposed) return;
+      reading = false;
       failure = 'One of these files is not valid UTF-8 text, so there is nothing to compare.';
       render();
       return;
     }
+    reading = false;
     recompute();
   }
 
-  function recompute(): void {
-    if (disposed || !texts) return;
-    const left = swapped ? texts.b : texts.a;
-    const right = swapped ? texts.a : texts.b;
+  /** Each side is its file's text if it has one, and what was pasted if not. */
+  function sideText(slot: 0 | 1): string {
+    return fileTexts[slot] ?? pasted[slot];
+  }
 
-    if (left.length + right.length > LIVE_LIMIT) {
+  function recompute(): void {
+    if (disposed) return;
+    const first = sideText(0);
+    const second = sideText(1);
+    const left = swapped ? second : first;
+    const right = swapped ? first : second;
+
+    // A side counts as filled if it has a FILE — even an empty one, which is a
+    // real thing to compare against — or if something has been pasted into it.
+    // Until both are, there is nothing to show: two empty boxes would report
+    // "100% unchanged", a true answer to a question nobody asked, and a file
+    // beside an untouched box would report the whole file deleted before the
+    // reader had typed a character.
+    const filled = (slot: 0 | 1): boolean => Boolean(inputs[slot]) || pasted[slot] !== '';
+    if (!filled(0) || !filled(1)) {
+      blocked = 'empty';
       result = null;
-      failure = null;
       render();
       return;
     }
+    if (left.length + right.length > LIVE_LIMIT) {
+      blocked = 'too-large';
+      result = null;
+      render();
+      return;
+    }
+    blocked = null;
     result = diffLines(left, right, { ignoreWhitespace, ignoreCase });
     currentHunk = -1;
     render();
@@ -367,6 +473,15 @@ const editor: ToolEditor = (mount, inputs, onChange) => {
   function render(): void {
     if (disposed) return;
 
+    // With nothing loaded, the two box labels already say which side is which,
+    // so a line repeating it in different words is noise.
+    title.hidden = allPasted && !swapped;
+    // Layout, context, ignore rules and change-stepping are all controls FOR a
+    // comparison. Before there is one they are a wall of inert chrome between
+    // the boxes and the one sentence saying what to do with them.
+    const idle = failure !== null || reading || blocked === 'empty';
+    controls.hidden = idle;
+    nav.hidden = idle;
     title.textContent = `${names().a} → ${names().b}`;
     stats.replaceChildren();
     notices.replaceChildren();
@@ -378,15 +493,26 @@ const editor: ToolEditor = (mount, inputs, onChange) => {
       updateNav();
       return;
     }
-    if (!texts) {
+    if (reading) {
       notices.append(noticeOf('Reading the files…'));
       updateNav();
       return;
     }
-    if (!result) {
+    if (blocked === 'empty') {
       notices.append(
         noticeOf(
-          'These files are too large to compare on screen without blocking the page. Run the tool to build the full report instead.',
+          allPasted
+            ? 'Paste text into both boxes to compare them. Nothing you paste leaves this tab.'
+            : 'Paste the other side into the box to compare it against your file.',
+        ),
+      );
+      updateNav();
+      return;
+    }
+    if (blocked === 'too-large' || !result) {
+      notices.append(
+        noticeOf(
+          'These are too large to compare on screen without blocking the page. Run the tool to build the full report instead.',
           'warn',
         ),
       );
@@ -405,16 +531,16 @@ const editor: ToolEditor = (mount, inputs, onChange) => {
     if (result.identicalLines && result.onlyEndingsDiffer) {
       notices.append(
         noticeOf(
-          'Every line is identical — these files differ only in their line endings or byte-order mark.',
+          'Every line is identical — the two sides differ only in their line endings or byte-order mark.',
         ),
       );
     } else if (result.identicalLines) {
-      notices.append(noticeOf('No differences: these two files have identical contents.'));
+      notices.append(noticeOf('No differences: the two sides have identical contents.'));
     }
     if (result.degraded) {
       notices.append(
         noticeOf(
-          'These files share too little structure to align line by line, so one region is shown as a wholesale replacement.',
+          'These two share too little structure to align line by line, so one region is shown as a wholesale replacement.',
           'warn',
         ),
       );
@@ -551,6 +677,8 @@ const editor: ToolEditor = (mount, inputs, onChange) => {
 
   return () => {
     disposed = true;
+    if (pending !== null) clearTimeout(pending);
+    pending = null;
     mount.replaceChildren();
   };
 };

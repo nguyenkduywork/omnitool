@@ -323,9 +323,17 @@ export const DATA_TOOLS: ToolDef[] = [
     // people actually compare. JSON and XML are named because they sit under
     // `application/`.
     accepts: ['text/*', 'application/json', 'application/xml'],
-    // Exactly two: a comparison of three files is three comparisons, and the
+    // At most two — a comparison of three files is three comparisons, and the
     // file tray's order is what decides which one is the OLD side.
-    minInputs: 2,
+    //
+    // But the floor is ZERO, because the commonest comparison of all is
+    // between two things that are not files yet: two snippets on a clipboard,
+    // an error message before and after, a config someone pasted into chat.
+    // Making those into files first is busywork the tool can simply not
+    // demand. Any side without a file gets a box to paste into instead, and
+    // the op reads that side from its options — so one file and one pasted
+    // snippet is a comparison too.
+    minInputs: 0,
     maxInputs: 2,
     // The declarative fallback, and the source of the op's defaults. The
     // `editor` below supersedes it in the UI because the whole value of this
@@ -353,7 +361,13 @@ export const DATA_TOOLS: ToolDef[] = [
       context: { kind: 'number', label: 'Context lines', min: 0, max: 100, step: 1, default: 3 },
       ignoreWhitespace: { kind: 'toggle', label: 'Ignore whitespace changes', default: false },
       ignoreCase: { kind: 'toggle', label: 'Ignore case', default: false },
-      swap: { kind: 'toggle', label: 'Compare the second file against the first', default: false },
+      swap: { kind: 'toggle', label: 'Compare the second side against the first', default: false },
+      // The pasted halves. Declared here because this schema is the op's
+      // documented contract even though the editor supersedes it on screen —
+      // it renders these two as real multi-line boxes, which is why they are
+      // not much to look at as flat `text` entries.
+      leftText: { kind: 'text', label: 'Original text', placeholder: 'Paste the original', default: '' },
+      rightText: { kind: 'text', label: 'Changed text', placeholder: 'Paste the changed version', default: '' },
     },
     editor: () => import('../tools/data/text-diff.editor'),
     load: () => import('../tools/data/text-diff.op.js'),

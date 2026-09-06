@@ -70,7 +70,7 @@ export function createWorkZone(init: { onRun: () => void; onCancel: () => void }
   const empty = el('div', 'zone__empty');
   empty.append(
     el('p', undefined, 'Pick a tool to get started.'),
-    el('p', 'zone__hint', 'Some tools need files; the QR code generator does not.'),
+    el('p', 'zone__hint', 'Some tools need files; the QR code generator and Compare text do not.'),
   );
 
   // The one thing this zone shows or hides besides `empty` above.

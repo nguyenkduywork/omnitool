@@ -14,6 +14,13 @@
 //              hunks numbered from 1, and `\ No newline at end of file` where
 //              a side lacks one. `patch -p1` and `git apply` read it.
 //
+// EITHER SIDE MAY BE PASTED RATHER THAN LOADED. `inputs` carries 0, 1 or 2
+// files, and whichever side has no file is read from `leftText`/`rightText`
+// instead — the same options the editor's paste boxes emit. That is why the
+// registry entry's floor is 0 rather than 2: comparing two snippets nobody
+// saved is the commonest comparison there is, and demanding two files for it
+// is busywork.
+//
 // BINARY INPUT IS REFUSED BY NAME. A file that is not valid UTF-8 raises
 // UnsupportedFormat carrying the filename — not CorruptFile, which would claim
 // something about the file that is not true: a PNG is a perfectly good PNG,
@@ -59,6 +66,14 @@ function validateBool(raw: unknown, def: boolean, label: string): boolean {
   const value = raw === undefined ? def : raw;
   if (typeof value !== 'boolean') {
     throw new OpError('InvalidOptions', `${label} must be a boolean, got ${JSON.stringify(raw)}`);
+  }
+  return value;
+}
+
+function validateText(raw: unknown, label: string): string {
+  const value = raw === undefined ? '' : raw;
+  if (typeof value !== 'string') {
+    throw new OpError('InvalidOptions', `${label} must be a string, got ${JSON.stringify(raw)}`);
   }
   return value;
 }
@@ -202,14 +217,14 @@ function reportHtml(
   const notes: string[] = [];
   if (result.identicalLines && result.onlyEndingsDiffer) {
     notes.push(
-      'Every line is identical. The files differ only in their line endings or byte-order mark.',
+      'Every line is identical. The two sides differ only in their line endings or byte-order mark.',
     );
   } else if (result.identicalLines) {
-    notes.push('No differences: these two files have identical contents.');
+    notes.push('No differences: the two sides have identical contents.');
   }
   if (result.degraded) {
     notes.push(
-      'These files share too little structure to align line by line, so one region is reported as a wholesale replacement.',
+      'These two share too little structure to align line by line, so one region is reported as a wholesale replacement.',
     );
   }
   if (options.ignoreWhitespace) notes.push('Whitespace changes were ignored.');
@@ -250,11 +265,16 @@ ${body.join('\n')}
 // The op
 // ---------------------------------------------------------------------------
 
+/** What a side is called when it was pasted rather than loaded. */
+const PASTED = { left: 'original text', right: 'changed text' } as const;
+
+type Side = { name: string; text: string; fromFile: boolean };
+
 const textDiff: Op = async (inputs, options, ctx): Promise<OpOutput[]> => {
-  if (inputs.length !== 2) {
+  if (inputs.length > 2) {
     throw new OpError(
       'InvalidOptions',
-      `Compare text needs exactly 2 files — it was given ${inputs.length}.`,
+      `Compare text takes at most 2 files — it was given ${inputs.length}.`,
     );
   }
 
@@ -266,19 +286,36 @@ const textDiff: Op = async (inputs, options, ctx): Promise<OpOutput[]> => {
   // The editor's "Swap sides" button. It has to reach the op, or the report you
   // export would be the reverse of the one you were just looking at.
   const swap = validateBool(options.swap, false, 'swap');
+  const leftText = validateText(options.leftText, 'leftText');
+  const rightText = validateText(options.rightText, 'rightText');
 
-  const [first, second] = inputs as [OpInput, OpInput];
+  // A side is a file if one was loaded for it, and the pasted text otherwise.
+  const sideOf = (input: OpInput | undefined, pasted: string, fallbackName: string): Side =>
+    input
+      ? { name: input.name, text: decodeText(input), fromFile: true }
+      : { name: fallbackName, text: pasted, fromFile: false };
+
+  stop(ctx.signal);
+  const first = sideOf(inputs[0], leftText, PASTED.left);
+  ctx.onProgress(0.25);
+  stop(ctx.signal);
+  const second = sideOf(inputs[1], rightText, PASTED.right);
+  ctx.onProgress(0.5);
+
+  // Two empty boxes and no files is not a comparison of two empty files — it
+  // is someone who has not pasted anything yet, and reporting "identical" at
+  // them would be a true sentence about nothing.
+  if (!first.fromFile && !second.fromFile && first.text === '' && second.text === '') {
+    throw new OpError(
+      'InvalidOptions',
+      'Nothing to compare yet — paste text into both boxes, or load two files.',
+    );
+  }
+
   const left = swap ? second : first;
   const right = swap ? first : second;
 
-  stop(ctx.signal);
-  const aText = decodeText(left);
-  ctx.onProgress(0.25);
-  stop(ctx.signal);
-  const bText = decodeText(right);
-  ctx.onProgress(0.5);
-
-  const result = diffLines(aText, bText, {
+  const result = diffLines(left.text, right.text, {
     ignoreWhitespace,
     ignoreCase,
     check: () => stop(ctx.signal),
@@ -287,7 +324,13 @@ const textDiff: Op = async (inputs, options, ctx): Promise<OpOutput[]> => {
   stop(ctx.signal);
 
   const effectiveContext = scope === 'whole' ? Number.POSITIVE_INFINITY : context;
-  const name = `${stem(left.name)}-vs-${stem(right.name)}`;
+  // Two pasted snippets have no names to build one from, so the output is
+  // simply what it is. A mixed comparison keeps the file's name, which is the
+  // half worth recognising in a downloads folder.
+  const name =
+    !left.fromFile && !right.fromFile
+      ? 'comparison'
+      : `${left.fromFile ? stem(left.name) : 'pasted'}-vs-${right.fromFile ? stem(right.name) : 'pasted'}`;
 
   // A patch is hunks or it is nothing, so two files whose LINES all match
   // produce a headers-only patch — which reads as "no differences" even when
@@ -297,8 +340,8 @@ const textDiff: Op = async (inputs, options, ctx): Promise<OpOutput[]> => {
   const preamble = !result.identicalLines
     ? ''
     : result.onlyEndingsDiffer
-      ? '# Every line is identical. These files differ only in their line endings or byte-order mark.\n'
-      : '# No differences: these two files have identical contents.\n';
+      ? '# Every line is identical. The two sides differ only in their line endings or byte-order mark.\n'
+      : '# No differences: the two sides have identical contents.\n';
 
   const output: OpOutput =
     format === 'unified'
