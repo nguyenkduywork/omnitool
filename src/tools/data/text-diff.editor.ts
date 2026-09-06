@@ -145,6 +145,18 @@ const editor: ToolEditor = (mount, inputs, onChange) => {
     return wrap;
   }
 
+  // Sits beside the layout control rather than on a row of its own: both are
+  // about how the two sides are presented, and on a 375px screen every row of
+  // chrome above the comparison is a row of the comparison you cannot see.
+  const swap = make('button', 'tdiff__btn', 'Swap sides');
+  swap.type = 'button';
+  swap.addEventListener('click', () => {
+    swapped = !swapped;
+    expanded.clear();
+    emit();
+    recompute();
+  });
+
   controls.append(
     segmented(
       'Layout',
@@ -158,6 +170,7 @@ const editor: ToolEditor = (mount, inputs, onChange) => {
         render();
       },
     ),
+    swap,
     segmented(
       'How much to show',
       [
@@ -183,16 +196,6 @@ const editor: ToolEditor = (mount, inputs, onChange) => {
       recompute();
     }),
   );
-
-  const swap = make('button', 'tdiff__btn', 'Swap sides');
-  swap.type = 'button';
-  swap.addEventListener('click', () => {
-    swapped = !swapped;
-    expanded.clear();
-    emit();
-    recompute();
-  });
-  controls.append(swap);
 
   // ---- change navigation ---------------------------------------------------
   const nav = make('div', 'tdiff__nav');
@@ -494,9 +497,14 @@ const editor: ToolEditor = (mount, inputs, onChange) => {
     viewport.append(table);
 
     // Re-mark where the reader had got to. Opening a gap, switching layout or
-    // changing how much context is shown all rebuild these rows, but none of
-    // them adds or removes a CHANGE — so the position through the changes
-    // survives, and only the highlight has to be put back.
+    // changing how much context is shown all rebuild these rows, and normally
+    // none of them adds or removes a CHANGE — so the position survives and
+    // only the highlight has to be put back.
+    //
+    // Except at the MAX_ROWS ceiling, where it can: opening a gap pushes rows
+    // past the cut, and the changes beyond it stop being anchors. Clamping
+    // rather than trusting the index is what stops "Change 500 of 470".
+    if (currentHunk >= hunkAnchors.length) currentHunk = -1;
     const current = hunkAnchors[currentHunk];
     if (current) current.classList.add('is-current');
 

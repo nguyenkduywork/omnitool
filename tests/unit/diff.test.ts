@@ -370,6 +370,42 @@ describe('diffWords', () => {
     }
   });
 
+  it('gives up on a line too long to pick apart, instead of hanging', () => {
+    // Two different minified bundles: one line each, sharing almost nothing.
+    // Unguarded this is quadratic — 30 KB measured at 3.4s, 125 KB at 48s —
+    // and in the editor it runs on the main thread, so "slow" means "frozen".
+    const a = Array.from({ length: 3000 }, (_, i) => `.a${i}{color:#00${i % 10};margin:${i}px}`).join('');
+    const b = Array.from({ length: 3000 }, (_, i) => `.zz${i * 7}{padding:${i}em;border:0}`).join('');
+    expect(a.length).toBeGreaterThan(2000);
+
+    const started = Date.now();
+    const { a: left, b: right } = diffWords(a, b);
+    expect(Date.now() - started).toBeLessThan(1000);
+
+    // Still reassembled exactly, and claiming no precision it did not compute.
+    expect(left.map((s) => s.text).join('')).toBe(a);
+    expect(right.map((s) => s.text).join('')).toBe(b);
+    expect(left.some((s) => s.changed)).toBe(false);
+    expect(right.some((s) => s.changed)).toBe(false);
+  });
+
+  it('still marks a long-but-readable line', () => {
+    const a = `const x = [${Array.from({ length: 120 }, (_, i) => i).join(', ')}];`;
+    const b = a.replace('42,', '4242,');
+    expect(a.length).toBeGreaterThan(400);
+    expect(diffWords(a, b).b.filter((s) => s.changed).map((s) => s.text)).toEqual(['4242']);
+  });
+
+  it('propagates cancellation out of a word diff', () => {
+    expect(() =>
+      diffWords('one two three', 'four five six', {
+        check: () => {
+          throw new Error('stop');
+        },
+      }),
+    ).toThrow('stop');
+  });
+
   it('marks nothing when the lines are identical', () => {
     const { a, b } = diffWords('same()', 'same()');
     expect(a.some((s) => s.changed)).toBe(false);
@@ -440,6 +476,49 @@ describe('toUnified', () => {
 
   it('marks a missing final newline the way patch does', () => {
     expect(unified('a\nb', 'a\nc')).toContain('\\ No newline at end of file');
+  });
+
+  // A context line stands for BOTH sides, so it cannot carry a marker that is
+  // true of only one of them. Getting this wrong produces a patch that applies
+  // cleanly and rebuilds the wrong file — the worst kind of wrong.
+  describe('a final line whose newline differs between the sides', () => {
+    const apply = (patch: string): string => {
+      // A minimal `patch`: take the ' ' and '+' lines, and honour the marker.
+      const lines = patch.split('\n').slice(3);
+      const out: string[] = [];
+      let noNewline = false;
+      for (let i = 0; i < lines.length; i++) {
+        const entry = lines[i] as string;
+        if (entry.startsWith('\\')) {
+          noNewline = true;
+          continue;
+        }
+        if (entry.startsWith(' ') || entry.startsWith('+')) {
+          out.push(entry.slice(1));
+          noNewline = false;
+        }
+      }
+      return out.join('\n') + (noNewline ? '' : '\n');
+    };
+
+    const cases: [string, string, string][] = [
+      ['A lacks it, B has it', 'x\ny', 'z\ny\n'],
+      ['A has it, B lacks it', 'x\ny\n', 'z\ny'],
+      ['neither has it', 'x\ny', 'z\ny'],
+      ['both have it', 'x\ny\n', 'z\ny\n'],
+    ];
+
+    for (const [name, a, b] of cases) {
+      it(`rebuilds B exactly when ${name}`, () => {
+        const patch = toUnified(diffLines(a, b), { aName: 'f', bName: 'f', context: 3 });
+        expect(apply(patch), patch).toBe(b);
+      });
+    }
+
+    it('says so as a removal and an addition, the way git does', () => {
+      const patch = toUnified(diffLines('x\ny', 'z\ny\n'), { aName: 'f', bName: 'f', context: 3 });
+      expect(patch).toContain('-y\n\\ No newline at end of file\n+y');
+    });
   });
 
   it('writes only headers when nothing changed', () => {
@@ -581,6 +660,22 @@ describe('text-diff (the op)', () => {
       makeCtx(),
     );
     expect(decode(output?.buffer as ArrayBuffer)).toContain('identical contents');
+  });
+
+  it('does not let a patch read as "no differences" when the bytes differ', async () => {
+    // A patch is hunks or it is nothing, and two files whose lines all match
+    // have no hunks — so without a word about it, a .diff export of a CRLF/LF
+    // pair is a headers-only file that says the opposite of the truth.
+    const [output] = await textDiff(
+      [textInput('unix.txt', 'a\nb\n'), textInput('dos.txt', 'a\r\nb\r\n')],
+      { format: 'unified' },
+      makeCtx(),
+    );
+    const patch = decode(output?.buffer as ArrayBuffer);
+    expect(patch).toContain('# Every line is identical');
+    // Still a patch: the preamble sits before the header, where patch and git
+    // apply skip it.
+    expect(patch.indexOf('#')).toBeLessThan(patch.indexOf('--- a/'));
   });
 
   it('calls a line-ending-only difference what it is', async () => {

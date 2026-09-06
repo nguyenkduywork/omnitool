@@ -238,6 +238,37 @@ describe('the comparison view', () => {
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ scope: 'whole' }));
   });
 
+  it('never claims a change number it no longer has', async () => {
+    // The view stops at 4,000 rows. Opening a folded region pushes rows past
+    // that cut, which is the one thing that CAN take changes off the end of
+    // the list — so a preserved position has to be clamped, or the readout
+    // ends up promising a change that is no longer on screen.
+    const lines = Array.from({ length: 4600 }, (_, i) => `line ${i}`);
+    // A long unchanged run at the top (so there is a gap to open), then
+    // alternating changes (so there are thousands of separate changes).
+    const a = `${lines.join('\n')}\n`;
+    const b = `${lines
+      .map((line, i) => (i > 100 && i % 2 === 0 ? `CHANGED ${i}` : line))
+      .join('\n')}\n`;
+    await mount([file('a.txt', a), file('b.txt', b)]);
+
+    const [prev] = host.querySelectorAll<HTMLButtonElement>('.tdiff__btn--icon');
+    prev?.click();
+    const atEnd = text('.tdiff__pos');
+    expect(atEnd).toMatch(/^Change \d+ of \d+$/);
+
+    host.querySelector<HTMLButtonElement>('.tdiff__expand')?.click();
+
+    const after = text('.tdiff__pos');
+    const [, position, total] = after.match(/^Change (\d+) of (\d+)$/) ?? [];
+    if (position !== undefined && total !== undefined) {
+      expect(Number(position)).toBeLessThanOrEqual(Number(total));
+    } else {
+      // Clamped back to "no position yet", which is the other honest answer.
+      expect(after).toMatch(/changes$/);
+    }
+  });
+
   it('leaves nothing behind when it is torn down', async () => {
     await mount([file('a.txt', OLD), file('b.txt', NEW)]);
     teardown?.();

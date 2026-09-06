@@ -119,3 +119,85 @@ test('side by side stays inside its column, and shows both sides at once', async
   await expect(row.locator('.tdiff__code--a')).toBeInViewport();
   await expect(row.locator('.tdiff__code--b')).toBeInViewport();
 });
+
+// A phone is where this tool is least comfortable and most likely to be
+// reached for anyway — someone checking a diff away from their desk. These
+// pin the two things that break there and cannot be seen from a desktop run:
+// controls too small to hit, and a control small enough that iOS Safari zooms
+// the page out from under the reader when they touch it.
+test.describe('on a phone', () => {
+  test.use({ viewport: { width: 375, height: 667 }, hasTouch: true, isMobile: true });
+
+  test('every control is big enough to hit with a thumb', async ({ page }) => {
+    await page
+      .locator('input[type="file"]')
+      .setInputFiles([source('old.ts', OLD), source('new.ts', NEW)]);
+    await page.locator('[data-tool="text-diff"]').click();
+    await expect(page.locator('.tdiff__grid')).toBeVisible({ timeout: 15_000 });
+
+    const report = await page.evaluate(() => {
+      const nodes = document.querySelectorAll(
+        '.tdiff__segbtn, .tdiff__btn, .tdiff__check, .tdiff__select',
+      );
+      return {
+        coarse: matchMedia('(pointer: coarse)').matches,
+        boxes: [...nodes].map((node) => {
+          const box = node.getBoundingClientRect();
+          return { w: Math.round(box.width), h: Math.round(box.height) };
+        }),
+        // Below 16px, iOS Safari zooms the viewport on focus.
+        selectFont: Number.parseFloat(
+          getComputedStyle(document.querySelector('.tdiff__select') as Element).fontSize,
+        ),
+      };
+    });
+
+    expect(report.coarse).toBe(true);
+    expect(report.boxes.length).toBeGreaterThan(5);
+    for (const box of report.boxes) {
+      // WCAG 2.2 SC 2.5.8 asks for 24; the app's own `.btn` is 39, and a
+      // control this one sits beside should not be the small one.
+      expect(box.h, JSON.stringify(box)).toBeGreaterThanOrEqual(39);
+      expect(box.w, JSON.stringify(box)).toBeGreaterThanOrEqual(24);
+    }
+    expect(report.selectFont).toBeGreaterThanOrEqual(16);
+  });
+
+  test('reads without sideways scrolling, in either layout', async ({ page }) => {
+    await page
+      .locator('input[type="file"]')
+      .setInputFiles([source('old.ts', OLD), source('new.ts', NEW)]);
+    await page.locator('[data-tool="text-diff"]').click();
+    await expect(page.locator('.tdiff__grid')).toBeVisible({ timeout: 15_000 });
+
+    const overflow = async (): Promise<number> =>
+      page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+
+    expect(await overflow()).toBeLessThanOrEqual(0);
+    // The word-level marks are the whole point, and they survive the width.
+    await expect(page.locator('.tdiff__mark').first()).toHaveText('* 2');
+
+    await page.locator('.tdiff__segbtn', { hasText: 'Side by side' }).click();
+    expect(await overflow()).toBeLessThanOrEqual(0);
+    // Both sides fit on the screen rather than one hiding behind a scroll.
+    const row = page.locator('.tdiff__row--replace').first();
+    await expect(row.locator('.tdiff__code--a')).toBeInViewport();
+    await expect(row.locator('.tdiff__code--b')).toBeInViewport();
+  });
+
+  test('the whole comparison is reachable by touch, including the run', async ({ page }) => {
+    await page
+      .locator('input[type="file"]')
+      .setInputFiles([source('old.ts', OLD), source('new.ts', NEW)]);
+    await page.locator('[data-tool="text-diff"]').click();
+    await expect(page.locator('.tdiff__grid')).toBeVisible({ timeout: 15_000 });
+
+    // Tap, not click: the controls have to work through a touch event.
+    await page.locator('.tdiff__btn', { hasText: 'Swap sides' }).tap();
+    await expect(page.locator('.tdiff__files')).toHaveText('new.ts → old.ts');
+
+    await page.getByRole('button', { name: 'Run' }).tap();
+    await expect(page.locator('.card--output')).toHaveCount(1, { timeout: 30_000 });
+    await expect(page.locator('.card--output')).toContainText('new-vs-old.html');
+  });
+});
