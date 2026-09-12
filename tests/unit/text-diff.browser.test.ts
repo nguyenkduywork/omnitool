@@ -1,338 +1,349 @@
-// tests/unit/text-diff.browser.test.ts — the comparison view.
-//
-// Real headless Chromium, because the editor is real DOM: real `File`s, a real
-// `TextDecoder` refusing real invalid UTF-8, real click handlers. The op is
-// covered in tests/unit/diff.test.ts under Node; what is checked here is the
-// half a person actually uses — that the differences are VISIBLE, that the
-// options the editor emits are the ones the op validates, and that nothing
-// here depends on being able to tell green from red.
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import workspace from '../../src/tools/data/text-diff.workspace';
+import { TextDiffLive } from '../../src/tools/data/text-diff.live';
+import type { ToolWorkspaceHandle } from '../../src/types';
 
-import editor from '../../src/tools/data/text-diff.editor';
-
-const OLD = ['function total(items) {', '  return items.length;', '}', ''].join('\n');
-const NEW = ['function total(items) {', '  return items.length * 2;', '}', ''].join('\n');
-
-function file(name: string, text: string): File {
-  return new File([text], name, { type: 'text/plain' });
-}
-
-let host: HTMLElement;
-let teardown: (() => void) | null = null;
+const OLD = 'function total(items) {\n  return items.length;\n}\n';
+const NEW = 'function total(items) {\n  return items.length * 2;\n}\n';
+const file = (name: string, text: string) => new File([text], name, { type: 'text/plain' });
+let mount: HTMLElement;
+let handle: ToolWorkspaceHandle;
+let onRun: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
-  host = document.createElement('div');
-  document.body.append(host);
+  mount = document.createElement('div');
+  document.body.append(mount);
+  onRun = vi.fn();
+  handle = workspace(mount, { announce: () => undefined, onRun });
 });
+afterEach(() => { handle.destroy(); mount.remove(); });
 
-afterEach(() => {
-  teardown?.();
-  teardown = null;
-  host.remove();
-});
-
-/** Mount, and wait for the files to be read and the first render to land. */
-async function mount(
-  files: File[],
-  onChange: (values: Record<string, unknown>) => void = () => {},
-): Promise<void> {
-  teardown = editor(host, files, onChange);
-  await vi.waitFor(() => {
-    expect(host.querySelector('.tdiff__grid, .tdiff__notice')).not.toBeNull();
-  });
+const control = (name: string) => [...mount.querySelectorAll<HTMLButtonElement>('button')].find((item) => item.textContent?.trim() === name)!;
+const boxes = () => mount.querySelectorAll<HTMLTextAreaElement>('.tdw__textarea');
+async function ready(): Promise<void> {
+  await vi.waitFor(() => expect(mount.querySelector('.tdw__stats')?.textContent).toMatch(/change groups?/), { timeout: 10_000 });
 }
-
-const rows = (): HTMLElement[] => [...host.querySelectorAll<HTMLElement>('.tdiff__row')];
-
-/** Set a box's value the way a paste does: assign, then fire `input`. */
-function type(box: HTMLTextAreaElement, value: string): void {
+function type(side: 0 | 1, value: string): void {
+  const box = boxes()[side]!;
   box.value = value;
   box.dispatchEvent(new Event('input', { bubbles: true }));
 }
-const text = (selector: string): string => host.querySelector(selector)?.textContent ?? '';
 
-describe('the comparison view', () => {
-  it('shows the changed line, and marks only the tokens inside it', async () => {
-    await mount([file('old.js', OLD), file('new.js', NEW)]);
-
-    const marks = [...host.querySelectorAll('.tdiff__mark')].map((node) => node.textContent);
-    // Not "line 2 changed" — only what actually moved. Neighbouring changed
-    // tokens come back as one mark, so this is the whole inserted run.
-    expect(marks).toEqual([' * 2']);
-    expect(host.textContent).toContain('return items.length');
+describe('source-owning Text Diff workspace', () => {
+  it('mounts with a readiness marker and retains raw CRLF files for export', async () => {
+    handle.activate([file('old.txt', OLD.replace(/\n/g, '\r\n')), file('new.txt', NEW)]);
+    expect(mount.querySelector('.tdw')?.getAttribute('data-ready')).toBe('true');
+    await ready();
+    control('Review changes').click();
+    await vi.waitFor(() => expect(mount.querySelector('.tdw__mark')?.textContent).toBe(' * 2'));
+    expect(mount.querySelector('.tdw__identities')?.textContent).toContain('CRLF');
+    const run = handle.prepareRun('html');
+    expect(run.files).toEqual([]);
+    expect((run.options.comparisonSnapshot as { sources: { text: string }[] }).sources[0]?.text).toContain('\r\n');
+    expect(run.inputs[0]?.name).toBe('old.txt');
   });
 
-  it('counts what changed, in the summary', async () => {
-    await mount([file('old.js', OLD), file('new.js', NEW)]);
-
-    expect(text('.tdiff__stats')).toContain('1 changed');
-    expect(text('.tdiff__stats')).toContain('0 added');
+  it('warns before a native edit normalizes a CRLF file and retains raw source until then', async () => {
+    const original = 'alpha\r\nold\r\n';
+    handle.activate([file('old.txt', original), file('new.txt', 'alpha\nnew\n')]);
+    await ready();
+    const warning = mount.querySelectorAll<HTMLElement>('.tdw__source > .tdw__source-warning')[0]!;
+    expect(warning.hidden).toBe(false);
+    expect(warning.textContent).toMatch(/converts.*CRLF.*LF/);
+    expect(boxes()[0]!.value).toBe('alpha\nold\n');
+    expect((handle.prepareRun('html').options.comparisonSnapshot as { sources: { text: string }[] }).sources[0]!.text).toBe(original);
+    type(0, 'alpha\nedit\n');
+    await vi.waitFor(() => expect((handle.prepareRun('html').options.comparisonSnapshot as { sources: { text: string }[] }).sources[0]!.text).toBe('alpha\nedit\n'));
+    expect(warning.hidden).toBe(true);
   });
 
-  it('marks every changed row with a sign, not only a colour', async () => {
-    // WCAG 1.4.1: colour can never be the only carrier. Someone who cannot
-    // separate the green from the red still has +, - and ~.
-    await mount([file('a.txt', 'keep\ngone\n'), file('b.txt', 'keep\nnew line\nextra\n')]);
+  it('accepts one file before the second source and supports explicit empty', async () => {
+    handle.activate([file('old.txt', OLD)]);
+    await vi.waitFor(() => expect(boxes()[0]?.value).toContain('function total'));
+    expect(() => handle.prepareRun('html')).toThrow();
+    [...mount.querySelectorAll<HTMLButtonElement>('button')].filter((item) => item.textContent === 'Use empty text')[1]!.click();
+    await ready();
+    expect(handle.prepareRun('html').revision).toBeGreaterThan(0);
+  });
 
-    const changed = rows().filter(
-      (row) =>
-        !row.classList.contains('tdiff__row--equal') && !row.classList.contains('tdiff__row--gap'),
-    );
-    expect(changed.length).toBeGreaterThan(0);
-    for (const row of changed) {
-      const signs = [...row.querySelectorAll('.tdiff__sign')].map((node) =>
-        node.textContent?.trim(),
-      );
-      expect(signs.filter((sign) => sign === '+' || sign === '−' || sign === '~')).toHaveLength(1);
+  it('validates rapid independent text edits without losing either side', async () => {
+    handle.activate([]);
+    type(0, OLD);
+    type(1, NEW);
+    await ready();
+    const sources = (handle.prepareRun('html').options.comparisonSnapshot as { sources: { text: string }[] }).sources;
+    expect(sources.map((source) => source.text)).toEqual([OLD, NEW]);
+  });
+
+  it('disables export immediately on edit, then permits the accepted revision', async () => {
+    handle.activate([file('old.txt', OLD), file('new.txt', NEW)]);
+    await ready();
+    type(1, NEW + 'extra\n');
+    expect(() => handle.prepareRun('html')).toThrow();
+    expect([...mount.querySelectorAll<HTMLButtonElement>('button')].filter((item) => item.textContent === 'Copy source')[1]?.disabled).toBe(true);
+    await vi.waitFor(() => expect(handle.prepareRun('html').revision).toBeGreaterThan(0), { timeout: 10_000 });
+  });
+
+  it('preserves accepted source after a failed replacement and undoes clear', async () => {
+    handle.activate([file('old.txt', OLD), file('new.txt', NEW)]);
+    await ready();
+    const picker = mount.querySelectorAll<HTMLInputElement>('input[type=file]')[0]!;
+    Object.defineProperty(picker, 'files', { configurable: true, value: [new File([new Uint8Array([0xff])], 'broken.txt', { type: 'text/plain' })] });
+    picker.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => expect(mount.querySelector('.tdw__source-status--error')?.textContent).toContain('broken.txt'));
+    expect(boxes()[0]?.value).toBe(OLD);
+    [...mount.querySelectorAll<HTMLButtonElement>('button')].filter((item) => item.textContent === 'Clear')[0]!.click();
+    expect(boxes()[0]?.value).toBe('');
+    [...mount.querySelectorAll<HTMLButtonElement>('button')].filter((item) => item.textContent === 'Undo')[0]!.click();
+    expect(boxes()[0]?.value).toBe(OLD);
+  });
+
+  it('swaps sources and retains them through deactivate and return', async () => {
+    handle.activate([file('old.txt', OLD), file('new.txt', NEW)]);
+    await ready();
+    control('Swap Original and Revised').click();
+    await vi.waitFor(() => expect(handle.prepareRun('html').inputs[0]?.name).toBe('new.txt'));
+    handle.deactivate();
+    handle.activate([]);
+    await vi.waitFor(() => expect(handle.prepareRun('html').inputs[0]?.name).toBe('new.txt'));
+    expect(boxes()[0]?.value).toBe(NEW);
+  });
+
+  it('restores pending visible text when Clear is undone before validation', async () => {
+    handle.activate([]);
+    type(0, 'draft before validation');
+    [...mount.querySelectorAll<HTMLButtonElement>('button')].filter((item) => item.textContent === 'Clear')[0]!.click();
+    expect(boxes()[0]?.value).toBe('');
+    [...mount.querySelectorAll<HTMLButtonElement>('button')].filter((item) => item.textContent === 'Undo')[0]!.click();
+    expect(boxes()[0]?.value).toBe('draft before validation');
+    await vi.waitFor(() => expect(mount.querySelector('.tdw__source-status')?.textContent).toContain('Text'));
+  });
+
+  it('keeps invalid text visible but blocked from comparison and export', async () => {
+    handle.activate([file('old.txt', OLD), file('new.txt', NEW)]);
+    await ready();
+    type(0, '\ud800');
+    await vi.waitFor(() => expect(mount.querySelector('.tdw__source-status--error')?.textContent).toMatch(/could not be read/i));
+    expect(boxes()[0]?.value).toBe('\ud800');
+    expect([...mount.querySelectorAll<HTMLButtonElement>('button')].filter((item) => item.textContent === 'Copy source')[0]?.disabled).toBe(true);
+    expect(control('Compare now').disabled).toBe(true);
+    expect(() => handle.prepareRun('html')).toThrow();
+    type(0, OLD);
+    await vi.waitFor(() => expect(handle.prepareRun('html').revision).toBeGreaterThan(0));
+  });
+
+  it('can clear an invalid first paste without resetting the other side', async () => {
+    handle.activate([]);
+    type(0, '\ud800');
+    await vi.waitFor(() => expect(mount.querySelector('.tdw__source-status--error')).not.toBeNull());
+    const clear = [...mount.querySelectorAll<HTMLButtonElement>('button')].filter((item) => item.textContent === 'Clear')[0]!;
+    expect(clear.disabled).toBe(false);
+    clear.click();
+    expect(boxes()[0]?.value).toBe('');
+    expect(mount.querySelectorAll('.tdw__source-status--error')).toHaveLength(0);
+  });
+
+  it('retains expanded review context through a route-style deactivation', async () => {
+    const lines = Array.from({ length: 140 }, (_, row) => `line-${row}`);
+    handle.activate([file('a.txt', lines.join('\n')), file('b.txt', [...lines.slice(0, -1), 'changed'].join('\n'))]);
+    await ready();
+    control('Review changes').click();
+    await vi.waitFor(() => expect(mount.querySelector('.tdw__gap button')).not.toBeNull());
+    (mount.querySelector('.tdw__gap button') as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(mount.querySelectorAll('.tdw__row').length).toBeGreaterThan(50));
+    const before = mount.querySelectorAll('.tdw__row').length;
+    handle.deactivate();
+    handle.activate([]);
+    await vi.waitFor(() => expect(handle.prepareRun('html').revision).toBeGreaterThan(0));
+    await vi.waitFor(() => expect(mount.querySelectorAll('.tdw__row').length).toBe(before));
+  });
+
+  it('can return to row zero after a late hunk jump and Whole file context', async () => {
+    const lines = Array.from({ length: 4_300 }, (_, row) => `line-${row}`);
+    handle.activate([file('a.txt', lines.join('\n')), file('b.txt', lines.map((line, row) => row === 4_100 ? 'changed' : line).join('\n'))]);
+    await ready();
+    control('Review changes').click();
+    control('Next change').click();
+    await vi.waitFor(() => expect(mount.querySelector('[data-row="4100"]')).not.toBeNull());
+    const context = mount.querySelectorAll<HTMLSelectElement>('.tdw__options select')[1]!;
+    context.value = 'whole';
+    context.dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(control('First page').disabled).toBe(false));
+    control('First page').click();
+    await vi.waitFor(() => expect(mount.querySelector('[data-row="0"]')).not.toBeNull());
+  });
+
+  it('shows both raw variants of a normalized-equal line in Unified view', async () => {
+    handle.activate([file('a.txt', ' value\n'), file('b.txt', 'value\n')]);
+    await ready();
+    control('Review changes').click();
+    const whitespace = [...mount.querySelectorAll<HTMLLabelElement>('.tdw__check')].find((item) => item.textContent?.includes('Ignore whitespace'))!;
+    whitespace.querySelector('input')!.click();
+    await vi.waitFor(() => expect(mount.querySelector('.tdw__row--normalized')).not.toBeNull());
+    const layout = mount.querySelector<HTMLSelectElement>('.tdw__toolbar select')!;
+    layout.value = 'unified';
+    layout.dispatchEvent(new Event('change', { bubbles: true }));
+    const revised = mount.querySelector<HTMLElement>('.tdw__row--normalized .tdw__half--b')!;
+    expect(getComputedStyle(revised).display).not.toBe('none');
+    expect(revised.textContent).toContain('value');
+  });
+
+  it('routes export controls through the host', async () => {
+    handle.activate([file('old.txt', OLD), file('new.txt', NEW)]);
+    await ready();
+    control('Review changes').click();
+    control('Export').click();
+    control('Download report').click();
+    control('Download patch').click();
+    expect(onRun.mock.calls.map((call) => call[0])).toEqual(['html', 'unified']);
+  });
+
+  it('copies the exact accepted source and exposes a reachable fallback when clipboard access is blocked', async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+    const writeText = vi.fn<Navigator['clipboard']['writeText']>().mockResolvedValue();
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    try {
+      handle.activate([file('old.txt', OLD), file('new.txt', NEW)]);
+      await ready();
+      [...mount.querySelectorAll<HTMLButtonElement>('button')].filter((item) => item.textContent === 'Copy source')[0]!.click();
+      await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith(OLD));
+
+      writeText.mockRejectedValueOnce(new Error('blocked'));
+      [...mount.querySelectorAll<HTMLButtonElement>('button')].filter((item) => item.textContent === 'Copy source')[1]!.click();
+      await vi.waitFor(() => expect(mount.querySelector<HTMLElement>('.tdw__copy-fallback')?.hidden).toBe(false));
+      expect(mount.querySelector('.tdw__copy-fallback')?.textContent).toBe(NEW);
+      expect(mount.querySelector<HTMLElement>('.tdw__review')?.hidden).not.toBe(true);
+    } finally {
+      if (descriptor) Object.defineProperty(navigator, 'clipboard', descriptor);
+      else Reflect.deleteProperty(navigator, 'clipboard');
     }
   });
 
-  it('says a line-ending-only difference is exactly that', async () => {
-    await mount([file('unix.txt', 'a\nb\n'), file('dos.txt', 'a\r\nb\r\n')]);
-    expect(text('.tdiff__notices')).toContain('line endings');
+  it('invalidates immediately during IME composition and compares only the committed text', async () => {
+    handle.activate([file('old.txt', OLD), file('new.txt', NEW)]);
+    await ready();
+    const box = boxes()[1]!;
+    box.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    box.value = 'interim IME text';
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(() => handle.prepareRun('html')).toThrow();
+    expect(control('Compare now').disabled).toBe(true);
+    box.value = NEW + 'committed\n';
+    box.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
+    await vi.waitFor(() => expect(handle.prepareRun('html').revision).toBeGreaterThan(0));
+    expect(handle.prepareRun('html').options.comparisonSnapshot).toMatchObject({
+      sources: [{ text: OLD }, { text: NEW + 'committed\n' }],
+    });
   });
 
-  it('says when two files are identical rather than showing a blank view', async () => {
-    await mount([file('a.txt', OLD), file('b.txt', OLD)]);
-    expect(text('.tdiff__notices')).toContain('identical');
-    expect(text('.tdiff__nav')).toContain('No changes');
-  });
-
-  it('refuses a file that is not text, in the view rather than on the console', async () => {
-    const binary = new File([new Uint8Array([0xff, 0xfe, 0x00, 0x01])], 'photo.png');
-    await mount([file('a.txt', OLD), binary]);
-    expect(text('.tdiff__notices')).toContain('not valid UTF-8');
-  });
-
-  it('folds a long unchanged run away, and opens it again on request', async () => {
-    const lines = Array.from({ length: 60 }, (_, i) => `line ${i}`);
-    const a = `${lines.join('\n')}\n`;
-    const b = `${lines.map((line, i) => (i === 40 ? 'CHANGED' : line)).join('\n')}\n`;
-    await mount([file('a.txt', a), file('b.txt', b)]);
-
-    const before = rows().length;
-    const expander = host.querySelector<HTMLButtonElement>('.tdiff__expand');
-    expect(expander).not.toBeNull();
-    expect(expander?.textContent).toMatch(/Show \d+ unchanged lines/);
-
-    expander?.click();
-    expect(rows().length).toBeGreaterThan(before);
-  });
-
-  it('steps through the changes, and says which one it is on', async () => {
-    const a = `${Array.from({ length: 40 }, (_, i) => `line ${i}`).join('\n')}\n`;
-    const b = a.replace('line 5', 'FIVE').replace('line 30', 'THIRTY');
-    await mount([file('a.txt', a), file('b.txt', b)]);
-
-    expect(text('.tdiff__pos')).toBe('2 changes');
-    const [, next] = host.querySelectorAll<HTMLButtonElement>('.tdiff__btn--icon');
-    next?.click();
-    expect(text('.tdiff__pos')).toBe('Change 1 of 2');
-    next?.click();
-    expect(text('.tdiff__pos')).toBe('Change 2 of 2');
-    expect(host.querySelectorAll('.is-current')).toHaveLength(1);
-  });
-
-  it('keeps your place through the changes when the rows are rebuilt', async () => {
-    const a = `${Array.from({ length: 40 }, (_, i) => `line ${i}`).join('\n')}\n`;
-    const b = a.replace('line 5', 'FIVE').replace('line 30', 'THIRTY');
-    await mount([file('a.txt', a), file('b.txt', b)]);
-
-    const [, next] = host.querySelectorAll<HTMLButtonElement>('.tdiff__btn--icon');
-    next?.click();
-    next?.click();
-    expect(text('.tdiff__pos')).toBe('Change 2 of 2');
-
-    // Opening a folded region rebuilds every row, but it cannot change how
-    // many changes there are — so the position, and its highlight, stay.
-    host.querySelector<HTMLButtonElement>('.tdiff__expand')?.click();
-    expect(text('.tdiff__pos')).toBe('Change 2 of 2');
-    expect(host.querySelectorAll('.is-current')).toHaveLength(1);
-  });
-
-  it('switches to side by side without losing the comparison', async () => {
-    await mount([file('old.js', OLD), file('new.js', NEW)]);
-    expect(host.querySelector('.tdiff__grid--unified')).not.toBeNull();
-
-    const split = [...host.querySelectorAll<HTMLButtonElement>('.tdiff__segbtn')].find(
-      (button) => button.textContent === 'Side by side',
-    );
-    split?.click();
-
-    expect(host.querySelector('.tdiff__grid--split')).not.toBeNull();
-    expect(split?.getAttribute('aria-pressed')).toBe('true');
-    // Both sides of the rewritten line are now on one row.
-    const replaced = host.querySelector('.tdiff__row--replace');
-    expect(replaced?.querySelector('.tdiff__code--a')?.textContent).toContain('items.length;');
-    expect(replaced?.querySelector('.tdiff__code--b')?.textContent).toContain('items.length * 2;');
-  });
-
-  it('re-compares when whitespace is told not to count', async () => {
-    const onChange = vi.fn();
-    await mount([file('a.js', OLD), file('b.js', OLD.replace('  return', '\t\treturn'))], onChange);
-    expect(text('.tdiff__stats')).toContain('1 changed');
-
-    const box = [...host.querySelectorAll<HTMLElement>('.tdiff__check')].find((label) =>
-      label.textContent?.includes('Ignore whitespace'),
-    );
-    box?.querySelector('input')?.click();
-
-    await vi.waitFor(() => expect(text('.tdiff__notices')).toContain('identical'));
-    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ ignoreWhitespace: true }));
-  });
-
-  it('emits exactly the options the op validates, from the first render', async () => {
-    const onChange = vi.fn();
-    await mount([file('a.txt', OLD), file('b.txt', NEW)], onChange);
-
-    expect(onChange).toHaveBeenCalled();
-    expect(Object.keys(onChange.mock.calls[0]?.[0] ?? {}).sort()).toEqual([
-      'context',
-      'format',
-      'ignoreCase',
-      'ignoreWhitespace',
-      'leftText',
-      'rightText',
-      'scope',
-      'swap',
-    ]);
-  });
-
-  it('keeps the export in step with the view: swapping sides swaps the option', async () => {
-    const onChange = vi.fn();
-    await mount([file('old.js', OLD), file('new.js', NEW)], onChange);
-    expect(text('.tdiff__files')).toBe('old.js → new.js');
-
-    const swap = [...host.querySelectorAll<HTMLButtonElement>('.tdiff__btn')].find(
-      (button) => button.textContent === 'Swap sides',
-    );
-    swap?.click();
-
-    await vi.waitFor(() => expect(text('.tdiff__files')).toBe('new.js → old.js'));
-    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ swap: true }));
-  });
-
-  it('asks for a patch file when the export select says so', async () => {
-    const onChange = vi.fn();
-    await mount([file('a.txt', OLD), file('b.txt', NEW)], onChange);
-
-    const select = host.querySelector<HTMLSelectElement>('.tdiff__select');
-    expect(select).not.toBeNull();
-    (select as HTMLSelectElement).value = 'unified';
-    select?.dispatchEvent(new Event('change', { bubbles: true }));
-
-    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ format: 'unified' }));
-  });
-
-  it('sends the whole file to the report when the scope says whole file', async () => {
-    const onChange = vi.fn();
-    const lines = Array.from({ length: 40 }, (_, i) => `line ${i}`);
-    await mount(
-      [
-        file('a.txt', `${lines.join('\n')}\n`),
-        file('b.txt', `${lines.map((l, i) => (i === 20 ? 'X' : l)).join('\n')}\n`),
-      ],
-      onChange,
-    );
-    expect(host.querySelector('.tdiff__expand')).not.toBeNull();
-
-    const whole = [...host.querySelectorAll<HTMLButtonElement>('.tdiff__segbtn')].find(
-      (button) => button.textContent === 'Whole file',
-    );
-    whole?.click();
-
-    expect(host.querySelector('.tdiff__expand')).toBeNull();
-    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ scope: 'whole' }));
-  });
-
-  it('never claims a change number it no longer has', async () => {
-    // The view stops at 4,000 rows. Opening a folded region pushes rows past
-    // that cut, which is the one thing that CAN take changes off the end of
-    // the list — so a preserved position has to be clamped, or the readout
-    // ends up promising a change that is no longer on screen.
-    const lines = Array.from({ length: 4600 }, (_, i) => `line ${i}`);
-    // A long unchanged run at the top (so there is a gap to open), then
-    // alternating changes (so there are thousands of separate changes).
-    const a = `${lines.join('\n')}\n`;
-    const b = `${lines
-      .map((line, i) => (i > 100 && i % 2 === 0 ? `CHANGED ${i}` : line))
-      .join('\n')}\n`;
-    await mount([file('a.txt', a), file('b.txt', b)]);
-
-    const [prev] = host.querySelectorAll<HTMLButtonElement>('.tdiff__btn--icon');
-    prev?.click();
-    const atEnd = text('.tdiff__pos');
-    expect(atEnd).toMatch(/^Change \d+ of \d+$/);
-
-    host.querySelector<HTMLButtonElement>('.tdiff__expand')?.click();
-
-    const after = text('.tdiff__pos');
-    const [, position, total] = after.match(/^Change (\d+) of (\d+)$/) ?? [];
-    if (position !== undefined && total !== undefined) {
-      expect(Number(position)).toBeLessThanOrEqual(Number(total));
-    } else {
-      // Clamped back to "no position yet", which is the other honest answer.
-      expect(after).toMatch(/changes$/);
+  it('defers a file over the line threshold while preserving exact CRLF copy and export', async () => {
+    const raw = Array.from({ length: 6_001 }, (_, row) => `line-${row}\r\n`).join('');
+    const descriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+    const writeText = vi.fn<Navigator['clipboard']['writeText']>().mockResolvedValue();
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    try {
+      handle.activate([file('many.txt', raw)]);
+      await vi.waitFor(() => expect(mount.querySelector('.tdw__source-status')?.textContent).toContain('bounded preview'));
+      expect(boxes()[0]?.hidden).toBe(true);
+      expect(boxes()[0]?.value).toBe('');
+      expect(mount.querySelector('.tdw__source-preview')?.textContent?.length).toBeLessThan(1_200);
+      expect(mount.querySelector('.tdw__source-preview')?.textContent).toContain('line-0');
+      const warning = mount.querySelectorAll<HTMLElement>('.tdw__source > .tdw__source-warning')[0]!;
+      expect(warning.hidden).toBe(false);
+      expect(warning.textContent).toMatch(/converts.*CRLF.*LF/);
+      [...mount.querySelectorAll<HTMLButtonElement>('button')].filter((item) => item.textContent === 'Copy source')[0]!.click();
+      await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith(raw));
+      [...mount.querySelectorAll<HTMLButtonElement>('button')].filter((item) => item.textContent === 'Use empty text')[1]!.click();
+      await ready();
+      const before = handle.prepareRun('html');
+      expect((before.options.comparisonSnapshot as { sources: { text: string }[] }).sources[0]?.text).toBe(raw);
+      [...mount.querySelectorAll<HTMLButtonElement>('button')].filter((item) => item.textContent === 'Load full text for editing')[0]!.click();
+      expect(boxes()[0]?.hidden).toBe(false);
+      expect(boxes()[0]?.value).toContain('line-0\nline-1');
+      expect(warning.hidden).toBe(false);
+      expect(handle.prepareRun('html').revision).toBe(before.revision);
+      expect((handle.prepareRun('html').options.comparisonSnapshot as { sources: { text: string }[] }).sources[0]?.text).toBe(raw);
+      type(0, 'edited\n');
+      expect(() => handle.prepareRun('html')).toThrow();
+    } finally {
+      if (descriptor) Object.defineProperty(navigator, 'clipboard', descriptor);
+      else Reflect.deleteProperty(navigator, 'clipboard');
     }
   });
 
-  it('offers two boxes to paste into when there are no files', async () => {
-    await mount([]);
+  it('preserves deferred presentation through swap, failed replacement, clear, undo, and route return', async () => {
+    const raw = 'one\n'.repeat(6_001);
+    handle.activate([file('many.txt', raw), file('small.txt', NEW)]);
+    await ready();
+    expect(boxes()[0]?.hidden).toBe(true);
+    control('Swap Original and Revised').click();
+    expect(boxes()[1]?.hidden).toBe(true);
+    const picker = mount.querySelectorAll<HTMLInputElement>('input[type=file]')[1]!;
+    Object.defineProperty(picker, 'files', { configurable: true, value: [new File([new Uint8Array([0xff])], 'bad.txt', { type: 'text/plain' })] });
+    picker.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => expect(mount.querySelector('.tdw__source-status--error')?.textContent).toContain('bad.txt'));
+    expect(boxes()[1]?.hidden).toBe(true);
+    [...mount.querySelectorAll<HTMLButtonElement>('button')].filter((item) => item.textContent === 'Clear')[1]!.click();
+    expect(boxes()[1]?.hidden).toBe(false);
+    [...mount.querySelectorAll<HTMLButtonElement>('button')].filter((item) => item.textContent === 'Undo')[1]!.click();
+    expect(boxes()[1]?.hidden).toBe(true);
+    handle.deactivate();
+    handle.activate([]);
+    expect(boxes()[1]?.hidden).toBe(true);
+    expect(mount.querySelectorAll('.tdw__source-preview')[1]?.textContent).toContain('one');
+  });
 
-    const boxes = host.querySelectorAll<HTMLTextAreaElement>('.tdiff__box');
-    expect(boxes).toHaveLength(2);
-    expect(boxes[0]?.placeholder).toContain('original');
-    expect(boxes[1]?.placeholder).toContain('changed');
-    // Every box is labelled, and by a real <label for>, not a nearby div.
-    for (const box of boxes) {
-      expect(host.querySelector(`label[for="${box.id}"]`)).not.toBeNull();
+  it('defers a long single-line file and a denied large manual copy until explicit load', async () => {
+    const raw = '😀' + 'x'.repeat(300_001);
+    const descriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+    const writeText = vi.fn<Navigator['clipboard']['writeText']>().mockRejectedValue(new Error('blocked'));
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    try {
+      handle.activate([file('long.txt', raw)]);
+      await vi.waitFor(() => expect(boxes()[0]?.hidden).toBe(true));
+      expect(mount.querySelector('.tdw__source-preview')?.textContent?.length).toBeLessThan(1_200);
+      [...mount.querySelectorAll<HTMLButtonElement>('button')].filter((item) => item.textContent === 'Copy source')[0]!.click();
+      await vi.waitFor(() => expect(mount.querySelector('.tdw__copy-fallback button')).not.toBeNull());
+      expect(mount.querySelector('.tdw__copy-fallback')?.textContent?.length).toBeLessThan(300);
+      expect(writeText).toHaveBeenCalledWith(raw);
+      (mount.querySelector('.tdw__copy-fallback button') as HTMLButtonElement).click();
+      expect(mount.querySelector('.tdw__copy-fallback')?.textContent).toBe(raw);
+    } finally {
+      if (descriptor) Object.defineProperty(navigator, 'clipboard', descriptor);
+      else Reflect.deleteProperty(navigator, 'clipboard');
     }
-    expect(text('.tdiff__notices')).toContain('Paste text into both boxes');
-    // Controls for a comparison that does not exist yet are noise.
-    expect(host.querySelector<HTMLElement>('.tdiff__controls')?.hidden).toBe(true);
   });
 
-  it('compares what you type, without pressing anything', async () => {
-    const onChange = vi.fn();
-    await mount([], onChange);
+  it('clears Find marks and ignores a response that arrives after the query was cleared', async () => {
+    handle.activate([file('a.txt', 'old\n'), file('b.txt', 'new\n')]);
+    await ready();
+    control('Review changes').click();
+    control('Find').click();
+    const input = mount.querySelector<HTMLInputElement>('.tdw__find-input')!;
+    input.value = 'old';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await vi.waitFor(() => expect(mount.querySelector('.tdw__match')).not.toBeNull());
+    input.value = 'absent';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await vi.waitFor(() => expect(mount.querySelector('.tdw__find .tdw__position')?.textContent).toBe('No matches'));
+    expect(mount.querySelector('.tdw__match')).toBeNull();
+    input.value = '';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(mount.querySelector('.tdw__match')).toBeNull();
 
-    const boxes = host.querySelectorAll<HTMLTextAreaElement>('.tdiff__box');
-    type(boxes[0] as HTMLTextAreaElement, OLD);
-    type(boxes[1] as HTMLTextAreaElement, NEW);
-
-    await vi.waitFor(() => expect(host.querySelector('.tdiff__grid')).not.toBeNull());
-    expect(host.querySelector<HTMLElement>('.tdiff__controls')?.hidden).toBe(false);
-    expect([...host.querySelectorAll('.tdiff__mark')].map((n) => n.textContent)).toEqual([' * 2']);
-    // The op is handed the text, so Run exports exactly what is on screen.
-    expect(onChange).toHaveBeenLastCalledWith(
-      expect.objectContaining({ leftText: OLD, rightText: NEW }),
-    );
-  });
-
-  it('pairs a single file with one box, and says which side is which', async () => {
-    await mount([file('old.js', OLD)]);
-
-    const boxes = host.querySelectorAll<HTMLTextAreaElement>('.tdiff__box');
-    expect(boxes).toHaveLength(1);
-    expect(text('.tdiff__from')).toContain('old.js');
-    await vi.waitFor(() => expect(text('.tdiff__notices')).toContain('Paste the other side'));
-
-    type(boxes[0] as HTMLTextAreaElement, NEW);
-    await vi.waitFor(() => expect(host.querySelector('.tdiff__grid')).not.toBeNull());
-    expect(text('.tdiff__stats')).toContain('1 changed');
-  });
-
-  it('shows no boxes at all once both sides are files', async () => {
-    await mount([file('a.txt', OLD), file('b.txt', NEW)]);
-    expect(host.querySelectorAll('.tdiff__box')).toHaveLength(0);
-    expect(host.querySelectorAll('.tdiff__panes > *')).toHaveLength(0);
-  });
-
-  it('leaves nothing behind when it is torn down', async () => {
-    await mount([file('a.txt', OLD), file('b.txt', NEW)]);
-    teardown?.();
-    teardown = null;
-    expect(host.childElementCount).toBe(0);
+    let reply: ((value: Awaited<ReturnType<TextDiffLive['find']>>) => void) | undefined;
+    const spy = vi.spyOn(TextDiffLive.prototype, 'find').mockImplementation(() => new Promise((resolve) => { reply = resolve; }));
+    try {
+      input.value = 'old';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await vi.waitFor(() => expect(reply).toBeTypeOf('function'));
+      input.value = '';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      reply!({ kind: 'find', revision: 1, requestId: 1, matchCount: 1, ordinal: 0,
+        range: { side: 'a', start: 0, end: 3 }, row: 0, cursor: { row: 0, aOffset: 0, bOffset: 0 } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(mount.querySelector('.tdw__match')).toBeNull();
+      expect(mount.querySelector('.tdw__find .tdw__position')?.textContent).toBe('');
+    } finally { spy.mockRestore(); }
   });
 });

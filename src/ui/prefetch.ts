@@ -52,6 +52,7 @@ export function prefetchModule(key: string, loader: () => Promise<unknown>): voi
 export function prefetchTool(tool: ToolDef): void {
   prefetchModule(`tool:${tool.id}`, tool.load);
   if (tool.editor) prefetchModule(`editor:${tool.id}`, tool.editor);
+  if (tool.workspace) prefetchModule(`workspace:${tool.id}`, tool.workspace);
 }
 
 /** For tests and diagnostics: which keys have been warmed. */

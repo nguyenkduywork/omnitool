@@ -49,6 +49,7 @@ export type PhaseInput = {
  */
 export function runBlockedReason(selected: ToolDef | null, mimes: string[]): string | null {
   if (!selected) return 'Pick a tool first.';
+  if (selected.workspace) return null;
   if (selected.kind === 'generate') return null;
   if (mimes.length > 0 && !typesMatch(selected, mimes)) {
     return `${selected.name} doesn't work with these files.`;
@@ -69,6 +70,7 @@ export function runBlockedReason(selected: ToolDef | null, mimes: string[]): str
  * from a "needs at least 2 files" invitation without re-parsing English.
  */
 export function typeMismatch(selected: ToolDef, mimes: string[]): boolean {
+  if (selected.workspace) return false;
   if (selected.kind === 'generate') return false;
   return mimes.length > 0 && !typesMatch(selected, mimes);
 }
@@ -153,7 +155,7 @@ export function createState(tools: readonly ToolDef[]): StateHandle {
    */
   function pruneSelection(): void {
     if (running) return;
-    if (!selected || selected.kind === 'generate') return;
+    if (!selected || selected.kind === 'generate' || selected.workspace) return;
     if (entries.length > 0 && !typesMatch(selected, mimes())) selected = null;
   }
 

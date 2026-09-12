@@ -167,31 +167,30 @@ for open engineering items.
   with your name printed on page one still has your name on page one.
 - **A watermark is a label, not a lock.** It paints text into the pixels, so it can be
   cropped off or painted over. It marks provenance, it does not protect anything.
-- **Compare text is a line diff with word-level highlighting, not a merge tool.** It
-  shows what changed; it never writes either file back. Four things are worth knowing
-  before you trust a comparison. It does not track a moved block: a function that moved
-  to the other end of the file reads as a deletion in one place and an insertion in
-  another, because nothing here looks for the same lines twice. Two files whose lines
-  all match but whose line endings or byte-order mark differ are reported as *identical
-  lines, different endings* rather than as a change on every line — the honest reading,
-  but not a byte comparison; use Hash files for that. "Ignore whitespace changes"
-  trims each line and collapses runs of spaces and tabs, so it forgives reindentation
-  and trailing space, but two lines that differ by a space inside a string literal are
-  still different. And when two files share almost no structure, alignment is abandoned
-  rather than guessed: you get one "replaced wholesale" region, said out loud in the
-  view and in the report. Either side can be pasted instead of loaded — two boxes when
-  you have no files, one box beside the file when you have one — and pasted text is
-  held in the page like everything else here: it is never uploaded, and it is gone when
-  you close the tab. Word-level highlighting also stops at 2,000 characters in a
-  line — two different minified bundles are one enormous line each, where pinpointing
-  "what moved" costs minutes and means nothing; those lines are marked as changed
-  without highlighting inside them.
+- **Compare text owns two independent sources.** Paste text, open a UTF-8 file, or
+  explicitly choose empty text on either side. Inputs sit side by side on wide screens
+  and use source tabs on phones. Review supports automatic, split, and unified layouts;
+  line, word, and grapheme detail; wrapping; literal Find; change navigation; and
+  expandable context. Swap, Clear, and Undo retain source state while the tab stays
+  open. Sources stay in memory and are never uploaded or saved as drafts.
 
-- **The live comparison is capped, and says when it stops.** Above 3 million characters
-  across the two files it does not run on screen at all — the comparison happens on the
-  main thread so it can be interactive, and a file pair that large would freeze the tab
-  — and above 4,000 rows the view shows the first 4,000. Running the tool builds the
-  full report either way.
+- **Comparison has explicit limits and fallbacks.** Up to 10 MiB of decoded UTF-8
+  and 200,000 display lines combined are supported. Background workers compute the
+  comparison; bounded pages let you reach every change. Larger sources require Compare
+  now. File sources over 250,000 UTF-16 units or 5,000 line terminators start with a
+  bounded preview; full native editing is an explicit action that can pause the browser.
+  Editing CRLF or CR files normalizes endings to LF, with a warning before editing.
+  Untouched sources retain their original endings and BOM. Detail falls back to line
+  highlighting above 2,000 characters per line. Moved blocks appear as deletion and
+  insertion; unrelated files can produce a disclosed wholesale replacement.
+
+- **Review rules and exact patches serve different purposes.** Ignore whitespace
+  trims lines and collapses spaces/tabs; Ignore case affects the review. Ending and BOM
+  differences remain explicit metadata. Reports and copied summaries follow the selected
+  scope, context, detail, and rules. Exact patches retain raw BOM and line-ending bytes,
+  including differences hidden by review rules. Reports, summaries, and patches are
+  capped at 32 MiB. The tool never writes either source file back. See the reproducible
+  [Text Diff benchmarks](scripts/bench/README.md) for measured performance and coverage.
 
 - **Clean up text sorts in code-unit order, not your locale's** — uppercase before
   lowercase, digits before letters, like `sort` under `LC_ALL=C`. It reads UTF-8 only.

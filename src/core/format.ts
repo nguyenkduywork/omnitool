@@ -252,6 +252,7 @@ export function countReason(tool: ToolDef, count: number): string | null {
  * (supporting the 'image/*' and '*' wildcards).
  */
 export function accepts(tool: ToolDef, mimes: string[]): boolean {
+  if (tool.workspace) return true;
   return countReason(tool, mimes.length) === null && typesMatch(tool, mimes);
 }
 
@@ -281,6 +282,10 @@ export function applicabilityFor(tools: readonly ToolDef[], mimes: string[]): Ap
 
   for (const tool of tools) {
     if (tool.kind === 'generate') continue;
+    if (tool.workspace) {
+      result.primary.push(tool);
+      continue;
+    }
     if (!typesMatch(tool, mimes)) continue;
 
     const reason = countReason(tool, mimes.length);

@@ -11,7 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const HARNESSES = ['csv.mjs', 'base64.mjs', 'bundle.mjs', 'md5.mjs'];
+const HARNESSES = ['csv.mjs', 'base64.mjs', 'bundle.mjs', 'md5.mjs', 'text-diff.mjs'];
 
 let failed = 0;
 

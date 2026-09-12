@@ -165,6 +165,36 @@ describe('transfer, never clone — through a REAL Worker', () => {
 
 describe('cancellation through a REAL Worker', () => {
   it(
+    'immediate cancellation rejects a busy real worker and its replacement runs normally',
+    async () => {
+      const pool = realPool(1);
+      try {
+        const files = await Promise.all(
+          Array.from({ length: 8 }, (_, i) => smallPdfFile(`immediate-${i}.pdf`)),
+        );
+        const job = run('pdf-to-images', files, { format: 'png', dpi: 200 },
+          { pool, cancelImmediately: true });
+        let cancelled = false;
+        job.onProgress((fraction) => {
+          if (fraction > 0 && fraction < 1 && !cancelled) {
+            cancelled = true;
+            job.cancel();
+          }
+        });
+        await expect(job.done).rejects.toMatchObject({ code: 'Cancelled' });
+        expect(cancelled).toBe(true);
+        expect(pool.size()).toBe(1);
+        const after = await run('pdf-merge', [await smallPdfFile(), await smallPdfFile()], {},
+          { pool }).done;
+        expect((await PDFDocument.load(after.outputs[0]!.buffer)).getPageCount()).toBe(6);
+      } finally {
+        pool.terminateAll();
+      }
+    },
+    30_000,
+  );
+
+  it(
     'settles as Cancelled when cancelled mid-run, and never reaches progress 1',
     async () => {
       const pool = realPool();

@@ -53,6 +53,43 @@ export type ToolEditor = (
   onChange: (options: Record<string, unknown>) => void,
 ) => () => void;
 
+export type WorkspaceExportFormat = 'html' | 'unified';
+
+/** A workspace's click-time export snapshot. Inputs describe its own sources. */
+export type PreparedToolRun = {
+  revision: number;
+  files: File[];
+  options: Record<string, unknown>;
+  inputs: SniffedFile[];
+};
+
+export type WorkspaceJobState =
+  | { phase: 'idle' }
+  | { phase: 'preparing' | 'running'; progress: number; cancel: () => void }
+  | {
+      phase: 'ready';
+      revision: number;
+      format: WorkspaceExportFormat;
+      outputName: string;
+      revealOutput: () => void;
+    }
+  | { phase: 'cancelled' }
+  | { phase: 'failed'; message: string };
+
+export type ToolWorkspaceHandle = {
+  activate(trayFiles: readonly File[]): void;
+  deactivate(): void;
+  destroy(): void;
+  focusPrimary(): void;
+  prepareRun(format: WorkspaceExportFormat): PreparedToolRun;
+  setJobState(state: WorkspaceJobState): void;
+};
+
+export type ToolWorkspace = (
+  mount: HTMLElement,
+  host: { announce(message: string): void; onRun(format: WorkspaceExportFormat): void },
+) => ToolWorkspaceHandle;
+
 /**
  * What KIND of thing a tool is. `accepts` describes a transform completely and
  * a generator not at all, which is why one axis was never enough.
@@ -86,6 +123,8 @@ export type ToolDef = {
   maxInputs: number | null;
   options?: OptionSchema;
   editor?: () => Promise<{ default: ToolEditor }>;
+  /** Owns its input sources and lives beside, rather than inside, the workbench. */
+  workspace?: () => Promise<{ default: ToolWorkspace }>;
   /** Defaults read off the inputs' metadata. Pure and synchronous — never
    *  reads file contents (see the design spec, §3.2). */
   preset?: (files: readonly SniffedFile[]) => Preset;

@@ -48,8 +48,8 @@
 // comment on `unsubscribe` below for why that split means one call order in
 // the subscriber is load-bearing.
 
-import { label, sniffType } from '../core/format';
-import { TOOLS, getTool, toolsFor } from '../core/registry';
+import { accepts, label, sniffType } from '../core/format';
+import { TOOLS } from '../core/registry';
 import type { Job, JobResult, OpErrorCode, ToolDef } from '../types';
 import { el, icon } from './dom';
 import { createDropzone } from './dropzone';
@@ -65,6 +65,7 @@ import { createThemeControl } from './theme';
 import { createCatalogue } from './zones/catalogue';
 import { createFilesZone } from './zones/files';
 import { createWorkZone } from './zones/work';
+import type { WorkspaceHostHandle } from './workspace-host';
 
 export type ShellHandle = { destroy(): void };
 
@@ -92,12 +93,14 @@ function asFailure(error: unknown): { code: OpErrorCode; message: string; file?:
   };
 }
 
-export function mountShell(root: HTMLElement): ShellHandle {
+export function mountShell(root: HTMLElement, availableTools: readonly ToolDef[] = TOOLS): ShellHandle {
   // ---------------------------------------------------------------- state
   // The machine owns the files, the selection and everything derived from
   // them; `snap` is the last thing it said. Nothing below writes to it.
-  const state = createState(TOOLS);
+  const state = createState(availableTools);
   let snap = state.snapshot();
+  const findTool = (id: string): ToolDef | undefined =>
+    availableTools.find((tool) => tool.id === id);
 
   // What the shell owns is the DOM the zones don't: the mounted options
   // panel, the running job, and the "what is already painted" guards that
@@ -117,6 +120,10 @@ export function mountShell(root: HTMLElement): ShellHandle {
    * `refreshTools` — see the ordering note there before touching either.
    */
   let shownTool: ToolDef | null = null;
+  let workspaceHost: WorkspaceHostHandle | null = null;
+  let workspaceActive = false;
+  let workspaceLoadGeneration = 0;
+  let destroyed = false;
 
   // ------------------------------------------------------------- chrome
   const live = el('div', 'sr-only');
@@ -233,7 +240,7 @@ export function mountShell(root: HTMLElement): ShellHandle {
   // there is exactly one line in the whole app that decides where it lives
   // (the `stageEl.append` below).
   const catalogue = createCatalogue({
-    tools: TOOLS,
+    tools: availableTools,
     onPick: (id) => void select(id),
     onWarm: prefetchTool,
   });
@@ -245,11 +252,14 @@ export function mountShell(root: HTMLElement): ShellHandle {
   // waiting to be built until the first file arrives.
   const stageEl = el('div', 'workbench');
   stageEl.append(filesZone.el, catalogue.el, workZone.el);
+  const workspaceSlot = el('section', 'workspace-host');
+  workspaceSlot.hidden = true;
+  workspaceSlot.setAttribute('aria-label', 'Tool workspace');
 
   // Results sit below the whole workbench, not confined to the work zone's
   // own column — the tray is created by `workZone` (zone 3 owns the tool's
   // whole lifecycle, results included), but its element is placed here.
-  stage.append(dropzone.hero, stageEl, workZone.results.el);
+  stage.append(dropzone.hero, stageEl, workspaceSlot, workZone.results.el);
 
   const footer = el('footer', 'footer');
   const footerMark = el('span', 'footer__mark');
@@ -299,6 +309,10 @@ export function mountShell(root: HTMLElement): ShellHandle {
 
   function paint(next: Snapshot): void {
     snap = next;
+    const inWorkspace = !!snap.selected?.workspace;
+    stage.classList.toggle('stage--workspace', inWorkspace);
+    stageEl.hidden = inWorkspace;
+    workspaceSlot.hidden = !inWorkspace;
     // Narrow layouts key off this to fold the catalogue away once a tool is
     // picked (see `[data-phase]` in app.css) — set before the zones render so
     // nothing downstream needs to re-derive it.
@@ -307,6 +321,11 @@ export function mountShell(root: HTMLElement): ShellHandle {
     refreshTools();
     syncWork();
 
+    if (inWorkspace) {
+      dropzone.hero.hidden = true;
+      wasCold = false;
+      return;
+    }
     const cold = snap.phase === 'browsing';
     if (wasCold && !cold) {
       void fadeHero(dropzone.hero).then(() => {
@@ -358,7 +377,7 @@ export function mountShell(root: HTMLElement): ShellHandle {
   // this shell is actually subscribed and has painted once, which the two
   // lines above already guarantee.
   const router = createRouter({
-    isKnownTool: (id) => getTool(id) !== undefined,
+    isKnownTool: (id) => findTool(id) !== undefined,
     onRoute: (id) => void select(id, { fromRouter: true }),
   });
   router.start();
@@ -385,7 +404,7 @@ export function mountShell(root: HTMLElement): ShellHandle {
 
     const types = [...new Set(added.map((entry) => label(entry.type)))].join(', ');
     announce(
-      `${added.length} ${added.length === 1 ? 'file' : 'files'} added (${types}). ${toolsFor(mimes()).length} tools available.`,
+      `${added.length} ${added.length === 1 ? 'file' : 'files'} added (${types}). ${availableTools.filter((tool) => accepts(tool, mimes())).length} tools available.`,
     );
   }
 
@@ -447,6 +466,7 @@ export function mountShell(root: HTMLElement): ShellHandle {
   }
 
   function clearSelection(): void {
+    deactivateWorkspace();
     panel?.destroy();
     panel = null;
     options = {};
@@ -473,6 +493,54 @@ export function mountShell(root: HTMLElement): ShellHandle {
     // silently pushing a new history entry that broke the browser's own
     // Forward stack (caught live by tests/e2e/tool-first.spec.ts's "gives a
     // tool its own URL" test going red under this exact fix).
+  }
+
+  function deactivateWorkspace(): void {
+    if (!workspaceActive) return;
+    workspaceActive = false;
+    workspaceLoadGeneration += 1;
+    workspaceHost?.deactivate();
+    if (!workspaceHost) workspaceSlot.replaceChildren();
+  }
+
+  async function activateWorkspace(tool: ToolDef): Promise<void> {
+    workspaceActive = true;
+    const mine = ++workspaceLoadGeneration;
+    workZone.results.clear();
+    if (!workspaceHost) workspaceSlot.textContent = `Loading ${tool.name}…`;
+    try {
+      const { createWorkspaceHost } = await import('./workspace-host');
+      if (destroyed || !workspaceActive || mine !== workspaceLoadGeneration || snap.selected?.id !== tool.id) return;
+      workspaceHost ??= createWorkspaceHost({
+        mount: workspaceSlot,
+        results: workZone.results,
+        announce,
+        back: () => {
+          if (!workspaceActive) return;
+          clearSelection();
+          router.navigate(null);
+          announce('Back to all tools. No tool selected.');
+        },
+      });
+      await workspaceHost.activate(tool, snap.entries.map((entry) => entry.file));
+    } catch (error) {
+      if (destroyed || !workspaceActive || mine !== workspaceLoadGeneration) return;
+      const message = `The workspace could not load: ${error instanceof Error ? error.message : String(error)}`;
+      workspaceSlot.replaceChildren();
+      const explanation = el('p', undefined, message);
+      const retry = el('button', 'btn btn--primary', 'Retry workspace');
+      retry.type = 'button';
+      retry.addEventListener('click', () => void activateWorkspace(tool));
+      const back = el('button', 'btn btn--ghost', 'Back to tools');
+      back.type = 'button';
+      back.addEventListener('click', () => {
+        clearSelection();
+        router.navigate(null);
+      });
+      workspaceSlot.append(explanation, retry, back);
+      retry.focus();
+      announce(message);
+    }
   }
 
   /**
@@ -640,7 +708,7 @@ export function mountShell(root: HTMLElement): ShellHandle {
       return;
     }
 
-    const tool = id === null ? null : getTool(id);
+    const tool = id === null ? null : findTool(id);
     if (!tool) {
       // A route to the catalogue itself — Back/Forward, an unknown id
       // (`router`'s own `read()` has already folded that into `null` before
@@ -675,9 +743,15 @@ export function mountShell(root: HTMLElement): ShellHandle {
 
     // Emits: `refreshTools` repaints the catalogue with the tick on this
     // card, and `syncWork` fills the work zone's head in and reveals it.
+    if (workspaceActive && snap.selected?.id !== tool.id) deactivateWorkspace();
     state.selectTool(tool.id);
     if (!opts.fromRouter) router.navigate(tool.id);
     announce(`${tool.name} selected. ${tool.blurb}`);
+
+    if (tool.workspace) {
+      await activateWorkspace(tool);
+      return;
+    }
 
     await mountOptions(tool);
     if (snap.selected?.id !== id) return;
@@ -701,7 +775,7 @@ export function mountShell(root: HTMLElement): ShellHandle {
 
   async function start(): Promise<void> {
     const tool = snap.selected;
-    if (!tool || snap.phase === 'running') return;
+    if (!tool || tool.workspace || snap.phase === 'running') return;
 
     // I3: a generator reads NO file — that is what `kind: 'generate'` means,
     // and `runBlockedReason` (state.ts) already never blocks one on file
@@ -828,7 +902,7 @@ export function mountShell(root: HTMLElement): ShellHandle {
    * at the call site and not only inside a function two files away.
    */
   function unavailableReason(tool: ToolDef): string | null {
-    if (tool.kind === 'generate') return null;
+    if (tool.kind === 'generate' || tool.workspace) return null;
     return runBlockedReason(tool, mimes());
   }
 
@@ -874,13 +948,13 @@ export function mountShell(root: HTMLElement): ShellHandle {
     if (snap.selected?.id !== tool.id) {
       await select(tool.id);
     }
-    if (snap.selected?.id === tool.id && !tool.editor && snap.runBlockedReason === null) {
+    if (snap.selected?.id === tool.id && !tool.editor && !tool.workspace && snap.runBlockedReason === null) {
       await start();
     }
   }
 
   const palette = createPalette({
-    tools: TOOLS,
+    tools: availableTools,
     unavailableReason,
     refuses,
     announce,
@@ -898,6 +972,9 @@ export function mountShell(root: HTMLElement): ShellHandle {
 
   return {
     destroy(): void {
+      destroyed = true;
+      deactivateWorkspace();
+      workspaceHost?.destroy();
       unsubscribe();
       router.destroy();
       job?.cancel();

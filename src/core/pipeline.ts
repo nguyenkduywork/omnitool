@@ -28,6 +28,8 @@ export const CANCEL_GRACE_MS = 2000;
 export type RunDeps = {
   pool?: WorkerPoolLike;
   cancelGraceMs?: number;
+  /** Terminate an occupied worker synchronously on cancel (workspace exports). */
+  cancelImmediately?: boolean;
 };
 
 let jobCounter = 0;
@@ -105,8 +107,14 @@ export function run(
     if (settled) return;
     settled = true;
     clearGrace();
-    letGo(bin);
-    settleReject(error);
+    try {
+      letGo(bin);
+    } catch {
+      // A replacement worker may fail to construct after discard has already
+      // terminated the old one. The job's original failure must still settle.
+    } finally {
+      settleReject(error);
+    }
   }
 
   function onMessage(message: WorkerToMainMessage): void {
@@ -176,6 +184,10 @@ export function run(
       if (!held) {
         // Nothing is running yet; the driver above will stop before it starts.
         abandon(cancelledError());
+        return;
+      }
+      if (deps.cancelImmediately) {
+        abandon(cancelledError(), true);
         return;
       }
       held.post({ kind: 'cancel', jobId: id });

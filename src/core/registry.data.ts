@@ -335,10 +335,7 @@ export const DATA_TOOLS: ToolDef[] = [
     // snippet is a comparison too.
     minInputs: 0,
     maxInputs: 2,
-    // The declarative fallback, and the source of the op's defaults. The
-    // `editor` below supersedes it in the UI because the whole value of this
-    // tool is SEEING the differences before deciding whether to export them,
-    // and a flat schema has nowhere to put a diff.
+    // Declarative op defaults; the lazy workspace owns the interactive view.
     options: {
       format: {
         kind: 'select',
@@ -362,14 +359,11 @@ export const DATA_TOOLS: ToolDef[] = [
       ignoreWhitespace: { kind: 'toggle', label: 'Ignore whitespace changes', default: false },
       ignoreCase: { kind: 'toggle', label: 'Ignore case', default: false },
       swap: { kind: 'toggle', label: 'Compare the second side against the first', default: false },
-      // The pasted halves. Declared here because this schema is the op's
-      // documented contract even though the editor supersedes it on screen —
-      // it renders these two as real multi-line boxes, which is why they are
-      // not much to look at as flat `text` entries.
+      // The pasted halves remain part of the operation's public contract.
       leftText: { kind: 'text', label: 'Original text', placeholder: 'Paste the original', default: '' },
       rightText: { kind: 'text', label: 'Changed text', placeholder: 'Paste the changed version', default: '' },
     },
-    editor: () => import('../tools/data/text-diff.editor'),
+    workspace: () => import('../tools/data/text-diff.workspace'),
     load: () => import('../tools/data/text-diff.op.js'),
   },
   ];

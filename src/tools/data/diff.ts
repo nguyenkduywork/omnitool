@@ -2,7 +2,7 @@
 //
 // A SIBLING MODULE, exactly like pdf/page-range.ts and data/tar.ts: it obeys
 // the same rules its callers do (no core/, no ui/, no DOM), which is what lets
-// `text-diff.op.ts` (a worker) and `text-diff.editor.ts` (the DOM viewer) share
+// `text-diff.op.ts` (export worker) and `text-diff.live.worker.ts` (preview) share
 // one implementation instead of drifting into two.
 //
 // THE ALGORITHM, AND WHY IT IS NOT JUST MYERS
@@ -91,6 +91,9 @@ export type DiffOptions = {
   check?: () => void;
 };
 
+/** Limits detail work to text that a person can actually inspect. */
+export const MAX_DETAIL_LINE = 2000;
+
 export type DiffResult = {
   a: SplitText;
   b: SplitText;
@@ -109,6 +112,9 @@ export type DiffResult = {
 };
 
 export type WordSegment = { text: string; changed: boolean };
+export type CharacterDiff =
+  | { supported: true; degraded: boolean; a: WordSegment[]; b: WordSegment[] }
+  | { supported: false; degraded: false; a: WordSegment[]; b: WordSegment[] };
 
 // ---------------------------------------------------------------------------
 // Splitting
@@ -598,29 +604,43 @@ function statsOf(blocks: readonly DiffBlock[], aLines: number, bLines: number): 
 // The entry point
 // ---------------------------------------------------------------------------
 
-export function diffLines(aText: string, bText: string, options: DiffOptions = {}): DiffResult {
-  const a = splitLines(aText);
-  const b = splitLines(bText);
-  const { aIds, bIds } = intern(a.lines, b.lines, options);
+function diffSequence(aLines: string[], bLines: string[], options: DiffOptions): {
+  blocks: DiffBlock[];
+  stats: DiffStats;
+  identicalLines: boolean;
+  degraded: boolean;
+} {
+  const { aIds, bIds } = intern(aLines, bLines, options);
 
   const script = new Script();
   const state: Walk = { degraded: false };
   walk(aIds, bIds, 0, aIds.length, 0, bIds.length, script, 0, options, state);
 
   const blocks = toBlocks(script.ops);
-  const stats = statsOf(blocks, a.lines.length, b.lines.length);
+  const stats = statsOf(blocks, aLines.length, bLines.length);
   const identicalLines = stats.added === 0 && stats.removed === 0 && stats.changed === 0;
+
+  return { blocks, stats, identicalLines, degraded: state.degraded };
+}
+
+export function diffLines(aText: string, bText: string, options: DiffOptions = {}): DiffResult {
+  const a = splitLines(aText);
+  const b = splitLines(bText);
+  const sequence = diffSequence(a.lines, b.lines, options);
+  // This must be based on exact display records, never `identicalLines`: the
+  // latter can be true because whitespace/case rules hid a real text edit.
+  const exactDisplayLinesEqual =
+    a.lines.length === b.lines.length && a.lines.every((line, index) => line === b.lines[index]);
 
   return {
     a,
     b,
-    blocks,
-    stats,
-    identicalLines,
+    blocks: sequence.blocks,
+    stats: sequence.stats,
+    identicalLines: sequence.identicalLines,
     onlyEndingsDiffer:
-      identicalLines &&
-      (a.ending !== b.ending || a.hasBom !== b.hasBom || a.endsWithNewline !== b.endsWithNewline),
-    degraded: state.degraded,
+      aText !== bText && exactDisplayLinesEqual,
+    degraded: sequence.degraded,
   };
 }
 
@@ -644,7 +664,7 @@ export function diffLines(aText: string, bText: string, options: DiffOptions = {
  * pinpointing what inside it moved. Which is the honest answer: on two
  * different minified bundles there is no "what moved" worth pointing at.
  */
-const MAX_WORD_LINE = 2000;
+const MAX_WORD_LINE = MAX_DETAIL_LINE;
 
 /**
  * Tokens a programmer would recognise: an identifier, a number, a run of
@@ -653,7 +673,7 @@ const MAX_WORD_LINE = 2000;
  * change; splitting on spaces alone would repaint a whole call because one
  * argument moved.
  */
-const TOKEN = /[A-Za-z_$][A-Za-z0-9_$]*|\d+(?:\.\d+)?|\s+|[^\s]/gy;
+const TOKEN = /[\p{L}_$][\p{L}\p{N}_$]*|\p{N}+(?:\.\p{N}+)?|\s+|[^\s]/guy;
 
 function tokenize(line: string): string[] {
   const tokens: string[] = [];
@@ -733,6 +753,66 @@ export function diffWords(
   return { a: packSegments(aOut), b: packSegments(bOut) };
 }
 
+/**
+ * Grapheme-safe character detail. This deliberately reports unavailable rather
+ * than splitting a family emoji, combining mark, or surrogate pair by hand.
+ */
+export function diffCharacters(
+  aLine: string,
+  bLine: string,
+  options: DiffOptions = {},
+): CharacterDiff {
+  const unavailable = (): CharacterDiff => ({
+    supported: false,
+    degraded: false,
+    a: [{ text: aLine, changed: false }],
+    b: [{ text: bLine, changed: false }],
+  });
+  const Segmenter = (Intl as typeof Intl & {
+    Segmenter?: new (locale?: string | string[], options?: { granularity: 'grapheme' }) => {
+      segment(input: string): Iterable<{ segment: string }>;
+    };
+  }).Segmenter;
+  if (!Segmenter) return unavailable();
+  if (aLine.length > MAX_DETAIL_LINE || bLine.length > MAX_DETAIL_LINE) {
+    return {
+      supported: true,
+      degraded: true,
+      a: [{ text: aLine, changed: false }],
+      b: [{ text: bLine, changed: false }],
+    };
+  }
+  if (aLine === bLine) {
+    return {
+      supported: true,
+      degraded: false,
+      a: [{ text: aLine, changed: false }],
+      b: [{ text: bLine, changed: false }],
+    };
+  }
+  const segmenter = new Segmenter(undefined, { granularity: 'grapheme' });
+  const aTokens = Array.from(segmenter.segment(aLine), (part) => part.segment);
+  const bTokens = Array.from(segmenter.segment(bLine), (part) => part.segment);
+  const { aIds, bIds } = intern(aTokens, bTokens, options);
+  const ops = myers(aIds, bIds, 0, aIds.length, 0, bIds.length, MYERS_CAP, options.check) ?? [
+    { kind: 'delete' as const, a: 0, b: 0, count: aTokens.length },
+    { kind: 'insert' as const, a: 0, b: 0, count: bTokens.length },
+  ];
+  const aOut: WordSegment[] = [];
+  const bOut: WordSegment[] = [];
+  for (const op of ops) {
+    if (op.kind === 'equal') {
+      aOut.push({ text: aTokens.slice(op.a, op.a + op.count).join(''), changed: false });
+      bOut.push({ text: bTokens.slice(op.b, op.b + op.count).join(''), changed: false });
+    } else if (op.kind === 'delete') {
+      aOut.push({ text: aTokens.slice(op.a, op.a + op.count).join(''), changed: true });
+    } else {
+      bOut.push({ text: bTokens.slice(op.b, op.b + op.count).join(''), changed: true });
+    }
+  }
+  return { supported: true, degraded: false, a: packSegments(aOut), b: packSegments(bOut) };
+}
+
 // ---------------------------------------------------------------------------
 // Unified diff
 // ---------------------------------------------------------------------------
@@ -741,6 +821,8 @@ export type UnifiedOptions = {
   aName: string;
   bName: string;
   context: number;
+  /** Internal export guard; omitted for legacy direct callers. */
+  maxBytes?: number;
 };
 
 /**
@@ -854,5 +936,120 @@ export function toUnified(result: DiffResult, options: UnifiedOptions): string {
     index = end;
   }
 
+  return `${out.join('\n')}\n`;
+}
+
+/**
+ * LF-delimited physical records for patch generation. CR is payload here, not
+ * a delimiter: a record ending in `\r` followed by the patch's LF recreates a
+ * CRLF file, while a lone CR remains ordinary content in its one LF record.
+ */
+function rawLfRecords(raw: string): { records: string[]; endsWithLf: boolean } {
+  if (raw === '') return { records: [], endsWithLf: false };
+  const endsWithLf = raw.endsWith('\n');
+  const body = endsWithLf ? raw.slice(0, -1) : raw;
+  return { records: body.split('\n'), endsWithLf };
+}
+
+/**
+ * Unified patch over raw UTF-16 text decoded from UTF-8. Unlike `toUnified`,
+ * this path retains CR, BOM, and the exact final-LF bit in record payloads.
+ * It shares the patience/Myers alignment core with display diffs.
+ */
+export function toUnifiedExact(rawA: string, rawB: string, options: UnifiedOptions): string {
+  const a = rawLfRecords(rawA);
+  const b = rawLfRecords(rawB);
+  const sequence = diffSequence(a.records, b.records, {});
+  const rows = toRows(sequence.blocks);
+  const context = Math.max(0, Math.min(options.context, rows.length));
+  const out: string[] = [];
+  const encoder = options.maxBytes === undefined ? null : new TextEncoder();
+  let retainedBytes = 0;
+  const retain = (target: string[], text: string): void => {
+    if (encoder) {
+      retainedBytes += encoder.encode(text).byteLength + 1;
+      if (retainedBytes > options.maxBytes!) throw new RangeError(`Exact patch exceeds ${options.maxBytes} bytes.`);
+    }
+    target.push(text);
+  };
+  retain(out, `diff --git a/${options.aName} b/${options.bName}`);
+  retain(out, `--- a/${options.aName}`);
+  retain(out, `+++ b/${options.bName}`);
+  const keep = new Uint8Array(rows.length);
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i] as DiffRow;
+    const finalLfChanged =
+      row.kind === 'equal' &&
+      row.a === a.records.length - 1 &&
+      row.b === b.records.length - 1 &&
+      a.endsWithLf !== b.endsWithLf;
+    if (row.kind === 'equal' && !finalLfChanged) continue;
+    for (let j = Math.max(0, i - context); j <= Math.min(rows.length - 1, i + context); j++) keep[j] = 1;
+  }
+
+  const noNewline = (side: 'a' | 'b', index: number): boolean => {
+    const source = side === 'a' ? a : b;
+    return !source.endsWithLf && index === source.records.length - 1;
+  };
+  const line = (side: 'a' | 'b', index: number): string =>
+    ((side === 'a' ? a.records : b.records)[index] ?? '');
+
+  let index = 0;
+  let aSeen = 0;
+  let bSeen = 0;
+  while (index < rows.length) {
+    if (!keep[index]) {
+      const skipped = rows[index] as DiffRow;
+      if (skipped.a !== null) aSeen++;
+      if (skipped.b !== null) bSeen++;
+      index++;
+      continue;
+    }
+    let end = index;
+    while (end < rows.length && keep[end]) end++;
+    const body: string[] = [];
+    let aCount = 0;
+    let bCount = 0;
+    const aStart = aSeen;
+    const bStart = bSeen;
+    for (let i = index; i < end; i++) {
+      const row = rows[i] as DiffRow;
+      if (row.a !== null) aSeen++;
+      if (row.b !== null) bSeen++;
+      if (row.kind === 'equal') {
+        const aTail = noNewline('a', row.a);
+        const bTail = noNewline('b', row.b);
+        if (aTail === bTail) {
+          retain(body, ` ${line('a', row.a)}`);
+          if (aTail) retain(body, NO_NEWLINE);
+        } else {
+          retain(body, `-${line('a', row.a)}`);
+          if (aTail) retain(body, NO_NEWLINE);
+          retain(body, `+${line('b', row.b)}`);
+          if (bTail) retain(body, NO_NEWLINE);
+        }
+        aCount++;
+        bCount++;
+      } else if (row.kind === 'delete') {
+        retain(body, `-${line('a', row.a)}`);
+        if (noNewline('a', row.a)) retain(body, NO_NEWLINE);
+        aCount++;
+      } else if (row.kind === 'insert') {
+        retain(body, `+${line('b', row.b)}`);
+        if (noNewline('b', row.b)) retain(body, NO_NEWLINE);
+        bCount++;
+      } else {
+        retain(body, `-${line('a', row.a)}`);
+        if (noNewline('a', row.a)) retain(body, NO_NEWLINE);
+        retain(body, `+${line('b', row.b)}`);
+        if (noNewline('b', row.b)) retain(body, NO_NEWLINE);
+        aCount++;
+        bCount++;
+      }
+    }
+    retain(out, `@@ -${aCount === 0 ? aStart : aStart + 1},${aCount} +${bCount === 0 ? bStart : bStart + 1},${bCount} @@`);
+    out.push(...body);
+    index = end;
+  }
   return `${out.join('\n')}\n`;
 }

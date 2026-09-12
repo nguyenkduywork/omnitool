@@ -254,6 +254,56 @@ describe('worker crash', () => {
 
 // REQUIREMENT 4: cancellation.
 describe('cancellation', () => {
+  it('settles immediate cancellation when replacement worker construction fails', async () => {
+    const makeWorker = fakeFactory({ loaders: TEST_LOADERS });
+    let constructions = 0;
+    const flakyPool = new WorkerPool({
+      capacity: 1,
+      factory: () => {
+        constructions += 1;
+        if (constructions === 2) throw new Error('replacement worker unavailable');
+        return makeWorker();
+      },
+    });
+    try {
+      const job = run('test-runaway', [], {}, { pool: flakyPool, cancelImmediately: true });
+      await tick();
+      expect(FakeWorker.instances).toHaveLength(1);
+      expect(() => job.cancel()).not.toThrow();
+      await expect(job.done).rejects.toMatchObject({ code: 'Cancelled' });
+      expect(FakeWorker.instances[0]!.terminated).toBe(true);
+      expect(flakyPool.size()).toBe(0);
+      // Discard removed the old slot, so a later acquire may retry creation.
+      const replacement = await flakyPool.acquire();
+      flakyPool.release(replacement);
+      expect(flakyPool.size()).toBe(1);
+    } finally {
+      flakyPool.terminateAll();
+    }
+  });
+
+  it('immediate cancellation terminates a busy worker before a late success can publish', async () => {
+    let finish!: (outputs: OpOutput[]) => void;
+    const late: Op = () => new Promise((resolve) => { finish = resolve; });
+    const immediatePool = new WorkerPool({
+      factory: fakeFactory({ loaders: { ...TEST_LOADERS, 'test-late-success': () => Promise.resolve({ default: late }) } }),
+      capacity: 1,
+    });
+    try {
+      const job = run('test-late-success', [], {}, { pool: immediatePool, cancelImmediately: true });
+      await tick();
+      job.cancel();
+      expect(FakeWorker.instances[0]!.terminated).toBe(true);
+      expect(FakeWorker.instances[0]!.received.some((message) => message.kind === 'cancel')).toBe(false);
+      finish([out('late.txt', 'must not publish')]);
+      await expect(job.done).rejects.toMatchObject({ code: 'Cancelled' });
+      await tick();
+      expect(immediatePool.size()).toBe(1);
+    } finally {
+      immediatePool.terminateAll();
+    }
+  });
+
   it('the documented grace period before terminating is 2000 ms', () => {
     expect(CANCEL_GRACE_MS).toBe(2000);
   });

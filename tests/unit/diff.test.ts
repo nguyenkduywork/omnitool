@@ -24,6 +24,7 @@ import { DATA_LOADERS } from '../../src/core/workers/loaders.data';
 import textDiff from '../../src/tools/data/text-diff.op';
 import {
   collapseRows,
+  diffCharacters,
   diffLines,
   diffWords,
   splitLines,
@@ -155,6 +156,11 @@ describe('diffLines', () => {
     // The whole point: a CRLF/LF pair must not read as "every line changed".
     expect(result.stats.changed).toBe(0);
     expect(result.onlyEndingsDiffer).toBe(true);
+  });
+
+  it('detects mixed terminator-position changes and never calls ignored text a metadata change', () => {
+    expect(diffLines('a\r\nb\nc', 'a\nb\r\nc').onlyEndingsDiffer).toBe(true);
+    expect(diffLines('Alpha\n', 'alpha\n', { ignoreCase: true }).onlyEndingsDiffer).toBe(false);
   });
 
   it('counts a rewritten line as one change, not an add plus a delete', () => {
@@ -355,6 +361,12 @@ describe('diffWords', () => {
     expect(b.filter((s) => s.changed).map((s) => s.text)).toEqual(['for']);
   });
 
+  it('keeps Unicode identifiers intact as word tokens', () => {
+    const { a, b } = diffWords('const café = 1; 变量();', 'const café = 2; 变量();');
+    expect(a.map((part) => part.text).join('')).toBe('const café = 1; 变量();');
+    expect(b.filter((part) => part.changed).map((part) => part.text)).toEqual(['2']);
+  });
+
   it('reassembles both sides exactly', () => {
     const pairs: [string, string][] = [
       ['', 'added'],
@@ -415,6 +427,18 @@ describe('diffWords', () => {
   it('merges neighbouring segments of the same kind', () => {
     const { b } = diffWords('a', 'a bc de');
     expect(b.filter((s) => s.changed)).toHaveLength(1);
+  });
+});
+
+describe('diffCharacters', () => {
+  it('reassembles whole graphemes without splitting combining or ZWJ sequences', () => {
+    const left = 'e\u0301 👩‍💻';
+    const right = 'é 👨‍💻';
+    const result = diffCharacters(left, right);
+    expect(result.supported).toBe(true);
+    expect(result.a.map((part) => part.text).join('')).toBe(left);
+    expect(result.b.map((part) => part.text).join('')).toBe(right);
+    expect(result.a.some((part) => part.text === '\u0301')).toBe(false);
   });
 });
 
@@ -577,6 +601,18 @@ describe('text-diff (the op)', () => {
     expect(html).toContain('<mark>');
   });
 
+  it('carries mixed line-ending and BOM metadata into a report with changed text', async () => {
+    const [output] = await textDiff(
+      [textInput('old.txt', '\ufeffalpha\r\nold\nkeep\r'), textInput('new.txt', 'alpha\nnew\r\nkeep\r')],
+      {}, makeCtx(),
+    );
+    const html = decode(output?.buffer as ArrayBuffer);
+    expect(html).toContain('Original source: MIXED line endings; BOM present; final newline present');
+    expect(html).toContain('Revised source: MIXED line endings; no BOM; final newline present');
+    expect(html).toContain('Aligned line endings differ.');
+    expect(html).not.toContain('Metadata-only difference');
+  });
+
   it('never references anything off the machine', async () => {
     const ctx = makeCtx();
     const [output] = await textDiff([textInput('a.txt', OLD), textInput('b.txt', NEW)], {}, ctx);
@@ -616,7 +652,7 @@ describe('text-diff (the op)', () => {
     expect(output?.type).toBe('text/plain');
     const patch = decode(output?.buffer as ArrayBuffer);
     expect(patch).toContain('--- a/old.js');
-    expect(patch).toContain('+++ b/new.js');
+    expect(patch).toContain('+++ b/old.js');
     expect(patch).toMatch(/^@@ -\d+,\d+ \+\d+,\d+ @@$/m);
     expect(patch).toContain('-  return items.length;');
     expect(patch).toContain('+  return items.length * 2;');
@@ -633,6 +669,7 @@ describe('text-diff (the op)', () => {
     expect(output?.name).toBe('new-vs-old.diff');
     const patch = decode(output?.buffer as ArrayBuffer);
     expect(patch).toContain('--- a/new.js');
+    expect(patch).toContain('+++ b/new.js');
     expect(patch).toContain('-  return items.length * 2;');
   });
 
@@ -650,7 +687,9 @@ describe('text-diff (the op)', () => {
       { format: 'unified', ignoreWhitespace: true },
       makeCtx(),
     );
-    expect(decode(relaxed[0]?.buffer as ArrayBuffer)).not.toContain('@@');
+    // Display rules do not weaken a machine patch: it must retain the exact
+    // whitespace edit so `git apply` recreates the revised source bytes.
+    expect(decode(relaxed[0]?.buffer as ArrayBuffer)).toContain('@@');
   });
 
   it('says so, rather than nothing, when the files are the same', async () => {
@@ -672,10 +711,8 @@ describe('text-diff (the op)', () => {
       makeCtx(),
     );
     const patch = decode(output?.buffer as ArrayBuffer);
-    expect(patch).toContain('# Every line is identical');
-    // Still a patch: the preamble sits before the header, where patch and git
-    // apply skip it.
-    expect(patch.indexOf('#')).toBeLessThan(patch.indexOf('--- a/'));
+    expect(patch).toContain('@@');
+    expect(patch).toContain('-a\n+a\r\n');
   });
 
   it('calls a line-ending-only difference what it is', async () => {
@@ -725,8 +762,8 @@ describe('text-diff (the op)', () => {
     // No filenames to build one from, so the output says what it is.
     expect(output?.name).toBe('comparison.diff');
     const patch = decode(output?.buffer as ArrayBuffer);
-    expect(patch).toContain('--- a/original text');
-    expect(patch).toContain('+++ b/changed text');
+    expect(patch).toContain('--- a/comparison.txt');
+    expect(patch).toContain('+++ b/comparison.txt');
     expect(patch).toContain('+  return items.length * 2;');
   });
 
@@ -741,7 +778,7 @@ describe('text-diff (the op)', () => {
     expect(output?.name).toBe('old-vs-pasted.diff');
     const patch = decode(output?.buffer as ArrayBuffer);
     expect(patch).toContain('--- a/old.js');
-    expect(patch).toContain('+++ b/changed text');
+    expect(patch).toContain('+++ b/old.js');
     expect(patch).toContain('-  return items.length;');
   });
 
@@ -756,8 +793,8 @@ describe('text-diff (the op)', () => {
 
     expect(output?.name).toBe('pasted-vs-new.diff');
     const patch = decode(output?.buffer as ArrayBuffer);
-    expect(patch).toContain('--- a/changed text');
-    expect(patch).toContain('+++ b/new.js');
+    expect(patch).toContain('--- a/comparison.txt');
+    expect(patch).toContain('+++ b/comparison.txt');
   });
 
   it('treats a side pasted as empty as a real, empty side', async () => {
@@ -769,15 +806,25 @@ describe('text-diff (the op)', () => {
     expect(patch).toContain('+a');
   });
 
-  it('refuses two empty boxes rather than reporting them identical', async () => {
-    // "0 added, 0 removed, 100% unchanged" is a true answer to a question
-    // nobody asked, and it looks exactly like a broken tool.
-    const error = await expectOpError(
-      textDiff([], { leftText: '', rightText: '' }, makeCtx()),
+  it('treats two explicitly empty boxes as a real identical comparison', async () => {
+    const [output] = await textDiff([], { leftText: '', rightText: '' }, makeCtx());
+    expect(decode(output?.buffer as ArrayBuffer)).toContain('identical contents');
+  });
+
+  it('rejects an immutable snapshot mixed with legacy source inputs', async () => {
+    const snapshot = {
+      schemaVersion: 1,
+      revision: 1,
+      sources: [
+        { provided: true, text: OLD, name: 'old.js', origin: 'text', byteLength: 1 },
+        { provided: true, text: NEW, name: 'new.js', origin: 'text', byteLength: 1 },
+      ],
+      rules: { ignoreWhitespace: false, ignoreCase: false },
+    };
+    await expectOpError(
+      textDiff([], { comparisonSnapshot: snapshot, leftText: OLD, format: 'unified' }, makeCtx()),
       'InvalidOptions',
     );
-    expect(error.message).toContain('paste text into both boxes');
-    expect(error.file).toBeUndefined();
   });
 
   it('rejects pasted text that is not text', async () => {
@@ -872,7 +919,7 @@ describe('text-diff (the op)', () => {
     // because a comparison of three files is three comparisons.
     expect(tool?.minInputs).toBe(0);
     expect(tool?.maxInputs).toBe(2);
-    expect(tool?.editor).toBeTypeOf('function');
+    expect(tool?.workspace).toBeTypeOf('function');
     // The worker's static id -> loader map is what actually runs the op; a
     // registry entry without one is a tool that cannot run.
     expect(DATA_LOADERS['text-diff']).toBeTypeOf('function');

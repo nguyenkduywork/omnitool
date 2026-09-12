@@ -28,6 +28,8 @@ export type ResultInput = { name: string; size: number; type: string };
 export type ResultsView = {
   toolName: string;
   inputs: ResultInput[];
+  /** Workspace artifacts are derived from a pair, not comparable to one source. */
+  showSizeDelta?: boolean;
   result?: JobResult;
   /** A job-level failure: nothing succeeded, or the cause is not one file. */
   error?: { code: OpErrorCode; message: string; file?: string };
@@ -37,6 +39,7 @@ export type ResultsHandle = {
   readonly el: HTMLElement;
   show(view: ResultsView): Promise<void>;
   clear(): void;
+  revealOutput(name: string): void;
 };
 
 /** What to do next, per error code. Every message must be actionable (§9). */
@@ -202,6 +205,7 @@ function outputCard(
   inputs: ResultInput[],
   siblings: number,
   urls: string[],
+  showSizeDelta: boolean,
 ): HTMLElement {
   const card = el('article', 'card card--output');
 
@@ -220,7 +224,7 @@ function outputCard(
 
   const meta = el('div', 'card__meta');
   meta.append(el('span', 'card__type', label(output.type)));
-  const chip = deltaChip(output, sourceOf(output, inputs), siblings);
+  const chip = showSizeDelta ? deltaChip(output, sourceOf(output, inputs), siblings) : null;
   if (chip) meta.append(chip);
   else meta.append(el('span', 'chip chip--flat', formatBytes(output.buffer.byteLength)));
 
@@ -332,6 +336,16 @@ export function createResults(): ResultsHandle {
       summary.textContent = '';
     },
 
+    revealOutput(name): void {
+      const card = [...grid.querySelectorAll<HTMLElement>('.card--output')].find(
+        (item) => item.querySelector('.card__name')?.textContent === name,
+      );
+      const button = card?.querySelector<HTMLButtonElement>('.card__head button');
+      if (!button) return;
+      root.scrollIntoView({ block: 'nearest' });
+      button.focus();
+    },
+
     async show(view: ResultsView): Promise<void> {
       const outputs = view.result?.outputs ?? [];
       const failures = (view.result?.results ?? []).filter(
@@ -399,7 +413,7 @@ export function createResults(): ResultsHandle {
       for (const output of outputs) {
         const source = sourceOf(output, view.inputs);
         const count = source ? (siblings.get(source.name) ?? 1) : 1;
-        cards.push(outputCard(output, view.inputs, count, previewUrls));
+        cards.push(outputCard(output, view.inputs, count, previewUrls, view.showSizeDelta !== false));
       }
       for (const failure of failures) {
         cards.push(failureCard(failure.name, failure.code, failure.message));

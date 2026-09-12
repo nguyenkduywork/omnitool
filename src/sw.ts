@@ -31,9 +31,10 @@
 declare const __PRECACHE__: readonly string[];
 
 // UPDATE STRATEGY: skipWaiting() + clients.claim(), not an "update available"
-// banner. omnitool has no in-page state worth protecting across an update —
-// no draft, no open connection, no unsaved form; a run in progress lives
-// entirely in a Web Worker the SW never touches. Given that, activating a new
+// banner. omnitool keeps in-memory workspace drafts for the lifetime of a tab,
+// but they are never persisted and a service-worker activation does not reload
+// or otherwise mutate an open page. A run in progress lives entirely in a Web
+// Worker the SW never touches. Given that, activating a new
 // version immediately (rather than waiting for every tab to close) means a
 // user who reloads gets the current app rather than being stuck on a stale
 // one behind a prompt they have to notice and act on. The one thing that
@@ -75,13 +76,21 @@ function isBuildAsset(pathname: string): boolean {
   return pathname.includes('/assets/');
 }
 
+function remember(cacheName: string, request: Request, response: Response): void {
+  // CacheStorage can fail (for example, when storage is exhausted). The
+  // network response is still usable, so caching must stay best effort.
+  try {
+    const copy = response.clone();
+    void caches.open(cacheName).then((cache) => cache.put(request, copy)).catch(() => undefined);
+  } catch {
+    // A response that cannot be cloned still goes to the caller.
+  }
+}
+
 async function networkFirst(scope: ServiceWorkerScope, request: Request): Promise<Response> {
   try {
     const response = await fetch(request);
-    if (response.ok) {
-      const cache = await caches.open(APP_CACHE);
-      void cache.put(request, response.clone());
-    }
+    if (response.ok) remember(APP_CACHE, request, response);
     return response;
   } catch {
     const cached = await caches.match(request);
@@ -96,12 +105,14 @@ async function networkFirst(scope: ServiceWorkerScope, request: Request): Promis
 }
 
 async function staleWhileRevalidate(request: Request): Promise<Response> {
-  const cache = await caches.open(RUNTIME_CACHE);
-  const cached = await cache.match(request);
+  // Hashed asset URLs identify their bytes. Search both the install-time
+  // shell cache and the runtime cache; preview servers may send `Vary: Origin`
+  // even though the same URL always names the same build output.
+  const cached = await caches.match(request, { ignoreVary: true }).catch(() => undefined);
 
   const revalidate = fetch(request)
     .then((response) => {
-      if (response.ok) void cache.put(request, response.clone());
+      if (response.ok) remember(RUNTIME_CACHE, request, response);
       return response;
     })
     .catch(() => undefined);

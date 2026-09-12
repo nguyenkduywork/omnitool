@@ -202,6 +202,15 @@ export function createDropzone(init: {
     deliver(event.dataTransfer?.files);
   };
 
+  // A workspace may own a side-specific drop and stop bubbling before onDrop.
+  // Reset only the global drag overlay in capture phase; intake still belongs
+  // to the normal bubbling handler when no inner surface claims the file.
+  const onDropCapture = (event: DragEvent): void => {
+    if (!carriesFiles(event.dataTransfer)) return;
+    depth = 0;
+    setDragging(false);
+  };
+
   const onPaste = (event: ClipboardEvent): void => {
     const files = event.clipboardData?.files;
     if (!files || files.length === 0) return;
@@ -214,6 +223,7 @@ export function createDropzone(init: {
   document.addEventListener('dragenter', onDragEnter);
   document.addEventListener('dragover', onDragOver);
   document.addEventListener('dragleave', onDragLeave);
+  document.addEventListener('drop', onDropCapture, true);
   document.addEventListener('drop', onDrop);
   document.addEventListener('paste', onPaste);
 
@@ -231,6 +241,7 @@ export function createDropzone(init: {
       document.removeEventListener('dragenter', onDragEnter);
       document.removeEventListener('dragover', onDragOver);
       document.removeEventListener('dragleave', onDragLeave);
+      document.removeEventListener('drop', onDropCapture, true);
       document.removeEventListener('drop', onDrop);
       document.removeEventListener('paste', onPaste);
       setDragging(false);
