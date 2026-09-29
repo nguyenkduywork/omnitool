@@ -411,6 +411,13 @@ describe('NB2 — the frozen remove control reads as disabled, not merely inert'
     expect(item.getAttribute('draggable')).toBe('true');
     expect(getComputedStyle(item).cursor).toBe('grab');
 
+    const arrange = one<HTMLSelectElement>('.tray__sort');
+    const undoOrder = one<HTMLButtonElement>('[aria-label="Undo file ordering"]');
+    arrange.value = 'reverse';
+    arrange.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(arrange.disabled).toBe(false);
+    expect(undoOrder.disabled).toBe(false);
+
     // `start()` runs synchronously up to its first `await` (the dynamic
     // `import('../core/pipeline')`), and that synchronous prefix is what
     // calls `setRunning(true)` — so immediately after `.click()` returns,
@@ -427,6 +434,8 @@ describe('NB2 — the frozen remove control reads as disabled, not merely inert'
     // each individually has "some" disabled style.
     expect(remove.disabled).toBe(true);
     expect(nudgeDown.disabled).toBe(true);
+    expect(arrange.disabled).toBe(true);
+    expect(undoOrder.disabled).toBe(true);
     const removeStyle = getComputedStyle(remove);
     const nudgeStyle = getComputedStyle(nudgeDown);
     expect(removeStyle.opacity).toBe(nudgeStyle.opacity);
@@ -638,7 +647,7 @@ describe('I1(a) follow-up — "Change tool" freezes with the rest of the catalog
 // passes' own numbering; see this file's header comment.
 // ---------------------------------------------------------------------------
 describe('NB2 (pass #4) — Remove all files focuses a reachable control', () => {
-  it('focuses the hero\'s pick button when the tray goes fully cold (no tool picked)', async () => {
+  it('focuses Undo when the tray goes fully cold and restores the removed file', async () => {
     deliver([await fixture('small.pdf')]);
     await until('the file to land', () => count('.tray__item') === 1);
 
@@ -646,10 +655,16 @@ describe('NB2 (pass #4) — Remove all files focuses a reachable control', () =>
     await until('the tray to empty', () => count('.tray__item') === 0);
 
     expect(one<HTMLElement>('#stage').dataset.phase).toBe('browsing');
-    expect(document.activeElement).toBe(one<HTMLButtonElement>('.hero .btn--primary'));
+    const undo = one<HTMLButtonElement>('[aria-label="Undo file removal"]');
+    expect(document.activeElement).toBe(undo);
+    expect(undo.offsetParent).not.toBeNull();
+    undo.click();
+    expect(count('.tray__item')).toBe(1);
+    expect(one<HTMLElement>('.file-removal').hidden).toBe(true);
+    expect(document.activeElement).toBe(one<HTMLButtonElement>('.addbar button'));
   });
 
-  it('focuses the add-bar\'s "Add files" button when a tool is still picked (I2) — the hero stays hidden', async () => {
+  it('focuses Undo with a tool still picked and keeps that tool after restoration', async () => {
     deliver([await fixture('small.pdf')]);
     await until('the file to land', () => count('.tray__item') === 1);
 
@@ -660,14 +675,44 @@ describe('NB2 (pass #4) — Remove all files focuses a reachable control', () =>
     await until('the tray to empty', () => count('.tray__item') === 0);
 
     expect(one<HTMLElement>('#stage').dataset.phase).toBe('tool-picked');
-    // Before the fix: focus landed on the hero's own pick button, which
-    // stays `display: none` here (paint()'s cold/browsing morph is the
-    // ONLY thing that un-hides the hero, and TOOL PICKED never triggers
-    // it) — measured live, a real Tab press from there fell all the way to
-    // <body>, restarting the page's whole tab order.
-    const addButton = one<HTMLButtonElement>('.addbar button');
-    expect(document.activeElement).toBe(addButton);
-    expect(addButton.offsetParent).not.toBeNull();
+    const undo = one<HTMLButtonElement>('[aria-label="Undo file removal"]');
+    expect(document.activeElement).toBe(undo);
+    expect(undo.offsetParent).not.toBeNull();
+    undo.click();
+    expect(count('.tray__item')).toBe(1);
+    expect(location.hash).toBe('#/pdf-split');
+    expect(one<HTMLElement>('#stage').dataset.phase).toBe('ready');
+    // Undo cannot change the inputs of a job already in flight.
+    deliver([await fixture('small.pdf')]);
+    await until('both files to land', () => count('.tray__item') === 2);
+    one<HTMLButtonElement>('.tray__remove').click();
+    expect(undo.disabled).toBe(false);
+    // Restore at the first result paint, while the entrance animation is pending.
+    // This reproduces completion overtaking Undo without racing Worker timing.
+    let entering: HTMLElement | null = null;
+    const observer = new MutationObserver(() => {
+      const card = root.querySelector<HTMLElement>('.card--output');
+      if (!card || undo.disabled) return;
+      entering = card;
+      observer.disconnect();
+      undo.click();
+    });
+    observer.observe(root, { childList: true, subtree: true });
+    one<HTMLButtonElement>('.run .btn--primary').click();
+    expect(undo.disabled).toBe(true);
+    undo.click();
+    expect(count('.tray__item')).toBe(1);
+    try {
+      await until('Undo during the first result paint', () => entering !== null);
+      await until('the old entrance to settle', () => entering?.style.willChange === '');
+      await settle(0);
+      expect(count('.tray__item')).toBe(2);
+      expect(one<HTMLElement>('#stage').dataset.phase).toBe('ready');
+      expect(one<HTMLElement>('.results').hidden).toBe(true);
+      expect(one<HTMLElement>('[aria-live="polite"]').textContent).toContain('Removed files restored');
+    } finally {
+      observer.disconnect();
+    }
   });
 });
 

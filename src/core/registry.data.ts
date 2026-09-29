@@ -37,6 +37,7 @@ export const DATA_TOOLS: ToolDef[] = [
   },
   {
     id: 'zip-extract',
+    aliases: ['unzip', 'open zip', 'decompress zip'],
     name: 'Extract ZIP',
     blurb: 'Unpack every file from a ZIP archive',
     group: 'data',
@@ -65,7 +66,8 @@ export const DATA_TOOLS: ToolDef[] = [
         ],
         default: 'encode',
       },
-      level: { kind: 'range', label: 'Compression level', min: 0, max: 9, step: 1, default: 6 },
+      level: { kind: 'range', label: 'Compression level', min: 0, max: 9, step: 1, default: 6,
+        visibleWhen: { key: 'direction', equals: 'encode' } },
     },
     preset: (files): Preset =>
       files.some((f) => f.type === 'application/gzip')
@@ -85,13 +87,15 @@ export const DATA_TOOLS: ToolDef[] = [
     options: {
       name: { kind: 'text', label: 'Archive name', default: 'archive' },
       gzip: { kind: 'toggle', label: 'Compress with gzip (.tar.gz)', default: false },
-      level: { kind: 'range', label: 'Compression level', min: 0, max: 9, step: 1, default: 6 },
+      level: { kind: 'range', label: 'Compression level', min: 0, max: 9, step: 1, default: 6,
+        visibleWhen: { key: 'gzip', equals: true } },
     },
     preset: archiveNamePreset,
     load: () => import('../tools/data/tar-create.op.js'),
   },
   {
     id: 'tar-extract',
+    aliases: ['untar', 'open tar', 'decompress tar'],
     name: 'Extract TAR',
     blurb: 'Unpack every file from a .tar or .tar.gz archive',
     group: 'data',
@@ -231,6 +235,7 @@ export const DATA_TOOLS: ToolDef[] = [
   },
   {
     id: 'json-format',
+    aliases: ['beautify json', 'json formatter', 'minify json'],
     name: 'Format JSON',
     blurb: 'Pretty-print or minify JSON',
     group: 'data',
@@ -248,7 +253,8 @@ export const DATA_TOOLS: ToolDef[] = [
         ],
         default: 'pretty',
       },
-      indent: { kind: 'number', label: 'Indent size', min: 1, max: 8, step: 1, default: 2 },
+      indent: { kind: 'number', label: 'Indent size', min: 1, max: 8, step: 1, default: 2,
+        visibleWhen: { key: 'mode', equals: 'pretty' } },
     },
     load: () => import('../tools/data/json-format.op.js'),
   },
@@ -314,6 +320,7 @@ export const DATA_TOOLS: ToolDef[] = [
   },
   {
     id: 'text-diff',
+    aliases: ['text difference', 'diff files', 'compare code'],
     name: 'Compare text',
     blurb: 'See exactly what changed between two versions of a text or code file',
     group: 'data',

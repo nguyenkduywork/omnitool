@@ -21,6 +21,7 @@ import type { JobResult, OpErrorCode, OpOutput } from '../types';
 import { label } from '../core/format';
 import { el, formatBytes, icon } from './dom';
 import { flyToResults } from './motion';
+import { openImagePreview, type ImagePreviewHandle, type PreviewImage } from './image-preview';
 
 /** `type` is the magic-byte sniffed mime, needed by comparable() below. */
 export type ResultInput = { name: string; size: number; type: string };
@@ -204,8 +205,10 @@ function outputCard(
   output: OpOutput,
   inputs: ResultInput[],
   siblings: number,
-  urls: string[],
+  previews: PreviewImage[],
   showSizeDelta: boolean,
+  onPreview: (preview: PreviewImage, trigger: HTMLElement) => void,
+  onReuse?: (outputs: readonly OpOutput[]) => void,
 ): HTMLElement {
   const card = el('article', 'card card--output');
 
@@ -238,15 +241,23 @@ function outputCard(
     const url = URL.createObjectURL(new Blob([output.buffer], { type: output.type }));
     // Caller owns revocation — held until the tray is cleared or replaced, so
     // the URL stays valid for as long as the card is on screen.
-    urls.push(url);
+    const preview = { output, url };
+    previews.push(preview);
 
-    const figure = el('div', 'card__thumb');
+    const figure = el('button', 'card__thumb card__preview');
+    figure.type = 'button';
+    figure.setAttribute('aria-label', `Preview ${output.name}`);
+    figure.title = 'Open image preview';
     const img = el('img');
     img.src = url;
     img.alt = `Preview of ${output.name}`;
     img.loading = 'lazy';
     img.decoding = 'async';
     figure.append(img);
+    const caption = el('span', 'card__preview-label');
+    caption.append(icon('expand'), el('span', undefined, 'Open preview'));
+    figure.append(caption);
+    figure.addEventListener('click', () => onPreview(preview, figure));
     card.append(figure);
   }
 
@@ -268,6 +279,15 @@ function outputCard(
         ),
       );
     }
+    card.append(foot);
+  }
+
+  if (onReuse) {
+    const next = el('button', 'btn btn--ghost btn--sm result-reuse', 'Use this result…');
+    next.type = 'button';
+    next.addEventListener('click', () => onReuse([output]));
+    const foot = el('div', 'card__next');
+    foot.append(next);
     card.append(foot);
   }
 
@@ -294,8 +314,14 @@ function failureCard(name: string, code: OpErrorCode, message: string): HTMLElem
   return card;
 }
 
-export function createResults(): ResultsHandle {
-  const root = el('section', 'results');
+export type ResultsInit = {
+  onReuse?: (outputs: readonly OpOutput[]) => void;
+  mount?: HTMLElement;
+};
+
+export function createResults(init: ResultsInit = {}): ResultsHandle {
+  const root = init.mount ?? el('section', 'results');
+  root.replaceChildren();
   root.hidden = true;
   root.setAttribute('aria-labelledby', 'results-heading');
 
@@ -317,11 +343,14 @@ export function createResults(): ResultsHandle {
   root.append(head, banner, grid);
 
   /** Object URLs backing image previews, revoked whenever the tray is reset. */
-  let previewUrls: string[] = [];
+  let previews: PreviewImage[] = [];
+  let viewer: ImagePreviewHandle | null = null;
 
   function revokePreviews(): void {
-    for (const url of previewUrls) URL.revokeObjectURL(url);
-    previewUrls = [];
+    viewer?.close(false);
+    viewer = null;
+    for (const preview of previews) URL.revokeObjectURL(preview.url);
+    previews = [];
   }
 
   return {
@@ -330,6 +359,7 @@ export function createResults(): ResultsHandle {
     clear(): void {
       root.hidden = true;
       banner.hidden = true;
+      banner.replaceChildren();
       revokePreviews();
       grid.replaceChildren();
       actions.replaceChildren();
@@ -355,6 +385,7 @@ export function createResults(): ResultsHandle {
       grid.replaceChildren();
       actions.replaceChildren();
       banner.hidden = true;
+      banner.replaceChildren();
       banner.className = 'banner';
       root.hidden = false;
 
@@ -385,6 +416,12 @@ export function createResults(): ResultsHandle {
       }
 
       if (outputs.length > 1) {
+        if (init.onReuse) {
+          const reuse = el('button', 'btn btn--ghost btn--sm result-reuse', `Use all results (${outputs.length})…`);
+          reuse.type = 'button';
+          reuse.addEventListener('click', () => init.onReuse?.(outputs));
+          actions.append(reuse);
+        }
         const all = el('button', 'btn btn--primary btn--sm');
         all.type = 'button';
         all.append(icon('download'), el('span', undefined, `Download all (${outputs.length})`));
@@ -413,7 +450,11 @@ export function createResults(): ResultsHandle {
       for (const output of outputs) {
         const source = sourceOf(output, view.inputs);
         const count = source ? (siblings.get(source.name) ?? 1) : 1;
-        cards.push(outputCard(output, view.inputs, count, previewUrls, view.showSizeDelta !== false));
+        cards.push(outputCard(output, view.inputs, count, previews, view.showSizeDelta !== false,
+          (preview, trigger) => {
+            viewer?.close(false);
+            viewer = openImagePreview(previews, preview, trigger);
+          }, init.onReuse));
       }
       for (const failure of failures) {
         cards.push(failureCard(failure.name, failure.code, failure.message));

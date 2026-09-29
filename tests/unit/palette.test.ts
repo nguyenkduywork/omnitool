@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { fuzzyScore, searchTools, type SearchableTool } from '../../src/ui/palette';
+import { TOOLS } from '../../src/core/registry';
 
 describe('fuzzyScore', () => {
   it('matches an empty query against anything, with score 0', () => {
@@ -74,6 +75,28 @@ describe('fuzzyScore', () => {
 });
 
 describe('searchTools', () => {
+  it.each([
+    ['compress pdf', 'pdf-shrink'],
+    ['  PDF   compress  ', 'pdf-shrink'],
+    ['combine pdf', 'pdf-merge'],
+    ['unzip', 'zip-extract'],
+    ['jpg to pdf', 'pdf-from-images'],
+    ['beautify json', 'json-format'],
+  ])('finds the intended tool for "%s"', (query, id) => {
+    expect(searchTools(TOOLS, query)[0]?.id).toBe(id);
+  });
+
+  it('keeps an exact name ahead of aliases and an alias ahead of scattered name matches', () => {
+    const examples = [
+      { name: 'Unusual zebra inspector program', blurb: '' },
+      { name: 'Extract archive', blurb: '', aliases: ['unzip'] },
+      { name: 'Unzip', blurb: '' },
+    ];
+    expect(searchTools(examples, 'unzip').map((tool) => tool.name)).toEqual([
+      'Unzip', 'Extract archive', 'Unusual zebra inspector program',
+    ]);
+  });
+
   const tools: SearchableTool[] = [
     { name: 'Merge PDFs', blurb: 'Combine several PDFs into one, in tray order.' },
     { name: 'Split PDF', blurb: 'One file per page, or one file per page range.' },

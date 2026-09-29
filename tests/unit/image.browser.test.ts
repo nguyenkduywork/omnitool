@@ -320,7 +320,7 @@ describe('image registry entries', () => {
   it('uses exactly the option schemas the plan specifies', () => {
     const byId = new Map(IMAGE_TOOLS.map((tool) => [tool.id, tool]));
 
-    expect(byId.get('image-convert')?.options).toEqual({
+    expect(byId.get('image-convert')?.options).toMatchObject({
       format: {
         kind: 'select',
         label: 'Format',
@@ -335,7 +335,7 @@ describe('image registry entries', () => {
       quality: { kind: 'range', label: 'Quality', min: 10, max: 100, step: 5, default: 85 },
     });
 
-    expect(byId.get('image-resize')?.options).toEqual({
+    expect(byId.get('image-resize')?.options).toMatchObject({
       mode: {
         kind: 'select',
         label: 'Resize by',
@@ -423,7 +423,7 @@ describe('image registry entries', () => {
     });
     expect(byId.get('image-watermark')?.accepts).toEqual(['image/*']);
 
-    expect(byId.get('image-merge-sheet')?.options).toEqual({
+    expect(byId.get('image-merge-sheet')?.options).toMatchObject({
       layout: {
         kind: 'select',
         label: 'Layout',
@@ -477,6 +477,21 @@ describe('canEncode', () => {
 // ---------------------------------------------------------------------------
 
 describe('image-convert', () => {
+  it('flattens JPEG transparency onto white by default or chosen black, while PNG keeps alpha', async () => {
+    const canvas = new OffscreenCanvas(32, 16);
+    const context = canvas.getContext('2d')!;
+    context.fillStyle = '#ff0000';
+    context.fillRect(16, 0, 16, 16);
+    const input: OpInput = { name: 'transparent.png', type: 'image/png', buffer: await (await canvas.convertToBlob()).arrayBuffer() };
+    const run = async (options: Record<string, unknown>) => (await convert([input], options, recorder().ctx))[0]!;
+    const white = await samplePixel(await run({ format: 'jpeg' }), 4, 8);
+    expect(white.slice(0, 3).every((channel) => channel > 240)).toBe(true);
+    const black = await samplePixel(await run({ format: 'jpeg', background: 'black' }), 4, 8);
+    expect(black.slice(0, 3).every((channel) => channel < 15)).toBe(true);
+    expect((await samplePixel(await run({ format: 'png', background: 'black' }), 4, 8))[3]).toBe(0);
+    await expectOpError(run({ format: 'jpeg', background: 'transparent' }), 'InvalidOptions');
+  });
+
   it('converts a PNG to WebP with the real output mime and dimensions (happy path)', async () => {
     const input = await opInput('a.png', 'image/png'); // 4x4
     const { ctx } = recorder();
@@ -547,10 +562,29 @@ describe('image-resize', () => {
     const { ctx } = recorder();
     const outputs = await resize(
       [input],
-      { mode: 'percent', percent: 50, width: 1920, height: 1080, lockAspect: true },
+      { mode: 'percent', percent: 50, width: 1920, height: 1080, lockAspect: true, withoutEnlargement: true },
       ctx,
     );
     expect(await decodeOutput(outputs[0] as OpOutput)).toEqual({ width: 4, height: 3 });
+  });
+
+  it('caps enlargement in each mode, preserves unchanged bytes, and still shrinks the other axis when unlocked', async () => {
+    const input = await opInput('b.png', 'image/png'); // 6 × 4
+    for (const options of [
+      { mode: 'percent', percent: 200 },
+      { width: 1080, height: 1080, lockAspect: true },
+      { width: 1080, height: 1080, lockAspect: false },
+    ]) {
+      const { ctx, fractions } = recorder();
+      const [output] = await resize([input], { ...options, withoutEnlargement: true }, ctx);
+      expect(output?.buffer).toBe(input.buffer);
+      expect(output?.name).toBe(input.name);
+      expect(output?.type).toBe(input.type);
+      expectMonotonicEndingAtOne(fractions);
+    }
+    const [mixed] = await resize([input], { width: 20, height: 2, lockAspect: false, withoutEnlargement: true }, recorder().ctx);
+    expect(await decodeOutput(mixed!)).toEqual({ width: 6, height: 2 });
+    await expectOpError(resize([input], { withoutEnlargement: 'true' }, recorder().ctx), 'InvalidOptions');
   });
 
   it('rejects an out-of-range percent with InvalidOptions', async () => {

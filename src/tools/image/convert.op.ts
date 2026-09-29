@@ -135,6 +135,10 @@ const convert: Op = async (inputs, options, ctx): Promise<OpOutput[]> => {
   const format = validateFormat(options.format);
   const quality = validateQuality(options.quality);
   const mime = MIME_OF[format];
+  const background = options.background ?? 'white';
+  if (format === 'jpeg' && background !== 'white' && background !== 'black') {
+    throw new OpError('InvalidOptions', 'JPEG background must be white or black.');
+  }
 
   stop(ctx.signal);
   const supported = await canEncode(mime);
@@ -158,6 +162,10 @@ const convert: Op = async (inputs, options, ctx): Promise<OpOutput[]> => {
     if (!context) {
       bitmap.close();
       throw new OpError('EncoderUnavailable', 'Could not acquire a 2D canvas context.');
+    }
+    if (format === 'jpeg') {
+      context.fillStyle = background === 'black' ? '#000000' : '#ffffff';
+      context.fillRect(0, 0, canvas.width, canvas.height);
     }
     context.drawImage(bitmap, 0, 0);
     bitmap.close();

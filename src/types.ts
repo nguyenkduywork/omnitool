@@ -35,12 +35,17 @@ export class OpError extends Error {
   }
 }
 
-export type OptionDef =
+export type OptionDef = (
   | { kind: 'select'; label: string; choices: { value: string; label: string }[]; default: string }
   | { kind: 'number'; label: string; min: number; max: number; step: number; default: number }
   | { kind: 'range';  label: string; min: number; max: number; step: number; default: number }
   | { kind: 'toggle'; label: string; default: boolean }
-  | { kind: 'text';   label: string; placeholder?: string; default: string };
+  | { kind: 'text';   label: string; placeholder?: string; default: string }
+) & {
+  /** Hide irrelevant controls without losing their values when modes change. */
+  visibleWhen?: { key: string; equals: string | boolean };
+  hint?: string;
+};
 
 export type OptionSchema = Record<string, OptionDef>;
 
@@ -52,6 +57,15 @@ export type ToolEditor = (
   inputs: File[],
   onChange: (options: Record<string, unknown>) => void,
 ) => () => void;
+
+/** Adds lazy quick actions and a readout to a standard, session-aware panel. */
+export type ToolOptionsPreview = (
+  slots: { actions: HTMLElement; summary: HTMLElement },
+  setValues: (patch: Record<string, unknown>) => void,
+) => {
+  update(files: readonly File[], values: Readonly<Record<string, unknown>>): void;
+  destroy(): void;
+};
 
 export type WorkspaceExportFormat = 'html' | 'unified';
 
@@ -114,6 +128,8 @@ export type ToolDef = {
   id: string;
   name: string;
   blurb: string;
+  /** Common task names people use when searching for this tool. */
+  aliases?: readonly string[];
   group: ToolGroup;
   kind: ToolKind;
   /** Mime types, or the wildcards 'image/*' / '*'. */
@@ -123,6 +139,7 @@ export type ToolDef = {
   maxInputs: number | null;
   options?: OptionSchema;
   editor?: () => Promise<{ default: ToolEditor }>;
+  optionsPreview?: () => Promise<{ default: ToolOptionsPreview }>;
   /** Owns its input sources and lives beside, rather than inside, the workbench. */
   workspace?: () => Promise<{ default: ToolWorkspace }>;
   /** Defaults read off the inputs' metadata. Pure and synchronous — never

@@ -102,7 +102,7 @@ test.describe('pdf-to-images editor', () => {
   });
 
   test('produces previewable images and no misleading size delta', async ({ page }) => {
-    await seg(page, 'Resolution preset').getByRole('button', { name: 'Screen' }).click();
+    await seg(page, 'Resolution preset').getByRole('button', { name: 'Print' }).click();
     await page.getByLabel('Pages to convert').fill('1-2');
     await expect(summary(page)).toContainText('2 images');
 
@@ -133,5 +133,47 @@ test.describe('pdf-to-images editor', () => {
     const button = cards.first().getByRole('button', { name: 'Download' });
     const clipped = await button.evaluate((el) => el.scrollWidth > el.clientWidth + 1);
     expect(clipped).toBe(false);
+
+    const previewButton = cards.first().getByRole('button', { name: /^Preview / });
+    await previewButton.click();
+    const viewer = page.getByRole('dialog', { name: 'Image preview', exact: true });
+    await expect(viewer).toBeVisible();
+    await expect(viewer.locator('.image-preview__details')).toContainText('1 of 2');
+    const zoom = viewer.getByRole('combobox', { name: 'Zoom', exact: true });
+    await zoom.selectOption('200');
+    const picture = viewer.getByRole('img');
+    expect(await picture.evaluate((img: HTMLImageElement) => img.getBoundingClientRect().width)).toBe(
+      2 * await picture.evaluate((img: HTMLImageElement) => img.naturalWidth),
+    );
+    const area = viewer.getByRole('region', { name: 'Preview image area' });
+    expect(await area.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+    await area.press('ArrowRight');
+    await expect(viewer.locator('.image-preview__details')).toContainText('2 of 2');
+    await expect(zoom).toHaveValue('fit');
+    await expect(viewer.getByRole('button', { name: 'Next image', exact: true })).toBeDisabled();
+    await viewer.getByRole('button', { name: 'Previous image', exact: true }).click();
+    await expect(viewer.locator('.image-preview__details')).toContainText('1 of 2');
+    expect((await picture.boundingBox())!.height).toBeLessThanOrEqual((await area.boundingBox())!.height);
+    const downloaded = page.waitForEvent('download');
+    await viewer.getByRole('link', { name: 'Download', exact: true }).click();
+    expect((await downloaded).suggestedFilename()).toBe(await cards.first().locator('.card__name').textContent());
+    await page.screenshot({ path: test.info().outputPath('image-preview-desktop.png') });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect.poll(async () => {
+      const box = (await viewer.boundingBox())!;
+      return box.x + box.width;
+    }).toBeLessThanOrEqual(390);
+    const bounds = (await viewer.boundingBox())!;
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(390);
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(844);
+    const imageBounds = (await picture.boundingBox())!;
+    const areaBounds = (await area.boundingBox())!;
+    expect(imageBounds.width).toBeLessThanOrEqual(areaBounds.width);
+    expect(imageBounds.height).toBeLessThanOrEqual(areaBounds.height);
+    await page.screenshot({ path: test.info().outputPath('image-preview-mobile.png') });
+    await viewer.getByRole('button', { name: 'Close image preview', exact: true }).press('Escape');
+    await expect(viewer).toHaveCount(0);
+    await expect(previewButton).toBeFocused();
   });
 });

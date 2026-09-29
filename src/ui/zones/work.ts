@@ -32,9 +32,11 @@
 
 import { el, icon } from '../dom';
 import { createProgressRing, type ProgressHandle } from '../progress';
-import { createResults, type ResultsHandle } from '../results';
+import type { ResultsHandle } from '../results';
+import { createResultsHost } from '../results-host';
 import { toolIcon } from '../toolicons';
 import type { ZoneHandle } from './files';
+import type { OpOutput } from '../../types';
 
 export type WorkZoneHandle = ZoneHandle & {
   /** Where the option panel mounts. Built and torn down by the shell, which
@@ -55,7 +57,11 @@ export type WorkZoneHandle = ZoneHandle & {
   hasRunFocus(): boolean;
 };
 
-export function createWorkZone(init: { onRun: () => void; onCancel: () => void }): WorkZoneHandle {
+export function createWorkZone(init: {
+  onRun: () => void;
+  onCancel: () => void;
+  onReuse?: (outputs: readonly OpOutput[]) => void;
+}): WorkZoneHandle {
   const root = el('section', 'zone zone--work');
   root.setAttribute('aria-label', 'Selected tool');
 
@@ -119,7 +125,7 @@ export function createWorkZone(init: { onRun: () => void; onCancel: () => void }
   const bar = el('div', 'run__bar');
   bar.append(runButton, cancel, progressWrap);
 
-  const results = createResults();
+  const results = createResultsHost({ onReuse: init.onReuse });
 
   panel.append(head, options, bar);
   root.append(empty, panel);
@@ -159,6 +165,8 @@ export function createWorkZone(init: { onRun: () => void; onCancel: () => void }
       // reason that has nothing to do with the job actually in flight —
       // showing it would be a false sentence next to a spinning Cancel.
       const running = snapshot.phase === 'running';
+      for (const button of root.querySelectorAll<HTMLButtonElement>('.options__reset')) button.disabled = running;
+      for (const button of results.el.querySelectorAll<HTMLButtonElement>('.result-reuse')) button.disabled = running;
       const blocked = tool === null || running ? null : snapshot.runBlockedReason;
       runButton.setAttribute('aria-disabled', String(running || blocked !== null));
       cancel.hidden = !running;
@@ -172,6 +180,7 @@ export function createWorkZone(init: { onRun: () => void; onCancel: () => void }
       runLabel.textContent = blocked ?? 'Run';
     },
     destroy() {
+      results.clear();
       runButton.removeEventListener('click', handleRunClick);
       cancel.removeEventListener('click', init.onCancel);
     },

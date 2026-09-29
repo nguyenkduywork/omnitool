@@ -5,6 +5,7 @@
 // is stubbed — the assertions read what a browser actually hands back.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { IMAGE_TOOLS } from '../../src/core/registry.image';
 
 import { renderOptions } from '../../src/ui/optionspanel';
 import type { OptionSchema, ToolDef, ToolEditor } from '../../src/types';
@@ -67,6 +68,88 @@ function field<T extends Element>(root: ParentNode, key: string, selector: strin
 }
 
 describe('generic schema rendering', () => {
+  it('shares resize presets with the fields and refreshes dimensions by File identity without decoding again on edits', async () => {
+    const resize = IMAGE_TOOLS.find((entry) => entry.id === 'image-resize')!;
+    const file = async (width: number, height: number) => {
+      const canvas = new OffscreenCanvas(width, height);
+      canvas.getContext('2d');
+      return new File([await canvas.convertToBlob()], 'same.png', { type: 'image/png' });
+    };
+    const source = await file(9, 5);
+    const decode = vi.spyOn(globalThis, 'createImageBitmap');
+    const onEdit = vi.fn();
+    const { handle } = mount(resize, { files: [source], onEdit });
+    try {
+      await handle.ready;
+      await expect.poll(() => host.querySelector('.resize-preview__value')?.textContent).toContain('9 × 5');
+      const presets = host.querySelectorAll<HTMLButtonElement>('.resize-presets button');
+      presets[0]!.click();
+      expect(handle.values()).toMatchObject({ mode: 'percent', percent: 50 });
+      expect(host.querySelector('.resize-preview__value')?.textContent).toBe('9 × 5 → 5 × 3 px');
+      expect(field<HTMLSelectElement>(host, 'mode', 'select').value).toBe('percent');
+      expect(onEdit).toHaveBeenCalledWith('mode', 'percent');
+      presets[1]!.click();
+      expect(handle.values()).toMatchObject({ mode: 'dimensions', width: 1080, height: 1080, lockAspect: true });
+      expect(field<HTMLInputElement>(host, 'width', 'input').value).toBe('1080');
+      expect(decode).toHaveBeenCalledTimes(1);
+      // Same name, different File: the readout must not retain the first size.
+      handle.updateFiles([await file(5, 9)]);
+      await expect.poll(() => host.querySelector('.resize-preview__value')?.textContent).toBe('5 × 9 → 600 × 1,080 px');
+      expect(decode).toHaveBeenCalledTimes(2);
+      handle.updateFiles([source]);
+      await expect.poll(() => host.querySelector('.resize-preview__value')?.textContent).toBe('9 × 5 → 1,080 × 600 px');
+      expect(decode).toHaveBeenCalledTimes(2);
+      handle.updateFiles([new File(['broken'], 'bad.png', { type: 'image/png' })]);
+      await expect.poll(() => host.querySelector('.resize-preview__value')?.textContent).toBe('Dimensions unavailable');
+    } finally { handle.destroy(); decode.mockRestore(); }
+  });
+
+  it('shows only the active resize mode and keeps hidden values when switching back', () => {
+    const resize = IMAGE_TOOLS.find((entry) => entry.id === 'image-resize')!;
+    const { handle } = mount(resize);
+    const row = (key: string): HTMLElement => handle.el.querySelector(`[data-key="${key}"]`)!;
+    const mode = field<HTMLSelectElement>(handle.el, 'mode', 'select');
+    const width = field<HTMLInputElement>(handle.el, 'width', 'input');
+    width.value = '640';
+    width.dispatchEvent(new Event('input'));
+    expect(row('percent').hidden).toBe(true);
+    mode.value = 'percent';
+    mode.dispatchEvent(new Event('change'));
+    for (const key of ['width', 'height', 'lockAspect']) expect(row(key).hidden).toBe(true);
+    expect(row('percent').hidden).toBe(false);
+    expect(handle.values()).toMatchObject({ mode: 'percent', width: 640, percent: 50 });
+    mode.value = 'dimensions';
+    mode.dispatchEvent(new Event('change'));
+    expect(row('width').hidden).toBe(false);
+    expect(row('percent').hidden).toBe(true);
+    expect(width.value).toBe('640');
+    const toggle = field<HTMLInputElement>(handle.el, 'lockAspect', 'input');
+    expect(document.getElementById(toggle.getAttribute('aria-describedby')!)?.textContent).toContain('without stretching');
+    handle.destroy();
+  });
+
+  it('restores explicit choices without labelling them as inferred presets', () => {
+    const onEdit = vi.fn();
+    const { handle } = mount({}, {
+      presetValues: { format: 'jpeg', dpi: 300 },
+      presetBecause: { format: 'from the file', dpi: 'from the file' },
+      savedValues: { format: 'png', header: false, ranges: '' },
+      onEdit,
+    });
+    expect(handle.values()).toMatchObject({ format: 'png', dpi: 300, header: false, ranges: '' });
+    expect(handle.el.querySelector('[data-key="format"] .opt__because')).toBeNull();
+    expect(handle.el.querySelector('[data-key="dpi"] .opt__because')).not.toBeNull();
+    expect(onEdit).not.toHaveBeenCalled();
+    const dpi = field<HTMLInputElement>(handle.el, 'dpi', 'input');
+    dpi.value = '250';
+    dpi.dispatchEvent(new Event('input'));
+    expect(onEdit).toHaveBeenCalledTimes(1);
+    expect(onEdit).toHaveBeenCalledWith('dpi', 250);
+    expect(handle.el.querySelector('[data-key="dpi"] .opt__because')).toBeNull();
+    expect(dpi.hasAttribute('aria-describedby')).toBe(false);
+    handle.destroy();
+  });
+
   it('renders exactly one labelled control per schema entry', () => {
     const { handle } = mount();
     const rows = handle.el.querySelectorAll('[data-key]');

@@ -41,6 +41,42 @@ Two ways in, both first-class:
 
 `Ctrl/Cmd+K` searches the tools. The file tray is reorderable, which matters for
 merging — drag a row, use its arrow buttons, or focus a row and press the arrow keys.
+With several files loaded, **Arrange files** sorts naturally by name (2 before 10),
+sorts by size, or reverses the order. **Undo** restores the last ordering change,
+including a drag or keyboard move. Adding or removing files clears that order snapshot.
+
+Removing a file or choosing **Remove all files** shows a separate **Undo** notice in
+the file tray. It restores the most recent removal, with the original files and order.
+There is no timer; adding, removing, reordering, or replacing files again clears that
+snapshot, as does dismissing the notice or reloading. Undo is paused while a tool runs.
+Only the files are restored; custom editor changes and cleared results are not recovered.
+
+Search understands common task names such as **compress PDF**, **combine PDF**, and
+**unzip**. Resize shows only the controls for the selected mode, with guidance on
+preserving proportions.
+Resize also shows each image's original and output dimensions before running.
+Quick presets halve both dimensions or fit the longest edge to 1080 or 1920 pixels.
+**Don’t enlarge smaller images** caps each dimension at its original size; files that
+need no size change are returned byte for byte. Dimension previews are read once per
+file and shown in groups of 20 for large batches.
+Gzip, TAR, JSON formatting and contact-sheet options also hide controls that do not
+apply to the current mode, keeping your values when you switch back.
+
+Settings you edit in standard option panels are remembered while this tab stays open.
+**Reset** restores the tool's defaults for the current files; reloading starts fresh.
+File-derived defaults remain automatic until you edit them. Visual editors keep their
+own file-specific state.
+
+After a run, choose **Use this result…** or **Use all results…** to open the output in
+another compatible file tool. Review its settings before running. This replaces the
+tray without changing files on disk; **Undo** restores the previous tray and order.
+Undo holds one handoff and is cleared when you add, remove, or reorder files or dismiss
+the notice. Compare text owns its sources separately and is not a handoff destination.
+
+Click an image result to open a larger preview with pixel dimensions, Fit or percentage
+zoom, and previous/next navigation. Download from the viewer or press **Esc** to return
+to the result card. When converting a transparent image to JPEG, choose a white
+(default) or black background; PNG and WebP keep their transparency.
 
 Fully keyboard operable, with visible focus rings, `aria-live` announcements, and WCAG
 AA contrast in both light and dark themes — covered by tests, not just intent.
@@ -133,6 +169,8 @@ npm run typecheck && npm run lint && npm test && npm run build && npm run size &
 ```
 
 Playwright needs its browsers once: `npx playwright install --with-deps chromium`.
+If another local app uses port 4173, set `OMNITOOL_TEST_PORT` to a free port before
+running the end-to-end checks.
 
 ## Requirements
 
@@ -158,6 +196,8 @@ for open engineering items.
   costs a little quality, and the quality slider is what it costs; PNG output ignores it
   because PNG is lossless. Formats the browser can decode but not encode — GIF, BMP,
   TIFF, SVG — come back as PNG, and the filename changes with them.
+  Resize keeps the original file when **Don’t enlarge smaller images** is on and no
+  dimension changes, including any metadata and animation that file already contains.
 - **Strip metadata covers JPEG, PNG and WebP only.** Those are the containers whose
   metadata can be cut without touching a pixel. Anything else is refused by name rather
   than quietly re-encoded. The ICC colour profile is kept unless you ask for it too.

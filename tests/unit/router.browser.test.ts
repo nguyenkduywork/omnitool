@@ -176,10 +176,9 @@ describe('createRouter', () => {
     // memory of which hash is in flight, so it cannot tell those two events
     // apart from a real one, and depending on exactly when its timer fires
     // relative to the two hashchange dispatches it can end up re-entering
-    // onRoute 0, 1, or 2 times. Comparing against the last hash THIS router
-    // wrote settles it deterministically: the first event's hash still
-    // matches (it hasn't been consumed yet) so it is swallowed, and the
-    // second is let through exactly once, reporting the true final route.
+    // onRoute 0, 1, or 2 times. Comparing each event's destination against
+    // the last write lets the first event report the current route and
+    // consumes the second echo.
     router.navigate('merge-pdfs');
     router.navigate('qr-generate');
     expect(location.hash).toBe('#/qr-generate');
@@ -202,6 +201,22 @@ describe('createRouter', () => {
     // already visited). If the guard is never released after consuming its
     // one echo, this looks identical to that echo and gets swallowed too —
     // silently dropping a real navigation.
+    location.hash = '#/qr-generate';
+    await settle();
+    expect(calls).toEqual(['qr-generate']);
+
+    location.hash = '#/merge-pdfs';
+    await settle();
+    expect(calls).toEqual(['qr-generate', 'merge-pdfs']);
+  });
+
+  it('keeps a later Forward when an external change arrives before its own echo', async () => {
+    await settle();
+    const { calls, onRoute } = recorder();
+    router = createRouter({ isKnownTool: () => true, onRoute });
+
+    router.navigate('merge-pdfs');
+    // Both events are queued; location already differs when the first runs.
     location.hash = '#/qr-generate';
     await settle();
     expect(calls).toEqual(['qr-generate']);

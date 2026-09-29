@@ -50,7 +50,7 @@
 
 import { accepts, label, sniffType } from '../core/format';
 import { TOOLS } from '../core/registry';
-import type { Job, JobResult, OpErrorCode, ToolDef } from '../types';
+import type { Job, JobResult, OpErrorCode, OpOutput, ToolDef } from '../types';
 import { el, icon } from './dom';
 import { createDropzone } from './dropzone';
 import { disabledFormatChoices } from './encoder';
@@ -58,6 +58,7 @@ import { createFileTray, type FileTrayHandle, type TrayEntry } from './filetray'
 import { fadeHero } from './motion';
 import { defaultOptions, renderOptions, type OptionsHandle } from './optionspanel';
 import { createPalette } from './palette';
+import type { ResultReuseHandle } from './result-reuse';
 import { prefetchModule, prefetchTool } from './prefetch';
 import { createRouter } from './router';
 import { createState, runBlockedReason, typeMismatch, type Snapshot } from './state';
@@ -124,6 +125,12 @@ export function mountShell(root: HTMLElement, availableTools: readonly ToolDef[]
   let workspaceActive = false;
   let workspaceLoadGeneration = 0;
   let destroyed = false;
+  let optionsGeneration = 0;
+  // User edits only. File-derived presets and editor geometry keep their own lifecycle.
+  const savedSettings = new Map<string, Record<string, unknown>>();
+  let reuse: ResultReuseHandle | null = null;
+  let reuseRequest = 0;
+  let resultGeneration = 0;
 
   // ------------------------------------------------------------- chrome
   const live = el('div', 'sr-only');
@@ -167,7 +174,7 @@ export function mountShell(root: HTMLElement, availableTools: readonly ToolDef[]
     el('kbd', undefined, `${MOD} K`),
   );
   paletteButton.setAttribute('aria-label', `Search tools (${MOD} K)`);
-  paletteButton.addEventListener('click', () => palette.open());
+  paletteButton.addEventListener('click', openSearch);
 
   const topbarInner = el('div', 'topbar__inner');
   topbarInner.append(brand, claim, paletteButton, themeControl.el);
@@ -184,6 +191,7 @@ export function mountShell(root: HTMLElement, availableTools: readonly ToolDef[]
   // `catalogue`'s `onPick: (id) => void select(id)` already does below.
   const workZone = createWorkZone({
     onRun: () => void start(),
+    onReuse: (outputs) => void chooseNextTool(outputs),
     onCancel: () => {
       job?.cancel();
       announce('Cancelling…');
@@ -198,7 +206,13 @@ export function mountShell(root: HTMLElement, availableTools: readonly ToolDef[]
     onChange: (next) => {
       // The tray has already mutated its own DOM; mirror, never re-seed. The
       // machine's notification is what repaints everything else.
+      forgetReuse();
+      filesZone.forgetRemoval();
+      if (next.length < snap.entries.length) {
+        filesZone.rememberRemoval(snap.entries, snap.entries.length - next.length);
+      }
       state.setFiles(next);
+      if (next.length === 0) filesZone.focusUndo();
     },
     announce,
   });
@@ -207,30 +221,25 @@ export function mountShell(root: HTMLElement, availableTools: readonly ToolDef[]
   const filesZone = createFilesZone({
     addbar: dropzone.addbar,
     tray,
+    onRestore: (entries) => {
+      forgetReuse();
+      state.setFiles(entries);
+      tray.setEntries(entries);
+      clearResults();
+      dropzone.focusAddBar();
+      announce('Removed files restored, in their original order.');
+    },
+    onDismissRemoval: () => dropzone.focusAddBar(),
     onClear: () => {
+      if (snap.phase === 'running' || snap.entries.length === 0) return;
+      forgetReuse();
+      filesZone.rememberRemoval(snap.entries, snap.entries.length);
       state.clearFiles();
       tray.setEntries([]);
-      workZone.results.clear();
-      announce('All files removed.');
-      // `state.clearFiles()` above emits synchronously — `snap` (this
-      // closure's own copy of the last snapshot, kept current by the
-      // `paint` subscriber) already reflects the result by the time this
-      // line runs. NB2, a later pass over I2: I2 changed what "no files"
-      // can mean here. `browsing` (nothing loaded, nothing picked) is the
-      // ONLY phase that un-hides the hero (see `paint`'s own `wasCold`/
-      // `cold` handling below) — with a tool still picked, `clearFiles`
-      // now leaves it TOOL PICKED (spec §4.2), the hero stays hidden, and
-      // `dropzone.focus()` would land keyboard focus on its `display: none`
-      // pick button (measured live: a real Tab press from there fell all
-      // the way to `<body>`, restarting the page's whole tab order). The
-      // always-mounted add-bar's own "Add files" button is genuinely
-      // reachable in that state, so it is the target whenever the tray
-      // does not go fully cold.
-      if (snap.phase === 'browsing') {
-        dropzone.focus();
-      } else {
-        dropzone.focusAddBar();
-      }
+      clearResults();
+      announce('All files removed. Undo is available.');
+      // Remains visible with or without a selected tool, including an empty tray.
+      filesZone.focusUndo();
     },
   });
 
@@ -256,10 +265,13 @@ export function mountShell(root: HTMLElement, availableTools: readonly ToolDef[]
   workspaceSlot.hidden = true;
   workspaceSlot.setAttribute('aria-label', 'Tool workspace');
 
+  const reuseSlot = el('div');
+  reuseSlot.hidden = true;
+
   // Results sit below the whole workbench, not confined to the work zone's
   // own column — the tray is created by `workZone` (zone 3 owns the tool's
   // whole lifecycle, results included), but its element is placed here.
-  stage.append(dropzone.hero, stageEl, workspaceSlot, workZone.results.el);
+  stage.append(dropzone.hero, stageEl, workspaceSlot, reuseSlot, workZone.results.el);
 
   const footer = el('footer', 'footer');
   const footerMark = el('span', 'footer__mark');
@@ -309,6 +321,7 @@ export function mountShell(root: HTMLElement, availableTools: readonly ToolDef[]
 
   function paint(next: Snapshot): void {
     snap = next;
+    reuse?.setRunning(snap.phase === 'running');
     const inWorkspace = !!snap.selected?.workspace;
     stage.classList.toggle('stage--workspace', inWorkspace);
     stageEl.hidden = inWorkspace;
@@ -389,7 +402,9 @@ export function mountShell(root: HTMLElement, availableTools: readonly ToolDef[]
       const head = await file.slice(0, SNIFF_BYTES).arrayBuffer();
       added.push({ file, type: sniffType(head, file.name) });
     }
-    if (added.length === 0) return;
+    if (added.length === 0 || destroyed) return;
+    forgetReuse();
+    filesZone.forgetRemoval();
 
     // Emits, which is what refreshes the grid; the tray is the one surface the
     // machine does not drive, so it is mirrored from the new snapshot. Any
@@ -410,6 +425,47 @@ export function mountShell(root: HTMLElement, availableTools: readonly ToolDef[]
 
   function mimes(): string[] {
     return snap.entries.map((entry) => entry.type);
+  }
+
+  function forgetReuse(): void {
+    reuseRequest += 1;
+    reuseSlot.hidden = true;
+    reuse?.forget();
+  }
+
+  async function chooseNextTool(outputs: readonly OpOutput[]): Promise<void> {
+    if (destroyed || snap.phase === 'running' || outputs.length === 0) return;
+    const request = ++reuseRequest;
+    try {
+      const { createResultReuse } = await import('./result-reuse');
+      if (destroyed || request !== reuseRequest) return;
+      reuse ??= createResultReuse({
+        mount: reuseSlot,
+        tools: availableTools,
+        capture: () => ({ entries: [...snap.entries], toolId: snap.selected?.id ?? null }),
+        isRunning: () => snap.phase === 'running',
+        announce,
+        focusInput: () => dropzone.focusAddBar(),
+        apply: async ({ entries, toolId }) => {
+          filesZone.forgetRemoval();
+          clearSelection();
+          state.setFiles(entries);
+          tray.setEntries(entries);
+          if (toolId) await select(toolId);
+          else {
+            router.navigate(null);
+            dropzone.focusAddBar();
+          }
+        },
+      });
+      reuse.choose(outputs);
+    } catch {
+      if (destroyed || request !== reuseRequest) return;
+      reuseSlot.hidden = false;
+      reuseSlot.className = 'reuse-notice';
+      reuseSlot.textContent = 'The next-tool chooser could not load. Try “Use this result” again when online, or download the result.';
+      announce(reuseSlot.textContent);
+    }
   }
 
   // -------------------------------------------------------------- tools
@@ -466,6 +522,7 @@ export function mountShell(root: HTMLElement, availableTools: readonly ToolDef[]
   }
 
   function clearSelection(): void {
+    optionsGeneration += 1;
     deactivateWorkspace();
     panel?.destroy();
     panel = null;
@@ -506,7 +563,7 @@ export function mountShell(root: HTMLElement, availableTools: readonly ToolDef[]
   async function activateWorkspace(tool: ToolDef): Promise<void> {
     workspaceActive = true;
     const mine = ++workspaceLoadGeneration;
-    workZone.results.clear();
+    clearResults();
     if (!workspaceHost) workspaceSlot.textContent = `Loading ${tool.name}…`;
     try {
       const { createWorkspaceHost } = await import('./workspace-host');
@@ -555,6 +612,7 @@ export function mountShell(root: HTMLElement, availableTools: readonly ToolDef[]
 
   /** Build (or rebuild) the options surface for `tool`. */
   async function mountOptions(tool: ToolDef): Promise<void> {
+    const generation = ++optionsGeneration;
     // A preset reads the files' METADATA only — the sniffed type, not contents.
     const sniffed = (): { name: string; size: number; type: string }[] =>
       snap.entries.map((entry) => ({
@@ -567,7 +625,7 @@ export function mountShell(root: HTMLElement, availableTools: readonly ToolDef[]
     // sends the schema defaults rather than an empty object — the panel is
     // already on screen by now (`selectTool`'s emit revealed it), so Run is
     // reachable for the length of the probe.
-    options = defaultOptions(tool.options, tool.preset?.(sniffed())?.values);
+    options = { ...defaultOptions(tool.options, tool.preset?.(sniffed())?.values), ...savedSettings.get(tool.id) };
 
     panel?.destroy();
     panel = null;
@@ -575,7 +633,7 @@ export function mountShell(root: HTMLElement, availableTools: readonly ToolDef[]
     // Probe the encoders BEFORE offering a format, so an unsupported choice is
     // disabled with the reason visible rather than offered and then failed (§5.2).
     const disabled = await disabledFormatChoices(tool.options);
-    if (snap.selected?.id !== tool.id) return;
+    if (destroyed || generation !== optionsGeneration || snap.selected?.id !== tool.id) return;
 
     // Re-read everything derived from the FILES on this side of the await. An
     // intake landing during the probe used to leave the panel mounted with a
@@ -586,14 +644,29 @@ export function mountShell(root: HTMLElement, availableTools: readonly ToolDef[]
     // for what actually got rendered, which is only knowable here.
     lastFilesSignature = filesSignature();
     const preset = tool.preset?.(sniffed());
-    options = defaultOptions(tool.options, preset?.values);
+    options = { ...defaultOptions(tool.options, preset?.values), ...savedSettings.get(tool.id) };
 
     const mounted = renderOptions({
       tool,
       files: snap.entries.map((entry) => entry.file),
       onChange: (next) => {
+        if (destroyed || generation !== optionsGeneration || snap.selected?.id !== tool.id) return;
         options = next;
       },
+      onEdit: (key, value) => {
+        if (destroyed || generation !== optionsGeneration || snap.selected?.id !== tool.id) return;
+        savedSettings.set(tool.id, { ...savedSettings.get(tool.id), [key]: value });
+      },
+      onReset: () => {
+        if (snap.phase === 'running' || snap.selected?.id !== tool.id) return;
+        savedSettings.delete(tool.id);
+        void mountOptions(tool).then(() => {
+          if (destroyed || snap.selected?.id !== tool.id) return;
+          workZone.options.querySelector<HTMLButtonElement>('.options__reset')?.focus();
+          announce(`${tool.name} settings reset.`);
+        });
+      },
+      savedValues: savedSettings.get(tool.id),
       disabled,
       presetValues: preset?.values,
       presetBecause: preset?.because,
@@ -601,6 +674,7 @@ export function mountShell(root: HTMLElement, availableTools: readonly ToolDef[]
     panel = mounted;
     options = { ...options, ...mounted.values() };
     workZone.options.replaceChildren(mounted.el);
+    workZone.render(snap);
   }
 
   /**
@@ -610,6 +684,9 @@ export function mountShell(root: HTMLElement, availableTools: readonly ToolDef[]
    */
   function syncEditor(): void {
     const tool = snap.selected;
+    if (tool?.optionsPreview && shownTool?.id === tool.id && snap.phase !== 'running') {
+      panel?.updateFiles(snap.entries.map((entry) => entry.file));
+    }
     // Only a tool the work zone is ALREADY showing can be out of sync. A
     // selection made this instant has not been painted yet, and mounting it
     // here would race `select()`'s own mount and build the board twice.
@@ -666,6 +743,8 @@ export function mountShell(root: HTMLElement, availableTools: readonly ToolDef[]
    *     user had already typed into the first one.
    */
   async function select(id: string | null, opts: { fromRouter?: boolean } = {}): Promise<void> {
+    reuseRequest += 1;
+    reuse?.close();
     if (snap.phase === 'running') {
       // I1: every CLICK path that could reach `select()` mid-run is meant to
       // be disabled while running — the catalogue's cards, pills and its
@@ -749,6 +828,9 @@ export function mountShell(root: HTMLElement, availableTools: readonly ToolDef[]
     announce(`${tool.name} selected. ${tool.blurb}`);
 
     if (tool.workspace) {
+      optionsGeneration += 1;
+      panel?.destroy();
+      panel = null;
       await activateWorkspace(tool);
       return;
     }
@@ -761,6 +843,11 @@ export function mountShell(root: HTMLElement, availableTools: readonly ToolDef[]
   }
 
   // ---------------------------------------------------------------- run
+  function clearResults(): void {
+    resultGeneration += 1;
+    workZone.results.clear();
+  }
+
   function setRunning(on: boolean): void {
     // Disabling the focused element blurs it (moves focus to <body>) in every
     // browser — a keyboard user who just activated Run or Remove-all must not
@@ -801,6 +888,9 @@ export function mountShell(root: HTMLElement, availableTools: readonly ToolDef[]
     // is deliberate, not an oversight, but it is worth a future generator
     // author re-reading this guard rather than assuming it.
     const files = tool.kind === 'generate' ? [] : snap.entries.map((entry) => entry.file);
+    const runOptions = { ...options };
+    reuseRequest += 1;
+    reuse?.close();
     // The sniffed type comes along so the results tray can tell whether an
     // input and an output are even the same kind of thing before it offers a
     // size comparison. entry.type is the magic-byte result, not the browser's
@@ -817,7 +907,8 @@ export function mountShell(root: HTMLElement, availableTools: readonly ToolDef[]
     setRunning(true);
     workZone.progress.reset();
     workZone.progress.setLabel(`${tool.name}…`);
-    workZone.results.clear();
+    clearResults();
+    const currentResult = resultGeneration;
     announce(`${tool.name} started on ${files.length} ${files.length === 1 ? 'file' : 'files'}.`);
 
     let result: JobResult | undefined;
@@ -825,7 +916,7 @@ export function mountShell(root: HTMLElement, availableTools: readonly ToolDef[]
 
     try {
       const { run } = await import('../core/pipeline');
-      const active = run(tool.id, files, options);
+      const active = run(tool.id, files, runOptions);
       job = active;
 
       let quarter = 0;
@@ -848,6 +939,8 @@ export function mountShell(root: HTMLElement, availableTools: readonly ToolDef[]
     }
 
     await workZone.results.show({ toolName: tool.name, inputs, result, error: failure });
+    // Undo, navigation, or a newer run may clear the view during its entrance.
+    if (destroyed || currentResult !== resultGeneration) return;
     // Spec §4.2 diagrams RUNNING -> RESULTS, and `results.show` above has
     // just unhidden the tray unconditionally — on success, partial success,
     // AND failure alike (a failure card is still a result, never a silent
@@ -962,10 +1055,16 @@ export function mountShell(root: HTMLElement, availableTools: readonly ToolDef[]
   });
   document.body.append(palette.el);
 
+  function openSearch(): void {
+    reuseRequest += 1;
+    reuse?.close();
+    palette.open();
+  }
+
   function onGlobalKeydown(event: KeyboardEvent): void {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
       event.preventDefault();
-      palette.open();
+      openSearch();
     }
   }
   document.addEventListener('keydown', onGlobalKeydown);
@@ -973,6 +1072,11 @@ export function mountShell(root: HTMLElement, availableTools: readonly ToolDef[]
   return {
     destroy(): void {
       destroyed = true;
+      optionsGeneration += 1;
+      reuseRequest += 1;
+      reuse?.destroy();
+      reuse = null;
+      savedSettings.clear();
       deactivateWorkspace();
       workspaceHost?.destroy();
       unsubscribe();

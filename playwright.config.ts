@@ -10,7 +10,7 @@
 // rewriting is needed here.
 import { defineConfig, devices } from '@playwright/test';
 
-const PORT = 4173;
+const PORT = Number(process.env.OMNITOOL_TEST_PORT ?? 4173);
 
 export default defineConfig({
   testDir: './tests/e2e',

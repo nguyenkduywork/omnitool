@@ -576,8 +576,7 @@ html.is-dragging .hero__drop {
   letter-spacing: var(--tracking-tight);
 }
 
-/* The "remove all" button is destructive and permanent; it sits apart from the
- * tray rather than inside its rhythm, and only names its danger on hover. */
+/* Removal sits apart from the tray. The most recent removal can be undone. */
 .clearbtn {
   justify-self: start;
 }
@@ -585,6 +584,33 @@ html.is-dragging .hero__drop {
 .clearbtn:hover:not(:disabled) {
   color: var(--bad);
   border-color: color-mix(in oklab, var(--bad) 45%, transparent);
+}
+
+.file-removal {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-md);
+  background: var(--accent-quiet);
+  scroll-margin-top: calc(3.375rem + var(--s-4));
+}
+
+.file-removal__message {
+  flex-basis: 100%;
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-snug);
+}
+
+.file-removal > .btn {
+  min-height: 2.75rem;
+}
+
+.file-removal > .btn:last-child {
+  margin-inline-start: auto;
 }
 
 /* ------------------------------------------------------------- file tray */
@@ -604,6 +630,7 @@ html.is-dragging .hero__drop {
 .tray {
   display: grid;
   gap: var(--s-3);
+  container-type: inline-size;
 }
 
 .tray__head {
@@ -631,6 +658,22 @@ html.is-dragging .hero__drop {
 .tray__list {
   display: grid;
   gap: var(--s-2);
+}
+
+.tray__arrange {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.tray__sort {
+  flex: 1;
+  width: 0;
+}
+
+.tray__sort:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .tray__item {
@@ -681,6 +724,10 @@ html.is-dragging .hero__drop {
 @media (hover: none), (max-width: 26rem) {
   .tray__grip {
     display: none;
+  }
+
+  .tray__item {
+    grid-template-columns: 2.5rem minmax(0, 1fr) auto;
   }
 }
 
@@ -734,6 +781,27 @@ html.is-dragging .hero__drop {
   gap: 0.125rem;
 }
 
+/* Keep filenames readable when the sidebar is narrow. */
+@container (max-width: 22rem) {
+  .tray__item {
+    grid-template-columns: 2.5rem minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .tray__grip {
+    display: none;
+  }
+
+  .tray__thumb {
+    grid-row: 1 / span 2;
+  }
+
+  .tray__controls {
+    grid-column: 2;
+    justify-content: flex-end;
+  }
+}
+
 .tray__nudge,
 .tray__remove {
   display: grid;
@@ -763,6 +831,19 @@ html.is-dragging .hero__drop {
 .tray__remove:hover:not(:disabled) {
   color: var(--bad);
   background: var(--bad-quiet);
+}
+
+@media (pointer: coarse) {
+  .tray__arrange > *,
+  .tray__nudge,
+  .tray__remove {
+    min-height: 2.75rem;
+  }
+
+  .tray__nudge,
+  .tray__remove {
+    width: 2.75rem;
+  }
 }
 
 /* ------------------------------------------------------------- tool grid
@@ -1092,6 +1173,27 @@ html.is-dragging .hero__drop {
 
 /* --------------------------------------------------------------- options */
 
+.run__options {
+  container-type: inline-size;
+}
+
+.options__session {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+}
+
+.opt__hint {
+  grid-column: 1 / -1;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-snug);
+}
+
 /* Capped: at the run panel's full width an option row becomes a metre-long bar
    with a 6rem select stranded at one end. A form column reads as a form. */
 .options {
@@ -1108,6 +1210,13 @@ html.is-dragging .hero__drop {
   padding: var(--s-2) var(--s-3);
   border-radius: var(--r-sm);
   background: var(--bg-2);
+}
+
+/* Options adapt to the panel width, including the narrow desktop column. */
+@container (max-width: 26rem) {
+  .opt {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 40rem) {
@@ -1177,6 +1286,7 @@ html.is-dragging .hero__drop {
 }
 
 .field--select {
+  max-width: 100%;
   padding-inline-end: var(--s-4);
 }
 
@@ -1344,6 +1454,7 @@ html.is-dragging .hero__drop {
 
 .results__actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--s-2);
 }
@@ -1504,6 +1615,49 @@ html.is-dragging .hero__drop {
   gap: var(--s-2) var(--s-3);
 }
 
+.card__next {
+  display: flex;
+  padding-top: var(--s-2);
+  margin-top: var(--s-2);
+  border-top: 1px solid var(--line);
+}
+
+.reuse-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-md);
+  background: var(--accent-quiet);
+  color: var(--ink);
+  font-size: var(--fs-sm);
+}
+
+.reuse-notice > .icon {
+  color: var(--accent);
+}
+
+.reuse-notice__message {
+  flex: 1 1 14rem;
+}
+
+.palette__title {
+  margin: 0;
+  padding: var(--s-4) var(--s-4) var(--s-2);
+  font-size: var(--fs-lg);
+}
+
+.palette__description {
+  margin: 0;
+  padding: 0 var(--s-4) var(--s-3);
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+  overflow-wrap: anywhere;
+}
+
 .card__note {
   font-size: var(--fs-xs);
   color: var(--ink-3);
@@ -1657,8 +1811,8 @@ html.is-dragging .hero__drop {
 .palette {
   width: min(100%, 36rem);
   max-height: min(80vh, 34rem);
-  display: grid;
-  grid-template-rows: auto 1fr auto auto;
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--line-2);
   border-radius: var(--r-lg);
   background: var(--bg-1);
@@ -1667,6 +1821,7 @@ html.is-dragging .hero__drop {
 }
 
 .palette__head {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: var(--s-2);

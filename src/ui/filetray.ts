@@ -129,10 +129,34 @@ export function createFileTray(init: FileTrayInit): FileTrayHandle {
   const list = el('ul', 'tray__list');
   list.setAttribute('role', 'list');
 
-  root.append(head, hint, list);
+  const ordering = el('div', 'tray__arrange');
+  const arrange = el('select', 'field field--select tray__sort');
+  arrange.setAttribute('aria-label', 'Arrange files');
+  for (const [value, text] of [
+    ['', 'Arrange files…'],
+    ['name-asc', 'Name: A–Z'],
+    ['name-desc', 'Name: Z–A'],
+    ['size-desc', 'Size: largest first'],
+    ['size-asc', 'Size: smallest first'],
+    ['reverse', 'Reverse order'],
+  ]) {
+    const choice = el('option', undefined, text);
+    choice.value = value!;
+    choice.disabled = value === '';
+    arrange.append(choice);
+  }
+  arrange.value = '';
+  const undo = el('button', 'btn btn--quiet btn--sm', 'Undo');
+  undo.type = 'button';
+  undo.setAttribute('aria-label', 'Undo file ordering');
+  ordering.append(arrange, undo);
+  root.append(head, hint, ordering, list);
 
   type Item = { entry: TrayEntry; node: HTMLLIElement; url: string | null };
   let items: Item[] = [];
+  // One order snapshot, sharing the existing nodes and files without copying bytes.
+  let previousOrder: Item[] | null = null;
+  let nameOrder: Intl.Collator | undefined;
   let dragFrom = -1;
   /** See `FileTrayHandle.setRunning`'s own doc comment. */
   let frozen = false;
@@ -159,6 +183,9 @@ export function createFileTray(init: FileTrayInit): FileTrayHandle {
       if (remove) remove.disabled = frozen;
     }
     count.textContent = items.length === 1 ? '1 file' : `${items.length} files`;
+    ordering.hidden = items.length < 2;
+    arrange.disabled = frozen || items.length < 2;
+    undo.disabled = frozen || previousOrder === null;
   }
 
   function describe(entry: TrayEntry, index: number): string {
@@ -182,21 +209,58 @@ export function createFileTray(init: FileTrayInit): FileTrayHandle {
   function move(from: number, to: number): void {
     const target = Math.min(items.length - 1, Math.max(0, to));
     const source = items[from];
-    if (!source || target === from) return;
+    if (frozen || !source || target === from) return;
 
     const before = positions();
     const next = [...items];
     next.splice(from, 1);
     next.splice(target, 0, source);
+    previousOrder = items;
     items = next;
     commit(before, source.node);
     init.announce(`${source.entry.file.name} moved to position ${target + 1} of ${items.length}.`);
   }
 
+  arrange.addEventListener('change', () => {
+    const action = arrange.value;
+    const actionLabel = arrange.selectedOptions[0]?.textContent;
+    arrange.value = '';
+    if (frozen || items.length < 2 || !action) return;
+    const next = [...items];
+    if (action === 'reverse') next.reverse();
+    else if (action.startsWith('name-')) {
+      nameOrder ??= new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+      const direction = action === 'name-asc' ? 1 : -1;
+      next.sort((a, b) => direction * nameOrder!.compare(a.entry.file.name, b.entry.file.name));
+    } else {
+      const direction = action === 'size-asc' ? 1 : -1;
+      next.sort((a, b) => direction * (a.entry.file.size - b.entry.file.size));
+    }
+    if (next.every((item, index) => item === items[index])) {
+      init.announce('Files are already in that order.');
+      return;
+    }
+    const before = positions();
+    previousOrder = items;
+    items = next;
+    commit(before, arrange);
+    init.announce(`${actionLabel}. File order updated. Undo is available.`);
+  });
+
+  undo.addEventListener('click', () => {
+    if (frozen || !previousOrder) return;
+    const before = positions();
+    items = previousOrder;
+    previousOrder = null;
+    commit(before, arrange);
+    init.announce('Previous file order restored.');
+  });
+
   function remove(index: number): void {
     const gone = items[index];
-    if (!gone) return;
+    if (frozen || !gone) return;
 
+    previousOrder = null;
     const before = positions();
     before.delete(gone.node);
     if (gone.url) URL.revokeObjectURL(gone.url);
@@ -207,8 +271,8 @@ export function createFileTray(init: FileTrayInit): FileTrayHandle {
     commit(before, focusTarget);
     init.announce(
       items.length === 0
-        ? `${gone.entry.file.name} removed. No files left.`
-        : `${gone.entry.file.name} removed. ${items.length} left.`,
+        ? `${gone.entry.file.name} removed. No files left. Undo is available.`
+        : `${gone.entry.file.name} removed. ${items.length} left. Undo is available.`,
     );
   }
 
@@ -360,6 +424,8 @@ export function createFileTray(init: FileTrayInit): FileTrayHandle {
   }
 
   function clear(): void {
+    previousOrder = null;
+    dragFrom = -1;
     for (const item of items) {
       if (item.url) URL.revokeObjectURL(item.url);
     }

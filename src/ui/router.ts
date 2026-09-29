@@ -126,8 +126,10 @@ export function createRouter(init: {
     return null;
   }
 
-  const onHashChange = (): void => {
-    if (location.hash === lastWrittenHash) {
+  const onHashChange = (event: HashChangeEvent): void => {
+    // Back may change location before our write's queued event is delivered.
+    // Consume that event's echo so a later Forward cannot match a stale guard.
+    if (new URL(event.newURL).hash === lastWrittenHash) {
       // The echo of our own navigate() — consume it once and stop.
       lastWrittenHash = null;
       return;

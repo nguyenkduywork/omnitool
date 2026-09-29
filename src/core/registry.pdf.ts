@@ -8,6 +8,7 @@ import type { ToolDef } from '../types.js';
 export const PDF_TOOLS: ToolDef[] = [
   {
     id: 'pdf-merge',
+    aliases: ['combine pdf', 'join pdf'],
     name: 'Merge PDFs',
     blurb: 'Combine several PDFs into one, in tray order.',
     group: 'pdf',
@@ -19,6 +20,7 @@ export const PDF_TOOLS: ToolDef[] = [
   },
   {
     id: 'pdf-split',
+    aliases: ['separate pdf', 'extract pdf pages'],
     name: 'Split PDF',
     blurb: 'One file per page, or one file per page range.',
     group: 'pdf',
@@ -42,6 +44,7 @@ export const PDF_TOOLS: ToolDef[] = [
   },
   {
     id: 'pdf-organize',
+    aliases: ['reorder pdf', 'rotate pdf', 'delete pdf pages'],
     name: 'Organize pages',
     blurb: 'Reorder, rotate and delete pages on a visual page board.',
     group: 'pdf',
@@ -54,6 +57,7 @@ export const PDF_TOOLS: ToolDef[] = [
   },
   {
     id: 'pdf-shrink',
+    aliases: ['compress pdf', 'reduce pdf size', 'smaller pdf'],
     name: 'Shrink PDF',
     blurb: 'Re-encodes images inside the PDF. Reports real before/after bytes.',
     group: 'pdf',
@@ -68,6 +72,7 @@ export const PDF_TOOLS: ToolDef[] = [
   },
   {
     id: 'pdf-to-images',
+    aliases: ['pdf to jpg', 'pdf to png', 'pdf to jpeg'],
     name: 'PDF to images',
     blurb: 'Turn pages into PNG or JPEG images.',
     group: 'pdf',
@@ -100,6 +105,7 @@ export const PDF_TOOLS: ToolDef[] = [
   },
   {
     id: 'pdf-from-images',
+    aliases: ['jpg to pdf', 'png to pdf', 'photos to pdf'],
     name: 'Images to PDF',
     blurb: 'One image per page, in tray order. PNG and JPEG.',
     group: 'pdf',

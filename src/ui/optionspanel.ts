@@ -11,7 +11,7 @@
 // (§4.1). That module is imported LAZILY — it never sits in the initial bundle —
 // mounted into the same panel, and its teardown is called on destroy.
 
-import type { OptionDef, OptionSchema, ToolDef } from '../types';
+import type { OptionDef, OptionSchema, ToolDef, ToolOptionsPreview } from '../types';
 import { el } from './dom';
 
 /** key -> choice value -> the reason it cannot be used. Shown, not hidden. */
@@ -23,6 +23,7 @@ export type OptionsHandle = {
   readonly ready: Promise<void>;
   /** The current, correctly typed option values. */
   values(): Record<string, unknown>;
+  updateFiles(files: readonly File[]): void;
   /**
    * Remove any preset "because" captions still on screen — a value's
    * CONTROL is left exactly as it is, only the sentence explaining where it
@@ -47,6 +48,10 @@ export type RenderOptionsInit = {
   /** Passed straight through to a bespoke editor. */
   files: File[];
   onChange: (values: Record<string, unknown>) => void;
+  /** Explicit edits only; inferred defaults are never saved as user choices. */
+  onEdit?: (key: string, value: unknown) => void;
+  onReset?: () => void;
+  savedValues?: Record<string, unknown>;
   /** Choices this browser cannot honour, with a reason to show the user. */
   disabled?: DisabledChoices;
   /** option key -> a value derived from the files, to start the control at. */
@@ -163,9 +168,18 @@ export function renderOptions(init: RenderOptionsInit): OptionsHandle {
   let values: Record<string, unknown> = {};
   let teardown: (() => void) | null = null;
   let destroyed = false;
+  let currentFiles: readonly File[] = files;
+  let preview: ReturnType<ToolOptionsPreview> | null = null;
+
+  function updateFiles(next: readonly File[]): void {
+    if (next.length === currentFiles.length && next.every((file, index) => file === currentFiles[index])) return;
+    currentFiles = next;
+    preview?.update(currentFiles, values);
+  }
 
   function emit(): void {
     onChange({ ...values });
+    preview?.update(currentFiles, values);
   }
 
   // ---- the escape hatch: a bespoke editor replaces the generic panel -------
@@ -196,6 +210,7 @@ export function renderOptions(init: RenderOptionsInit): OptionsHandle {
       el: root,
       ready,
       values: () => ({ ...values }),
+      updateFiles,
       // An editor never renders a preset "because" caption in the first
       // place (see optionspanel.ts's own module comment: it derives its
       // options from the files directly, and `shell.ts`'s `syncEditor`
@@ -222,6 +237,7 @@ export function renderOptions(init: RenderOptionsInit): OptionsHandle {
       retractPresetNotes(): void {},
       ready: Promise.resolve(),
       values: () => ({}),
+      updateFiles,
       destroy(): void {
         destroyed = true;
         root.replaceChildren();
@@ -229,11 +245,33 @@ export function renderOptions(init: RenderOptionsInit): OptionsHandle {
     };
   }
 
+  if (init.onReset) {
+    const session = el('div', 'options__session');
+    const reset = el('button', 'btn btn--quiet btn--sm options__reset', 'Reset');
+    reset.type = 'button';
+    reset.setAttribute('aria-label', 'Reset tool settings');
+    reset.addEventListener('click', init.onReset);
+    session.append(el('span', undefined, 'Settings kept in this tab'), reset);
+    root.append(session);
+  }
+
+  const actions = el('div');
+  const summary = el('div');
+  if (tool.optionsPreview) root.append(actions);
+  const rows = new Map<string, HTMLElement>();
+  function updateVisibility(): void {
+    for (const [key, def] of entries) {
+      const condition = def.visibleWhen;
+      rows.get(key)!.hidden = !!condition && values[condition.key] !== condition.equals;
+    }
+  }
+
   for (const [key, def] of entries) {
     const blocked = disabled?.[key];
-    values[key] = initialValue(def, blocked, init.presetValues?.[key]);
+    values[key] = initialValue(def, blocked, init.savedValues?.[key] ?? init.presetValues?.[key]);
 
     const row = el('div', 'opt');
+    rows.set(key, row);
     row.dataset.key = key;
     const id = nextId(key);
 
@@ -245,6 +283,9 @@ export function renderOptions(init: RenderOptionsInit): OptionsHandle {
 
     const commit = (raw: string | boolean): void => {
       values[key] = coerceOptionValue(def, raw);
+      updateVisibility();
+      init.onEdit?.(key, values[key]);
+      retractNotes(row);
       emit();
     };
 
@@ -333,7 +374,14 @@ export function renderOptions(init: RenderOptionsInit): OptionsHandle {
 
     // Why this value arrived already chosen. `.opt__reason` below says a choice
     // is UNAVAILABLE; this says a value was PICKED FOR YOU. Different things.
-    const because = init.presetBecause?.[key];
+    if (def.hint) {
+      const hint = el('p', 'opt__hint', def.hint);
+      hint.id = `${id}-hint`;
+      row.append(hint);
+      control.querySelector('input, select')?.setAttribute('aria-describedby', hint.id);
+    }
+
+    const because = Object.hasOwn(init.savedValues ?? {}, key) ? undefined : init.presetBecause?.[key];
     if (because) {
       const note = el('p', 'opt__because', because);
       note.id = `${id}-because`;
@@ -362,32 +410,66 @@ export function renderOptions(init: RenderOptionsInit): OptionsHandle {
 
     root.append(row);
   }
+  updateVisibility();
+
+  const ready = tool.optionsPreview ? (async () => {
+    root.append(summary);
+    summary.textContent = 'Loading size preview…';
+    try {
+      const module = await tool.optionsPreview!();
+      if (destroyed) return;
+      summary.replaceChildren();
+      preview = module.default({ actions, summary }, (patch) => {
+        if (destroyed) return;
+        for (const [key, raw] of Object.entries(patch)) {
+          const def = schema?.[key];
+          if (!def || (typeof raw !== 'string' && typeof raw !== 'number' && typeof raw !== 'boolean')) continue;
+          const row = rows.get(key)!;
+          values[key] = initialValue(def, disabled?.[key], raw);
+          const field = row.querySelector<HTMLInputElement | HTMLSelectElement>('input, select')!;
+          if (field instanceof HTMLInputElement && field.type === 'checkbox') field.checked = values[key] === true;
+          else field.value = String(values[key]);
+          const output = row.querySelector('output');
+          if (output) output.textContent = String(values[key]);
+          init.onEdit?.(key, values[key]);
+          retractNotes(row);
+        }
+        updateVisibility();
+        emit();
+      });
+      preview.update(currentFiles, values);
+    } catch {
+      if (!destroyed) summary.textContent = 'The size preview could not load. You can still use the settings above. Reopen this tool to retry.';
+    }
+  })() : Promise.resolve();
+
+  function retractNotes(parent: HTMLElement): void {
+    for (const note of parent.querySelectorAll<HTMLElement>('.opt__because')) {
+      // Drop only this note's token; preserve descriptions such as field hints.
+      const field = note.parentElement?.querySelector<HTMLElement>('input, select, textarea');
+      const described = field?.getAttribute('aria-describedby');
+      if (field && described) {
+        const kept = described
+          .split(' ')
+          .filter((token) => token !== note.id)
+          .join(' ');
+        if (kept) field.setAttribute('aria-describedby', kept);
+        else field.removeAttribute('aria-describedby');
+      }
+      note.remove();
+    }
+  }
 
   return {
     el: root,
-    ready: Promise.resolve(),
+    ready,
     values: () => ({ ...values }),
-    retractPresetNotes(): void {
-      for (const note of root.querySelectorAll<HTMLElement>('.opt__because')) {
-        // The field's `aria-describedby` may reference OTHER ids too (a
-        // blocked-choice `.opt__reason` carries none, but a future field
-        // could combine several) — drop only this note's own token rather
-        // than the whole attribute.
-        const field = note.parentElement?.querySelector<HTMLElement>('input, select, textarea');
-        const described = field?.getAttribute('aria-describedby');
-        if (field && described) {
-          const kept = described
-            .split(' ')
-            .filter((token) => token !== note.id)
-            .join(' ');
-          if (kept) field.setAttribute('aria-describedby', kept);
-          else field.removeAttribute('aria-describedby');
-        }
-        note.remove();
-      }
-    },
+    updateFiles,
+    retractPresetNotes: () => retractNotes(root),
     destroy(): void {
       destroyed = true;
+      preview?.destroy();
+      preview = null;
       root.replaceChildren();
     },
   };

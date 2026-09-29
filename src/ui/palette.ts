@@ -81,12 +81,27 @@ export function fuzzyScore(query: string, text: string): number | null {
 }
 
 /** The three fields `searchTools` reads. A `ToolDef` satisfies this. */
-export type SearchableTool = { readonly name: string; readonly blurb: string };
+export type SearchableTool = {
+  readonly name: string;
+  readonly blurb: string;
+  readonly aliases?: readonly string[];
+};
 
 // A name match outranks a blurb-only match by more than any two blurb-tier
 // gaps could close, so "PDF" typed against a tool named "Merge PDFs" always
 // beats a tool that merely mentions "pdf" once in its blurb.
 const NAME_BONUS = 10_000_000;
+const ALIAS_BONUS = 9_000_000;
+
+/** Match task words in either order; aliases never use scattered letters. */
+function phraseScore(query: string, text: string): number | null {
+  const target = text.toLowerCase();
+  if (target.includes(query)) return fuzzyScore(query, target);
+  const words = query.split(' ');
+  return words.length > 1 && words.every((word) => target.includes(word))
+    ? TIER_SUBSTRING - target.length
+    : null;
+}
 
 /**
  * Rank `tools` against `query` over each tool's NAME and BLURB (§7.3 of the
@@ -98,18 +113,20 @@ const NAME_BONUS = 10_000_000;
  * palette's initial "browse everything" list.
  */
 export function searchTools<T extends SearchableTool>(tools: readonly T[], query: string): T[] {
-  const q = query.trim();
+  const q = query.trim().toLowerCase().replace(/\s+/g, ' ');
   if (q.length === 0) return [...tools];
 
   const scored: { tool: T; score: number }[] = [];
   for (const tool of tools) {
-    const nameScore = fuzzyScore(q, tool.name);
+    const nameScore = Math.max(fuzzyScore(q, tool.name) ?? -Infinity, phraseScore(q, tool.name) ?? -Infinity);
     const blurbScore = fuzzyScore(q, tool.blurb);
-    if (nameScore === null && blurbScore === null) continue;
+    const aliasScore = Math.max(-Infinity, ...(tool.aliases ?? []).map((alias) => phraseScore(q, alias) ?? -Infinity));
     const best = Math.max(
-      nameScore === null ? -Infinity : nameScore + NAME_BONUS,
+      nameScore + NAME_BONUS,
+      aliasScore + ALIAS_BONUS,
       blurbScore === null ? -Infinity : blurbScore,
     );
+    if (best === -Infinity) continue;
     scored.push({ tool, score: best });
   }
   // Stable sort: vitest/Node's Array#sort is stable (ES2019+), so tools tied
@@ -123,6 +140,9 @@ export function searchTools<T extends SearchableTool>(tools: readonly T[], query
 // ---------------------------------------------------------------------------
 
 export type PaletteInit = {
+  title?: string;
+  description?: string;
+  onClose?: () => void;
   /** Every tool the palette can search — the full registry, not just the
    *  ones applicable to what's loaded right now. Searching everything and
    *  saying WHY a hit doesn't fit is more useful than hiding it. */
@@ -173,7 +193,16 @@ export function createPalette(init: PaletteInit): PaletteHandle {
   const dialog = el('div', 'palette');
   dialog.setAttribute('role', 'dialog');
   dialog.setAttribute('aria-modal', 'true');
-  dialog.setAttribute('aria-label', 'Command palette');
+  dialog.setAttribute('aria-label', init.title ?? 'Command palette');
+  if (init.title) {
+    dialog.append(el('h2', 'palette__title', init.title));
+  }
+  if (init.description) {
+    const description = el('p', 'palette__description', init.description);
+    description.id = `palette-description-${uid}`;
+    dialog.append(description);
+    dialog.setAttribute('aria-describedby', description.id);
+  }
 
   const head = el('div', 'palette__head');
   const srLabel = el('label', 'sr-only', 'Search tools by name or description');
@@ -383,6 +412,7 @@ export function createPalette(init: PaletteInit): PaletteHandle {
     // browser's own default (leave focus on <body>) is fine — it is never
     // worse than the alternative of focusing something arbitrary.
     if (target?.isConnected) target.focus();
+    init.onClose?.();
   }
 
   return {
