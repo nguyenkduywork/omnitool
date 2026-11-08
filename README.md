@@ -87,6 +87,7 @@ AA contrast in both light and dark themes — covered by tests, not just intent.
 | Tool | What it does |
 | --- | --- |
 | Merge PDFs | Combine several PDFs into one, in file-tray order |
+| Watermark PDF | Add text to every page, diagonally, centred, or in a corner; adjust size and opacity |
 | Split PDF | One file per page, or by page range (`1-3,7,9-`) |
 | Organize pages | Reorder, rotate, and delete pages on a visual page board |
 | Shrink PDF | Re-encodes images inside the PDF; reports real before/after bytes |
@@ -205,8 +206,11 @@ for open engineering items.
   purges XMP, then sweeps what it unlinked. It does not touch page content: text, images
   and their EXIF, annotations, form values, attachments and bookmarks all survive. A PDF
   with your name printed on page one still has your name on page one.
-- **A watermark is a label, not a lock.** It paints text into the pixels, so it can be
-  cropped off or painted over. It marks provenance, it does not protect anything.
+- **A watermark is a label, not a lock.** Image watermarks paint text into the pixels;
+  PDF watermarks add text over the original pages, keeping the existing text selectable.
+  Either can be removed. PDF watermarks support a single line of Latin text and fit
+  long labels to each page. To watermark a combined document, merge the PDFs, then
+  choose **Use this result… → Watermark PDF** before downloading the final result.
 - **Compare text owns two independent sources.** Paste text, open a UTF-8 file, or
   explicitly choose empty text on either side. Inputs sit side by side on wide screens
   and use source tabs on phones. Review supports automatic, split, and unified layouts;

@@ -106,6 +106,8 @@ beforeAll(async () => {
 
 describe('pdf registry entries', () => {
   const expected = [
+    'pdf-merge',
+    'pdf-watermark',
     'pdf-split',
     'pdf-organize',
     'pdf-shrink',

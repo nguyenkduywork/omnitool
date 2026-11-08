@@ -6,6 +6,7 @@ import type { Op } from '../../types.js';
  */
 export const PDF_LOADERS: Record<string, () => Promise<{ default: Op }>> = {
   'pdf-merge': () => import('../../tools/pdf/merge.op'),
+  'pdf-watermark': () => import('../../tools/pdf/watermark.op'),
   'pdf-split': () => import('../../tools/pdf/split.op'),
   'pdf-organize': () => import('../../tools/pdf/organize.op'),
   'pdf-shrink': () => import('../../tools/pdf/shrink.op'),

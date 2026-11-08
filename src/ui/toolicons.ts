@@ -24,6 +24,7 @@ export const GROUP_ORDER: ToolGroup[] = ['pdf', 'image', 'data'];
 
 const TOOL_ICON: Record<string, IconName> = {
   'pdf-merge': 'merge',
+  'pdf-watermark': 'stamp',
   'pdf-split': 'split',
   'pdf-organize': 'grid',
   'pdf-shrink': 'shrink',

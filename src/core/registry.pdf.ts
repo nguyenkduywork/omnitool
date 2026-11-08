@@ -19,6 +19,36 @@ export const PDF_TOOLS: ToolDef[] = [
     load: () => import('../tools/pdf/merge.op'),
   },
   {
+    id: 'pdf-watermark',
+    name: 'Watermark PDF',
+    blurb: 'Stamp a line of text.',
+    group: 'pdf',
+    kind: 'transform',
+    accepts: ['application/pdf'],
+    minInputs: 1,
+    maxInputs: null,
+    options: {
+      text: {
+        kind: 'text', label: 'Text', default: 'CONFIDENTIAL',
+      },
+      position: {
+        kind: 'select', label: 'Position',
+        choices: [
+          { value: 'bottom-right', label: 'Bottom right' },
+          { value: 'bottom-left', label: 'Bottom left' },
+          { value: 'top-right', label: 'Top right' },
+          { value: 'top-left', label: 'Top left' },
+          { value: 'center', label: 'Centre' },
+          { value: 'diagonal', label: 'Diagonal' },
+        ],
+        default: 'diagonal',
+      },
+      size: { kind: 'range', label: 'Text size (%)', min: 1, max: 25, step: 1, default: 6 },
+      opacity: { kind: 'range', label: 'Opacity (%)', min: 5, max: 100, step: 5, default: 35 },
+    },
+    load: () => import('../tools/pdf/watermark.op'),
+  },
+  {
     id: 'pdf-split',
     aliases: ['separate pdf', 'extract pdf pages'],
     name: 'Split PDF',
